@@ -589,9 +589,28 @@ class SourceTests(StoreCase):
                 },
             }
         }
-        with self.assertRaisesRegex(CannotAnalyze, "missing 1 requested date.*2025-12-20"):
+        with self.assertRaisesRegex(CannotAnalyze, "missing 1 requested date.*2025-12-20") as ctx:
             self.sources(raw).neighborhood(PROPERTY, "smartbnb", 1, "CAD", START, 2)
         self.assertEqual(self.cached_payloads(), "")
+        # the loader names the rollover so the RUNNER can decide; it never shifts on its own
+        from _mvp_sources import MarketRolledOver
+        self.assertIsInstance(ctx.exception, MarketRolledOver)
+
+    def test_any_other_market_gap_is_not_mistaken_for_a_rollover(self):
+        from _mvp_sources import MarketRolledOver
+        for offsets in ((2, 3), (0, 2)):  # starts two days late / a hole in the middle
+            dates = [(START + timedelta(days=i)).isoformat() for i in offsets]
+            raw = {"data": {"currency": "CAD",
+                            "Future Percentile Prices": {
+                                "Labels": ["25th Percentile", "50th Percentile", "75th Percentile", "90th Percentile"],
+                                "Category": {"1": {"X_values": dates,
+                                                   "Y_values": [[90, 90], [100, 100], [130, 130], [150, 150]]}}},
+                            "Future Occ/New/Canc": {"Labels": ["Occupancy"],
+                                                    "Category": {"1": {"X_values": dates, "Y_values": [[[60, 60]]]}}}}}
+            with self.subTest(offsets=offsets):
+                with self.assertRaises(CannotAnalyze) as ctx:
+                    self.sources(raw).neighborhood(PROPERTY, "smartbnb", 1, "CAD", START, 2)
+                self.assertNotIsInstance(ctx.exception, MarketRolledOver)
 
     def test_hosted_rankings_refuse_explicit_foreign_listing_identity(self):
         row = {"date": START.isoformat(), "guest_count": 1, "page": 1, "position": 5}

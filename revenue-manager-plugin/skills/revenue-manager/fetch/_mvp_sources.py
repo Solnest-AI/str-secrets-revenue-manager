@@ -20,6 +20,13 @@ PMS = "https://public.api.hospitable.com/v2"
 PL = "https://api.pricelabs.co"
 
 
+class MarketRolledOver(CannotAnalyze):
+    """PriceLabs' market data starts exactly one day after the requested start and covers
+    everything after it. That is the UTC-midnight rollover (measured 2026-09-24 ~06:15 UTC:
+    the property was on the 23rd, PriceLabs on the 24th). The loader still refuses and never
+    shifts the window itself; the runner decides what to do with a named rollover."""
+
+
 class Sources:
     def __init__(self, client, connections):
         self.client = client
@@ -261,7 +268,10 @@ class Sources:
                     else "has duplicate or unordered dates"
                 )
                 coverage = f"{observed[0]} to {observed[-1]}" if observed else "no dates"
-                raise CannotAnalyze(f"Neighborhood {detail}; provider covers {coverage}")
+                message = f"Neighborhood {detail}; provider covers {coverage}"
+                if missing == expected[:1] and observed[: len(expected) - 1] == expected[1:]:
+                    raise MarketRolledOver(message)
+                raise CannotAnalyze(message)
             for row in rows:
                 for key in ("p50", "p75", "p90", "occ"):
                     if row.get(key) in (None, ""):

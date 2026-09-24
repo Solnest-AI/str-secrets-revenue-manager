@@ -490,3 +490,41 @@ class OfflineCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MarketRollover(unittest.TestCase):
+    """After UTC midnight PriceLabs' market data starts at tomorrow while the property is
+    still on today. Measured live 2026-09-24 ~06:15 UTC: every run after 5pm Pacific
+    blocked. The runner now starts the window tomorrow, explicitly, and says so."""
+
+    def test_rollover_starts_tomorrow_with_a_note(self):
+        from datetime import date
+        from analyze90 import market_start
+        from _mvp_sources import MarketRolledOver
+        today = date(2026, 9, 23)
+        seen = []
+
+        def probe(start):
+            seen.append(start)
+            if start == today:
+                raise MarketRolledOver("Neighborhood missing 1 requested date(s): 2026-09-23")
+        start, note = market_start(probe, today)
+        self.assertEqual(start, date(2026, 9, 24))
+        self.assertIn("2026-09-23", note)
+        self.assertIn("not analysed", note)
+        self.assertEqual(seen, [today])
+
+    def test_no_rollover_keeps_today_and_says_nothing(self):
+        from datetime import date
+        from analyze90 import market_start
+        self.assertEqual(market_start(lambda s: None, date(2026, 9, 23)), (date(2026, 9, 23), None))
+
+    def test_a_real_market_failure_is_left_for_the_market_job_to_report(self):
+        from datetime import date
+        from analyze90 import market_start
+        from _mvp_store import CannotAnalyze
+
+        def probe(start):
+            raise CannotAnalyze("Neighborhood data is missing")
+        self.assertEqual(market_start(probe, date(2026, 9, 23)), (date(2026, 9, 23), None))
+

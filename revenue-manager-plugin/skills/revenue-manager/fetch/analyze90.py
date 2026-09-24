@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 from _mvp_analysis import build, render
 from _mvp_config import Connections, read_context
 from _mvp_pms import analyze
-from _mvp_sources import Sources
+from _mvp_sources import MarketRolledOver, Sources
 from _mvp_store import CannotAnalyze, ReadClient, Store, encode, utc_now
 
 
@@ -103,6 +103,25 @@ def compute(inputs, as_of, start, days):
     return result
 
 
+def market_start(probe, start):
+    """Start tomorrow, and say so, when PriceLabs' market data has already rolled over.
+
+    After UTC midnight the property can still be on today while PriceLabs' market data
+    starts tomorrow. Refusing then blocks every evening run (5pm Pacific onwards). Only
+    the exact rollover signature moves the start; any other market failure is left for
+    the market job to report, and the window never moves silently."""
+    try:
+        probe(start)
+    except MarketRolledOver:
+        nxt = start + timedelta(days=1)
+        return nxt, (f"Tonight ({start.isoformat()}) is not analysed: PriceLabs' market data has "
+                     f"already moved to {nxt.isoformat()} (UTC midnight), so the window starts "
+                     f"{nxt.isoformat()}.")
+    except (CannotAnalyze, ValueError, KeyError, TypeError):
+        pass
+    return start, None
+
+
 def run_live(args, client, connections, as_of):
     sources = Sources(client, connections)
     prop = sources.property(args.property)
@@ -121,6 +140,12 @@ def run_live(args, client, connections, as_of):
     rid = str(settings.get("rankbreeze_listing_id") or "")
     inputs = {"property": prop, "context": context}
     errors = []
+    start, rollover_note = market_start(
+        lambda s: sources.neighborhood(lid, pms_name, prop["capacity"]["bedrooms"],
+                                       prop["currency"], s, args.days, args.refresh_context),
+        start)
+    if rollover_note:
+        errors.append(rollover_note)
     jobs = {
         "calendar": lambda: sources.calendar(pid, start, args.days),
         "reservations": lambda: sources.reservations(pid, start, args.days),
