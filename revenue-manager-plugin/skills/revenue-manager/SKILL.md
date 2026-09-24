@@ -512,17 +512,16 @@ Only if they say yes, build it. This is **pure output** — it reads nothing new
 
 **1. Assemble the data as JSON.** You already have everything from Steps 4–7. Build one JSON object matching the shape documented at the top of `report/build_workbook.py` (use `report/sample_data.json` as the working template): a `meta` block, a `portfolio_summary` roll-up, and a `properties[]` array where each property carries pricing (current vs recommended base/min/max), comps, ask-vs-cleared, KPIs, red flags, the recommendations table, any DSO/min-stay recs, and the safety-layer footer. Write it to a temp file **in the OS temp dir** (e.g. `/tmp/rm_report.json`), never inside the bundle.
 
-**2. Ensure openpyxl (one-time, local, no system pollution).** The `report/` folder sits next to this SKILL.md. Create a local venv there once and install openpyxl:
+**2. Ensure openpyxl (one-time, local, no system pollution).** The `report/` folder sits next to this SKILL.md. From this skill's folder, create a local venv there once and install openpyxl:
 ```bash
-cd <plugin>/skills/revenue-manager/report
-python3 -m venv .report-venv 2>/dev/null
-.report-venv/bin/python -m pip install -q openpyxl 2>/dev/null
+python3 -m venv report/.report-venv 2>/dev/null
+report/.report-venv/bin/python -m pip install -q openpyxl 2>/dev/null
 ```
 `.report-venv/` is gitignored. If the venv or install fails, **don't stop** — the script auto-degrades to a folder of CSVs (one summary + one per property) so the operator still gets every number.
 
 **3. Generate.** Prefer the venv python; fall back to system `python3` (which triggers the CSV path):
 ```bash
-.report-venv/bin/python build_workbook.py /tmp/rm_report.json    # or:  python3 build_workbook.py /tmp/rm_report.json
+report/.report-venv/bin/python report/build_workbook.py /tmp/rm_report.json    # or:  python3 report/build_workbook.py /tmp/rm_report.json
 ```
 With no output path the workbook lands on the operator's Desktop (or the current folder) as `Revenue-Report-<YYYY-MM-DD>.xlsx`.
 

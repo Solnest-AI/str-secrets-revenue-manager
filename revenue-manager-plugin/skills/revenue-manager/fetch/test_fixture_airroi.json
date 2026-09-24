@@ -1,0 +1,245 @@
+{
+ "count": 6,
+ "listings": [
+  {
+   "listing_info": {
+    "listing_id": 1001,
+    "listing_name": "Alpha Lodge",
+    "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "photo_urls": [
+     "u",
+     "u",
+     "u",
+     "u",
+     "u"
+    ]
+   },
+   "property_details": {
+    "bedrooms": 4,
+    "baths": 2.0,
+    "guests": 8
+   },
+   "performance_metrics": {
+    "ttm_revenue": 168684,
+    "ttm_avg_rate": 758.34,
+    "ttm_occupancy": 0.5641,
+    "ttm_revpar": 446.9,
+    "ttm_avg_length_of_stay": 4.0
+   },
+   "ratings": {
+    "rating_overall": 4.97,
+    "num_reviews": 60
+   },
+   "pricing_info": {
+    "currency": "CAD"
+   },
+   "booking_settings": {
+    "min_nights": 3
+   },
+   "location_info": {
+    "latitude": 50.88,
+    "longitude": -119.9
+   }
+  },
+  {
+   "listing_info": {
+    "listing_id": 1002,
+    "listing_name": "Bravo Chalet",
+    "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "photo_urls": [
+     "u",
+     "u",
+     "u",
+     "u",
+     "u"
+    ]
+   },
+   "property_details": {
+    "bedrooms": 4,
+    "baths": 2.0,
+    "guests": 8
+   },
+   "performance_metrics": {
+    "ttm_revenue": 120000,
+    "ttm_avg_rate": 802.2,
+    "ttm_occupancy": 0.41,
+    "ttm_revpar": 300.1,
+    "ttm_avg_length_of_stay": 4.0
+   },
+   "ratings": {
+    "rating_overall": 4.9,
+    "num_reviews": 30
+   },
+   "pricing_info": {
+    "currency": "CAD"
+   },
+   "booking_settings": {
+    "min_nights": 3
+   },
+   "location_info": {
+    "latitude": 50.88,
+    "longitude": -119.9
+   }
+  },
+  {
+   "listing_info": {
+    "listing_id": 1003,
+    "listing_name": "Charlie Cabin",
+    "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "photo_urls": [
+     "u",
+     "u",
+     "u",
+     "u",
+     "u"
+    ]
+   },
+   "property_details": {
+    "bedrooms": 4,
+    "baths": 2.0,
+    "guests": 8
+   },
+   "performance_metrics": {
+    "ttm_revenue": 94786,
+    "ttm_avg_rate": 700.0,
+    "ttm_occupancy": 0.278,
+    "ttm_revpar": 232.0,
+    "ttm_avg_length_of_stay": 4.0
+   },
+   "ratings": {
+    "rating_overall": 4.94,
+    "num_reviews": 22
+   },
+   "pricing_info": {
+    "currency": "CAD"
+   },
+   "booking_settings": {
+    "min_nights": 3
+   },
+   "location_info": {
+    "latitude": 50.88,
+    "longitude": -119.9
+   }
+  },
+  {
+   "listing_info": {
+    "listing_id": 1004,
+    "listing_name": "Delta House",
+    "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "photo_urls": [
+     "u",
+     "u",
+     "u",
+     "u",
+     "u"
+    ]
+   },
+   "property_details": {
+    "bedrooms": 4,
+    "baths": 2.0,
+    "guests": 8
+   },
+   "performance_metrics": {
+    "ttm_revenue": 88909,
+    "ttm_avg_rate": 640.55,
+    "ttm_occupancy": 0.274,
+    "ttm_revpar": 200.0,
+    "ttm_avg_length_of_stay": 4.0
+   },
+   "ratings": {
+    "rating_overall": 4.8,
+    "num_reviews": 15
+   },
+   "pricing_info": {
+    "currency": "CAD"
+   },
+   "booking_settings": {
+    "min_nights": 2
+   },
+   "location_info": {
+    "latitude": 50.88,
+    "longitude": -119.9
+   }
+  },
+  {
+   "listing_info": {
+    "listing_id": 1005,
+    "listing_name": "Echo Retreat",
+    "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "photo_urls": [
+     "u",
+     "u",
+     "u",
+     "u",
+     "u"
+    ]
+   },
+   "property_details": {
+    "bedrooms": 4,
+    "baths": 2.0,
+    "guests": 8
+   },
+   "performance_metrics": {
+    "ttm_revenue": 46064,
+    "ttm_avg_rate": 804.2,
+    "ttm_occupancy": 0.132,
+    "ttm_revpar": 105.8,
+    "ttm_avg_length_of_stay": 4.0
+   },
+   "ratings": {
+    "rating_overall": 4.57,
+    "num_reviews": 7
+   },
+   "pricing_info": {
+    "currency": "CAD"
+   },
+   "booking_settings": {
+    "min_nights": 10
+   },
+   "location_info": {
+    "latitude": 50.88,
+    "longitude": -119.9
+   }
+  },
+  {
+   "listing_info": {
+    "listing_id": 9999,
+    "listing_name": "SUBJECT Chalet",
+    "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "photo_urls": [
+     "u",
+     "u",
+     "u",
+     "u",
+     "u"
+    ]
+   },
+   "property_details": {
+    "bedrooms": 4,
+    "baths": 2.0,
+    "guests": 8
+   },
+   "performance_metrics": {
+    "ttm_revenue": 40000,
+    "ttm_avg_rate": 900.0,
+    "ttm_occupancy": 0.1,
+    "ttm_revpar": 90.0,
+    "ttm_avg_length_of_stay": 4.0
+   },
+   "ratings": {
+    "rating_overall": 5.0,
+    "num_reviews": 3
+   },
+   "pricing_info": {
+    "currency": "CAD"
+   },
+   "booking_settings": {
+    "min_nights": 3
+   },
+   "location_info": {
+    "latitude": 50.88,
+    "longitude": -119.9
+   }
+  }
+ ]
+}

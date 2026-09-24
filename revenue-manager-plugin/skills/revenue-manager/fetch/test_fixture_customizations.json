@@ -1,0 +1,77 @@
+{
+  "customizations": {
+    "day_of_week_adjustment": {
+      "dow_factor_on": true,
+      "dow_factor_value_mon": -10.0,
+      "dow_factor_value_tue": -10.0,
+      "dow_factor_value_wed": 0.0,
+      "dow_factor_value_thu": 0.0,
+      "dow_factor_value_fri": 15.0,
+      "dow_factor_value_sat": 15.0,
+      "dow_factor_value_sun": 0.0,
+      "effective": "Mon -10% discount, Tue -10% discount, Fri +15% premium, Sat +15% premium"
+    },
+    "last_minute_prices": {
+      "last_min_factor_on": true,
+      "last_min_factor_type": "linear_gradual",
+      "last_min_factor_value": -20.0,
+      "last_min_factor_dfd": 14,
+      "effective": "up to 20% discount starting 14 days from check-in"
+    },
+    "far_out_premium": {
+      "far_out_premium_on": true,
+      "far_out_premium_type": "linear",
+      "far_out_premium_value": 25.0,
+      "far_out_premium_start": 180,
+      "far_out_premium_step": 1,
+      "effective": "up to 25% premium reaching maximum 180 days out"
+    },
+    "demand_factor": {
+      "tone_demand_factor_on": true,
+      "tone_demand_factor": "recommended",
+      "effective": "Market Driven - Balanced"
+    },
+    "seasonality": {
+      "seasonality_customization_on": false,
+      "seasonality_type": "recommended",
+      "effective": "off: the market-driven seasonal curve applies"
+    },
+    "custom_seasonal_profile": {
+      "custom_seasonal_profile_on": false,
+      "custom_seasonal_profile": {
+        "price_type": "percentage",
+        "seasons": [
+          {"season_name": "SeasonA", "start_month": "4", "start_day": "17",
+           "end_month": "5", "end_day": "12", "base_price": -5,
+           "lowest_price": null, "highest_price": -5},
+          {"season_name": "SeasonB", "start_month": "5", "start_day": "28",
+           "end_month": "7", "end_day": "19", "base_price": 5,
+           "lowest_price": 15, "highest_price": null}
+        ]
+      },
+      "effective": "off: 2 stored seasons are dormant"
+    }
+  },
+  "profiles": {
+    "minstay": [
+      {"id": 1001, "name": "ProfileA", "archived": false},
+      {"id": 1002, "name": "ProfileB", "archived": false}
+    ],
+    "pricing": [],
+    "checkincheckout": []
+  },
+  "price_rows": [
+    {"date": "2026-09-21", "price": 90,  "uncustomized_price": 100},
+    {"date": "2026-09-22", "price": 90,  "uncustomized_price": 100},
+    {"date": "2026-09-23", "price": 100, "uncustomized_price": 100},
+    {"date": "2026-09-24", "price": 100, "uncustomized_price": 100},
+    {"date": "2026-09-25", "price": 115, "uncustomized_price": 100},
+    {"date": "2026-09-26", "price": 115, "uncustomized_price": 100},
+    {"date": "2026-09-27", "price": 100, "uncustomized_price": 100},
+    {"date": "2026-09-28", "price": 90,  "uncustomized_price": 100},
+    {"date": "2026-09-29", "price": 90,  "uncustomized_price": 100},
+    {"date": "2026-10-01", "price": -1,  "uncustomized_price": 100},
+    {"date": "2026-10-02", "price": 100, "uncustomized_price": -2},
+    {"date": "2026-10-03", "price": 100, "uncustomized_price": 0}
+  ]
+}

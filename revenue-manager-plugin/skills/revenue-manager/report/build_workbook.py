@@ -464,9 +464,16 @@ def build_csv_fallback(data, out_path):
 
 # ── entry point ──────────────────────────────────────────────────────────────
 
+USAGE = "usage: python3 report/build_workbook.py <input.json> [output.xlsx]"
+
+
 def main(argv):
+    if len(argv) >= 2 and argv[1] in ("-h", "--help"):
+        print(USAGE)
+        print("Builds the multi-tab workbook (or a folder of CSVs if openpyxl is missing).")
+        return 0
     if len(argv) < 2:
-        print("usage: python3 build_workbook.py <input.json> [output.xlsx]", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
     try:
         data = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
