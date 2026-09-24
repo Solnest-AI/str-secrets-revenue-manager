@@ -1,0 +1,87 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Secrets & credentials
+.env
+.env.local
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+.credentials.json
+credentials.json
+secrets.json
+token.json
+auth.json
+service-account*.json
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local tooling
+.claude/local/
+.gitnexus/
+.turbo/
+.serena/
+.remember/
+.tmp/
+.tmp_*
+*.tmp
+.superpowers/
+
+# Media / documents (gitignored for size)
+*.mp4
+*.mov
+*.avi
+*.webm
+*.mkv
+*.m4v
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.aac
+*.pdf
+*.xlsx
+*.xls
+*.docx
+*.doc
+*.pptx
+*.ppt
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.rar
+*.heic
+
+# Output directories
+output/
+outputs/
+captures/
+screenshots/
+recordings/
+tests/output/

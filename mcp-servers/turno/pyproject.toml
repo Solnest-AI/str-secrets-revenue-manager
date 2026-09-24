@@ -1,0 +1,32 @@
+[project]
+name = "turno-mcp"
+version = "0.1.0"
+description = "MCP server for the Turno (TurnoverBnB) short-term-rental cleaning/turnover API"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=2.0.0",
+    "httpx>=0.27",
+    "python-dotenv>=1.2.2",
+]
+
+[project.scripts]
+turno-mcp = "turno_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/turno_mcp"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

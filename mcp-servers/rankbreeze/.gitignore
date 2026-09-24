@@ -1,0 +1,9 @@
+# Live session token — never commit
+session.txt
+.env
+*.cookie
+!.env.example
+!session.txt.example
+.venv/
+__pycache__/
+*.pyc

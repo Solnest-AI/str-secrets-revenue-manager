@@ -1,0 +1,76 @@
+{
+  "meta": {
+    "generated_date": "2026-06-17",
+    "portfolio_name": "Sample Portfolio — Revenue Manager",
+    "default_currency": "USD",
+    "recommend_only_note": "RECOMMEND-ONLY — you approve every change. Nothing was pushed automatically."
+  },
+  "portfolio_summary": {
+    "property_count": 2,
+    "proposed_change_count": 3,
+    "underpriced_count": 1,
+    "overpriced_count": 0,
+    "avg_occupancy_pct": 0.69,
+    "revpar_direction": "up",
+    "notes": "Winter ceilings are suppressing upside on the mountain unit."
+  },
+  "properties": [
+    {
+      "name": "Mountain View Chalet",
+      "currency": "USD",
+      "listing_id": "sample-0001",
+      "data_freshness": "live (pulled 2026-06-17)",
+      "pricing": {
+        "base": {"current": 150, "recommended": 165, "pct_move": 0.10, "min": 99, "max": 199, "bound_flag": ""},
+        "min":  {"current": 99,  "recommended": 99,  "pct_move": 0.0, "bound_flag": ""},
+        "max":  {"current": 199, "recommended": 215, "pct_move": 0.08, "bound_flag": "raising ceiling"}
+      },
+      "comps": {"count": 42, "percentile_context": "asking ~55th pct of same-bedroom comps"},
+      "ask_vs_cleared": {"ask": 160, "adr": 178, "spread": 18, "markup": 1.0},
+      "kpis": {"occupancy_pct": 0.71, "revpar": 120, "pacing_stly": "+8%", "lead_time_days": 21},
+      "red_flags": ["max ceiling suppressing winter upside"],
+      "recommendations": [
+        {"field": "base", "from": 150, "to": 165, "pct_move": 0.10,
+         "reasoning": "Pacing +8% STLY and asking below median comps; room to lift base.",
+         "expected_impact": "RevPAR +", "flags": [], "prior_attempts": "", "status": "proposed"},
+        {"field": "max", "from": 199, "to": 215, "pct_move": 0.08,
+         "reasoning": "Peak-winter dates clearing at ceiling; raise to capture upside.",
+         "expected_impact": "RevPAR +", "flags": [], "prior_attempts": "", "status": "proposed"}
+      ],
+      "dso_recommendations": [
+        {"date_range": "Dec 20 – Jan 2", "change": "min-stay 3 → 5", "reasoning": "peak winter demand"}
+      ],
+      "safety_layer": {
+        "bounds_used": "min 99 / max 199 (from PriceLabs)",
+        "max_delta": "25%", "currency": "USD asserted",
+        "freshness": "live", "confidence": "high — 42 comps, live pacing"
+      }
+    },
+    {
+      "name": "Downtown Loft",
+      "currency": "CAD",
+      "listing_id": "sample-0002",
+      "data_freshness": "live (pulled 2026-06-17)",
+      "pricing": {
+        "base": {"current": 299, "recommended": 299, "pct_move": 0.0, "min": 249, "max": 463, "bound_flag": ""},
+        "min":  {"current": 249, "recommended": 269, "pct_move": 0.08, "bound_flag": ""},
+        "max":  {"current": 463, "recommended": 463, "pct_move": 0.0, "bound_flag": "within range"}
+      },
+      "comps": {"count": 18, "percentile_context": "thin set — 18 same-bedroom comps (flagged)"},
+      "ask_vs_cleared": {"ask": 299, "adr": 312, "spread": 13, "markup": 1.0},
+      "kpis": {"occupancy_pct": 0.66, "revpar": 206, "pacing_stly": "flat", "lead_time_days": 34},
+      "red_flags": ["thin comp set (18) — confidence reduced"],
+      "recommendations": [
+        {"field": "min", "from": 249, "to": 269, "pct_move": 0.08,
+         "reasoning": "Floor sits below cleared ADR; lift min to protect rate on last-minute bookings.",
+         "expected_impact": "ADR +", "flags": ["thin-comp"], "prior_attempts": "raised once in May", "status": "proposed"}
+      ],
+      "dso_recommendations": [],
+      "safety_layer": {
+        "bounds_used": "min 249 / max 463 (from PriceLabs)",
+        "max_delta": "25%", "currency": "CAD asserted — no USD comps mixed",
+        "freshness": "live", "confidence": "medium — thin comp set (18)"
+      }
+    }
+  ]
+}

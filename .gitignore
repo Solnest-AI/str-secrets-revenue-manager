@@ -1,0 +1,128 @@
+# ── Secrets — NEVER commit these ──────────────────────────────
+# Every operator's API keys live locally only. They never enter this repo.
+.env
+.env.*
+*.env
+.env.local
+.env.*.local
+.mcp.json.local
+secrets.json
+*.key
+*.pem
+
+# Re-include the safe example templates (operators copy these to a local .env).
+# They carry only EMPTY placeholders — never real secrets — so they belong in the repo.
+# Without this, the `.env.*` rule above silently drops every connector's .env.example.
+!.env.example
+!.env.*.example
+
+# ── Node / MCP connector build artifacts ──────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json.bak
+dist/
+build/
+.cache/
+
+# ── Python (in case a connector or AirROI client is built locally) ─
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.report-venv/
+.Python
+
+# ── OS / editor cruft ─────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# ── Local logs / scratch ──────────────────────────────────────
+*.log
+tmp/
+.tmp/
+scratch/
+
+# ── Keep the bundle — do NOT ignore these ─────────────────────
+# build-*.md, SETUP.md, the revenue-manager-plugin folder, migrations,
+# and references are the product. They stay in git.
+
+# --- Hardening for bundled mcp-servers/ (secrets never committed) ---
+session.txt
+token_cache*
+auth.json
+*.pyc
+.pytest_cache/
+
+# ===== BEGIN solnest-secrets-guard (added 2026-08-16) =====
+# Keeps credentials out of git. Add your own rules BELOW this block.
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!.env.*.example
+
+# MCP / agent config (frequently holds inline API keys)
+.mcp.json
+.mcp.local.json
+!.mcp.json.example
+.claude.json
+.claude/settings.local.json
+
+# Keys & certificates
+*.pem
+*.p12
+*.pfx
+*.keystore
+*.jks
+*.ppk
+id_rsa
+id_rsa.*
+id_ecdsa
+id_ed25519
+
+# Cloud / service-account credentials
+credentials.json
+client_secret*.json
+service-account*.json
+*-service-account.json
+gha-creds-*.json
+token.json
+tokens.json
+.netrc
+.npmrc
+.pypirc
+
+# Local secret stores
+secrets/
+secrets.json
+secrets.yml
+secrets.yaml
+*.secret
+
+# Terraform (state and tfvars carry plaintext secrets)
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform/
+
+# OS noise
+.DS_Store
+Thumbs.db
+# ===== END solnest-secrets-guard =====
