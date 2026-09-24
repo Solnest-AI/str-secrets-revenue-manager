@@ -1,44 +1,46 @@
-# IntelliHost: the second ranking/visibility source (measured, not guessed)
+# IntelliHost: provider map (measured, not guessed)
 
-Measured live on 2026-09-24 against a Premium account, read-only. Structure only; no account
-data is recorded here.
+Measured live 2026-09-24, read-only, on a Premium account: every one of the 33 read tools was
+called on real properties. Structure only; no account data is recorded here.
 
-## Connection
+## Connection and access
 
-- MCP endpoint `https://clients.intellihost.co/api/mcp`, HTTP transport, `Authorization: Bearer <token>`.
-  The connections kit registers it as `intellihost` and stores the token as `INTELLIHOST_MCP_TOKEN`.
-- **Cloudflare blocks some clients.** A request with Python urllib's default signature gets
-  HTTP 403 "Error 1010: Access denied". Send a normal `User-Agent` (curl and Claude Code pass).
-- **Every data read needs IntelliHost Premium.** Without it, `tools/list` still works (so a
-  tools-only check looks green) but every tool call returns `isError: true` with
-  "An IntelliHost Premium subscription is required to read your account through the API."
-  Treat that exact message as a named gap on the card, never as "no data".
-- A Premium token carries scope `mcp:read` and an `expires_at` (about a year out).
+- MCP `https://clients.intellihost.co/api/mcp` (server "Intellihost" 0.7.0), HTTP, `Authorization:
+  Bearer <token>`. The connections kit registers it as `intellihost`, token `INTELLIHOST_MCP_TOKEN`.
+- **40 tools, returned in 3 pages** of `tools/list`. Read only page one and you see 15. Always
+  follow `nextCursor`. No resources, no prompts (advertised, but empty).
+- **Cloudflare blocks some clients:** Python urllib's default signature gets HTTP 403 "Error 1010".
+  Send a normal `User-Agent`.
+- **Rate limit 120 requests/minute** (`x-ratelimit-limit`). Pace property loops.
+- **Premium is per property, not per account.** `tools/list`, `whoami` and the account-wide
+  tools answer on a free account, but every per-property read returns `isError: true` with
+  "An IntelliHost Premium subscription is required to read that property through the API."
+  A tools-only check reports a free account as connected. On the card, that message is a named
+  gap, never "no data". (Measured: 3 of the first 85 properties probed on a large account had it.)
+- A Premium token has scope `mcp:read` and an `expires_at` about a year out.
 
-## Tools (15)
+## Mapping
 
-whoami, list-properties, get-property, get-listing-details, get-optimization-audit,
-get-listing-optimization, get-revenue-report, get-revenue-indicator, get-helix-predictions,
-get-forecast-budget, get-forecast-variance, get-portfolio-revenue, get-portfolio-health,
-get-pricing-gaps, get-portfolio-funnel (each name ends in `-tool`).
+- `list-properties-tool` `listing_id` is the **Airbnb room id** (39 of 50 measured). Match it to the
+  PMS's Airbnb listing id, the same key RankBreeze uses. `pms` and `dynamic_pricing_provider` were
+  empty on 41 of 50, and base/min/max on all 50: never map or detect a pricing tool from them.
+- `list-properties-tool` takes `limit` (default 50) and `include_inactive`.
 
-There is **no per-date search-ranking tool** (RankBreeze has `get_listing_rankings`). With
-IntelliHost the Visibility spoke comes from the funnel; Ranking stays a named gap unless the
-funnel covers it.
+## Tools (reads 33, writes 7)
 
-## Shapes that matter
+| Group | Tools | What came back |
+|---|---|---|
+| Account | whoami, list-properties | identity + token expiry; property list |
+| **Ranking** | get-rank-series (days, guest_count) | per scrape date x guest count: rank, page. 88 rows / 90 days, 23 scrape dates, 4 guest segments on the measured property. get-rank-snapshot is DEPRECATED (returns a notice) |
+| **Funnel** | get-funnel-dashboard (days, include_daily), get-booking-funnel, get-portfolio-funnel | impressions, first-page impressions, clicks, click rate, nights booked, click-to-book; each vs comp set, with per-step expected rate, index and deficit; 90 daily rows |
+| **Comp market** | get-comp-market (days) | per date p1/p10/p25/median/p75/p90/p99 price, avg occupancy, avg lead time, comp count (60 dates); 30 comp ids; revenue rank percentile vs comps |
+| Pricing engine | get-helix-predictions (days), get-pricing-recommendations (days), get-pricing-gaps | Helix: per night current vs proposed price, booking probability at both, expected revenue, push status. Recommendations: PriceLabs/Wheelhouse prices passed through with min-stay and demand. Empty unless a dynamic pricing provider is configured in IntelliHost |
+| Live state | get-live-prices, get-active-overrides, get-sync-status, get-pricing-rules | channel price per night + source; overrides in effect; push eligibility; active rules by scope |
+| Bookings | get-reservations, get-revenue-report (YoY), get-portfolio-revenue, get-booking-pace | reservation rows with revenue and status; period metrics vs prior year; pickup 7d/30d |
+| Calendar | get-calendar | empty on all 3 measured properties: fills only when a PMS is connected inside IntelliHost |
+| Listing | get-listing-details, get-optimization-audit, get-listing-optimization (regenerate=false), get-change-tracker, get-reviews | Airbnb listing facts; audit with $ attribution and ranked recommendations; AI title/description with scores; dated changes with funnel-rate deltas and estimated revenue impact; reviews with ratings |
+| Portfolio | get-portfolio-health, get-action-items, get-market-data, get-forecast-budget, get-forecast-variance | rating/setup triage; alert feed; saved market studies; budgets (empty if none set) |
+| Not working | get-revenue-indicator | "Helix forecasting job is not currently running", on every property |
+| **Writes (never called in testing)** | set-property-price-override, set-price-thresholds, set-auto-sync, upsert-pricing-rule, copy-pricing-rules, delete-pricing-rules, resolve-action-item, refresh-audit | change live pricing or state. The revenue manager may only use them behind the plain-yes card, with a fresh read before and a re-read after |
 
-`list-properties-tool` -> `{count, properties: [{id: int, name, listing_id: str, pms, is_active,
-base_price, min_price, max_price, dynamic_pricing_provider}]}`
-- **Map by `listing_id`, which is the Airbnb room id** (39 of 50 on the measured account: all
-  digits, 15+ long). Match it to the PMS's Airbnb listing id, the same key RankBreeze uses.
-- `pms` and `dynamic_pricing_provider` were empty on 41 of 50: never use them to map or to
-  detect the pricing tool.
-- `base_price`, `min_price`, `max_price` were empty on all 50: IntelliHost is not a pricing source.
-
-`get-portfolio-funnel-tool` -> `{as_of, totals: {properties_active, properties_with_data},
-properties: [{property_id: int, name, month, first_page_impressions: int, clicks: int,
-click_rate_pct: float, nights_booked: int, comp_benchmark: {...}}]}`
-- Monthly, one row per property with data (40 of 50 measured). This is the Visibility spoke:
-  impressions and click rate against `comp_benchmark`, the same role RankBreeze's
-  `get_listing_metrics_summary` plays.
+Reservations and reviews carry guest names: never print, store or cache them.
