@@ -129,6 +129,51 @@ Open your first response with:
 
 Do not continue past Step 0 until at least PMS + pricing are detected.
 
+### Fast path: Hospitable + PriceLabs has a tested runner
+
+When the PMS is Hospitable and the pricing tool is PriceLabs, do NOT pull the data by hand.
+Use the runner in `fetch/`: it walks the flywheel, prices, checks every rule and stores the
+PriceLabs pile, all in one command, and every guard in it is tested. Run from this skill's
+folder.
+
+First time on this Supabase project (no rows in `property_config`), ask the markup question
+(Step 9's property config), then set the properties up, dry run first:
+
+```bash
+python3 fetch/setup_properties.py --markup airbnb=16 --markup vrbo=20 --dry-run
+```
+
+then the same line without `--dry-run`. It lists every property ✅ or ❌ with the reason.
+
+Per property:
+
+```bash
+python3 fetch/analyze90.py --property "Exact Property Name"
+```
+
+Exit 0 is `analysable` or `degraded` (the gaps are named at the top: say them first). Exit 2
+is `blocked`: say why, and do not invent a price. For price changes on this path, write one
+change file per listing (shape in `fetch/apply_change.py --help`) and plan it:
+
+```bash
+python3 fetch/apply_change.py plan --change change.json
+```
+
+Show the whole card and ask whether to apply. On a plain yes:
+
+```bash
+python3 fetch/apply_change.py apply --plan PLAN_ID
+```
+
+It refuses if anything moved since the plan, saves the undo first, and re-reads every field
+after. To undo, plan the reverse change and ask again:
+
+```bash
+python3 fetch/apply_change.py rollback --journal JOURNAL_FILE
+```
+
+Every other stack follows Steps 1 to 9 below with the connected tools.
+
 > **v2 ROADMAP (note only — DO NOT build now):** auto-setup the operator's pricing tool (Wheelhouse/Beyond/etc.) and run a first-run discovery audit into a reference file. v1 detects-and-uses what's already connected; PriceLabs is the tested primary.
 
 ## Step 1 — Autonomy rules
@@ -221,7 +266,7 @@ The four Supabase tables ship with migration 001. The three nullable outcome col
 **Never assume the audit tables exist.** Most operators arrive with a brand-new, completely empty Supabase project. `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` does **not** save you there — the `IF NOT EXISTS` guards the *column*, not the *table*, so it still throws `relation "pricing_decisions" does not exist`. Create first, then read, every single run.
 
 1. **Look:** call `list_tables` (or `SELECT tablename FROM pg_tables WHERE schemaname = 'public';`) and check for the four audit tables: `property_config`, `pricing_decisions`, `pricelabs_change_log`, `market_snapshots`.
-2. **Create what's missing:** apply `migrations/001_revenue_tables.sql` from this plugin's folder, then `migrations/002_outcome_columns.sql`. Read the files off disk and apply them **verbatim** — never retype the SQL from memory. Both are fully idempotent (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`, `DROP TRIGGER IF EXISTS`, guarded policy creation), so running them against an existing install is a harmless no-op.
+2. **Create what's missing:** apply `migrations/001_revenue_tables.sql` from this plugin's folder, then `002_outcome_columns.sql`, `003_service_role_policies.sql` and `004_pricelabs_recommendations.sql`, in that order. Read the files off disk and apply them **verbatim** — never retype the SQL from memory. Both are fully idempotent (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`, `DROP TRIGGER IF EXISTS`, guarded policy creation), so running them against an existing install is a harmless no-op.
    - Prefer `apply_migration` when the Supabase MCP exposes it — it records migration history. Otherwise `execute_sql`. Otherwise the REST fallback.
 3. **If all four already exist:** still apply `002`. It's three `ADD COLUMN IF NOT EXISTS` statements, costs nothing, and guarantees the outcome columns on an install that only ever ran 001.
 4. **Say what you did, in one line.** `🗄️ Audit schema: created 4 tables (first run)` or `🗄️ Audit schema: verified`.

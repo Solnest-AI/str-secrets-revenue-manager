@@ -1,0 +1,14 @@
+{
+  "name": "str-secrets-revenue-manager",
+  "description": "STR Secrets Summit 2.0: the Revenue Manager skill from Solnest AI.",
+  "owner": { "name": "Solnest AI" },
+  "plugins": [
+    {
+      "name": "revenue-manager",
+      "description": "STR revenue manager: walks the Revenue Flywheel on every call, prices with a safety layer, and changes prices only on a plain yes.",
+      "version": "5.0.0",
+      "source": "./revenue-manager-plugin",
+      "author": { "name": "Solnest AI" }
+    }
+  ]
+}
