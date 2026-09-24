@@ -18,7 +18,7 @@ Measured live 2026-09-24 on Premium properties (see references/intellihost.md):
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date
 
 from _mvp_store import CannotAnalyze, identity
 
