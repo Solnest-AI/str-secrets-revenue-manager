@@ -3,7 +3,7 @@
     "generated_date": "2026-06-17",
     "portfolio_name": "Sample Portfolio — Revenue Manager",
     "default_currency": "USD",
-    "recommend_only_note": "RECOMMEND-ONLY — you approve every change. Nothing was pushed automatically."
+    "recommend_only_note": "NOTHING CHANGES WITHOUT YOUR YES. Nothing was pushed automatically."
   },
   "portfolio_summary": {
     "property_count": 2,
@@ -42,7 +42,7 @@
       ],
       "safety_layer": {
         "bounds_used": "min 99 / max 199 (from PriceLabs)",
-        "max_delta": "25%", "currency": "USD asserted",
+        "max_delta": "15%", "currency": "USD asserted",
         "freshness": "live", "confidence": "high — 42 comps, live pacing"
       }
     },
@@ -68,7 +68,7 @@
       "dso_recommendations": [],
       "safety_layer": {
         "bounds_used": "min 249 / max 463 (from PriceLabs)",
-        "max_delta": "25%", "currency": "CAD asserted — no USD comps mixed",
+        "max_delta": "15%", "currency": "CAD asserted — no USD comps mixed",
         "freshness": "live", "confidence": "medium — thin comp set (18)"
       }
     }

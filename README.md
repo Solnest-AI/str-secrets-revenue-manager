@@ -102,14 +102,14 @@ Same end result either way: a working connector, your key kept local, your data 
 This is the part that lets you sleep. **Every recommendation runs through a built-in safety layer before it ever reaches you, and nothing is ever auto-written.** You approve every change, full stop.
 
 - **Floor & ceiling guards** — your existing pricing-tool min/max become hard limits. Nothing is ever recommended below your floor or above your ceiling.
-- **Max-delta cap** — no single recommendation can swing your price more than 25% in one move. No wild jumps.
+- **Max-delta cap** — no single recommendation can swing your price more than 15% in one move without a loud flag. No wild jumps.
 - **Thin-comp transparency** — if the comp data behind a rec is thin, Claude says so out loud instead of pretending it's confident.
 - **Currency gate** — it won't mix currencies and quietly hand you a nonsense number.
 - **Explanatory confidence** — every rec comes with the *why* and a confidence level, not just a price.
 - **Freshness checks** — stale data gets flagged, not silently used.
 - **Human approval, always** — it recommends, you approve, then (and only then) it logs the change. There is no silent push to your PMS or your pricing tool. Ever.
 
-That's the whole promise: recommend-only, you approve every change, nothing pushed silently.
+That's the whole promise: nothing changes without your yes, and nothing is pushed silently.
 
 ---
 
@@ -142,7 +142,7 @@ By the end you'll have your PMS connected, your pricing tool connected, a Supaba
 - **PMS connection** — gets you to your PMS API key, then either installs the bundled Hospitable connector or builds yours fresh, and smoke-tests it on your real data.
 - **Pricing + ops connection** — same flow for PriceLabs (bundled) or Wheelhouse / Beyond (built fresh), plus optional Turno, RankBreeze, and AirROI.
 - **Supabase** — sets up your free audit database and runs both migrations.
-- **Install + first run** — installs the plugin, reads your existing pricing-tool min/max as your floor/ceiling, confirms your markup, and runs your first recommend-only pricing report.
+- **Install + first run** — installs the plugin, reads your existing pricing-tool min/max as your floor/ceiling, confirms your markup, and runs your first pricing report.
 
 > **Heads-up — you'll be asked about two folders.** This bundle folder is one. When Claude builds a connector fresh (any tool that isn't in `mcp-servers/`), it asks for a *second* folder — your normal Documents or projects folder — and installs the little server there. That's expected. The five bundled connectors don't trigger that question; they install right here in place.
 
@@ -209,4 +209,4 @@ This whole thing came out of the **Solnest AI** community, where we teach busine
 
 ---
 
-*Built by Solnest AI. Recommend-only, you approve every change, nothing pushed silently — that's the whole promise.*
+*Built by Solnest AI. Nothing changes without your yes, nothing pushed silently — that's the whole promise.*

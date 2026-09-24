@@ -26,7 +26,7 @@ These govern every pricing read on a Hospitable stack. They override generic ass
 
 ## Tool surface — what each returns and the revenue need it serves
 
-All tools are read-only except `update_property_calendar`, `create_reservation`, `update_reservation`, `respond_to_review`, and `send_message`. Under v1 RECOMMEND-ONLY posture, the skill **reads** freely and **never writes** to the calendar/reservations without an explicit human approval gate.
+All tools are read-only except `update_property_calendar`, `create_reservation`, `update_reservation`, `respond_to_review`, and `send_message`. The skill **reads** freely and **never writes** to the calendar/reservations until the operator says yes to the card.
 
 ### Property structure
 
@@ -41,7 +41,7 @@ All tools are read-only except `update_property_calendar`, `create_reservation`,
 | Tool | Returns | Revenue-management need it serves |
 |---|---|---|
 | `hospitable_get_property_calendar` | `data.days[]` — one object per date: `date`, `min_stay`, `status` (with `status.reason` = `AVAILABLE` / `RESERVED`), and `price.amount` (**CENTS** → ÷100) in **native currency**. | **The core forward read.** This is GROUND TRUTH for the listed ASK nightly price and the listed min-stay. Pull the next **365 days** for: forward occupancy by rolling window (7/30/60/90d), the ask-price curve to lay against the PriceLabs forward curve, min-stay audit by season, orphan-day detection (single `AVAILABLE` night between two `RESERVED`), and the empirical markup ratio (calendar ÷ PriceLabs). **Recency:** note how fresh the calendar is and surface it (freshness gate). |
-| `hospitable_update_property_calendar` | Writes nightly price / availability / min-stay for date(s). | **The ONLY price-mutation path on Hospitable.** v1 is recommend-only: the skill proposes a change, the **approval gate** shows current→recommended, nearest floor/ceiling, comp count, currency, reasoning — and only on explicit approval does it call this. Most pushes go through PriceLabs (which then syncs to this calendar); this tool is the direct-to-PMS override path for date-specific moves. Every successful write → Supabase audit row. |
+| `hospitable_update_property_calendar` | Writes nightly price / availability / min-stay for date(s). | **The ONLY price-mutation path on Hospitable.** The skill proposes a change on a card showing current→recommended, nearest floor/ceiling, comp count, currency, reasoning — and only on a plain yes does it call this. Most pushes go through PriceLabs (which then syncs to this calendar); this tool is the direct-to-PMS override path for date-specific moves. Every successful write → Supabase audit row. |
 
 ### Historical demand — occupancy, ADR, LOS, lead-time, channel mix
 
@@ -49,7 +49,7 @@ All tools are read-only except `update_property_calendar`, `create_reservation`,
 |---|---|---|
 | `hospitable_list_reservations` | All reservations the account exposes (aim 2+ yrs back): check-in/out dates, nights, total/payout amounts, channel/source, status, guest. | **The cleared-rate + demand-history engine.** Computes: booked nights by month (this year / last year / two back) for **pace vs STLY**; **realized ADR** (the cleared rate — track against ask); **LOS distribution** (1/2/3/4+ nights); **lead-time distribution** (same-day, 1–7d, 8–30d, 30–90d, 90+d — feeds the Lead-Time Pricing table); **channel mix** (Airbnb/VRBO/direct — drives whether channel fees explain any calendar-vs-PriceLabs gap). |
 | `hospitable_get_reservation` | One reservation in full: financial breakdown, fees, guest, dates, status. | Drill-down when a single booking looks anomalous (e.g., a date that "booked within hours" → was underpriced; framework red flag). Confirms fee structure feeding the empirical-markup question. |
-| `hospitable_create_reservation` | Creates a reservation (block/owner-stay/manual booking). | Not a pricing read. Out of scope for v1 recommend-only pricing; never called by the analysis path. Listed for completeness. |
+| `hospitable_create_reservation` | Creates a reservation (block/owner-stay/manual booking). | Not a pricing read. Out of scope for pricing; never called by the analysis path. Listed for completeness. |
 | `hospitable_update_reservation` | Modifies an existing reservation. | Same — not in the pricing critical path. Completeness only. |
 
 ### Money — payouts / realized revenue
@@ -97,11 +97,11 @@ All tools are read-only except `update_property_calendar`, `create_reservation`,
 ## Mandatory safety layer on a Hospitable stack (all REQUIRED in v1)
 
 1. **Floor/ceiling** — default to the listing's existing PriceLabs min/max; store in `property_config` (`min_price`/`max_price`). Never silently recommend outside the bound; if a rec wants to breach it, surface it and ask whether to move the **bound**.
-2. **Max-delta** — a single recommended move may not shift a calendar price more than **25%** from current (configurable). Larger moves are flagged "large move — confirm," never hidden.
+2. **Max-delta** — a single recommended move may not shift a calendar price more than **15%** from current (configurable). Larger moves are flagged "large move — confirm," never hidden.
 3. **Thin-comp transparency** — always produce a number; when comp count < ~20, show the count and flag lower confidence in plain language. No hard refusal.
 4. **Currency hard gate** — auto-detect the property's native currency (e.g. CAD) from `list_properties`/calendar. Never let a foreign-currency figure (e.g. an AirROI comp whose echoed currency differs from the property's) enter a recommendation without explicit conversion; on mismatch, convert or clearly flag.
 5. **Explanatory confidence** — every rec states its inputs in plain language ("based on 23 comps (8 same-bedroom); market median $X; your forward occupancy Y%"), not a bare badge.
-6. **Approval gate** — recommend-only. No silent write to `update_property_calendar` or PriceLabs. The gate shows current price, recommended price, nearest bound, comp count, currency, and reasoning; flags anomalies.
+6. **The yes** — no silent write to `update_property_calendar` or PriceLabs; a plain yes in chat applies it, no codes. The gate shows current price, recommended price, nearest bound, comp count, currency, and reasoning; flags anomalies.
 7. **Freshness** — surface PriceLabs `last_refreshed_at` and Hospitable calendar recency; never present a rec on stale/unknown data without saying so.
 8. **Audit** — on a real change only, write the existing 4 Supabase tables; `pricing_decisions` now carries the 3 nullable outcome columns (`booked_at`, `lead_time_days`, `price_delta_from_rec`) for the future learning loop.
 

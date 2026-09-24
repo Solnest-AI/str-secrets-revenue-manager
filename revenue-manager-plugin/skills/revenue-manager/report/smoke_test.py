@@ -34,8 +34,8 @@ def test_csv_fallback():
         assert len(prop_csvs) == len(data["properties"]), \
             f"expected {len(data['properties'])} property CSVs, got {len(prop_csvs)}"
         text = (out_dir / "summary.csv").read_text(encoding="utf-8")
-        assert "RECOMMEND-ONLY" in text, "recommend-only note missing from summary"
-    print("  ok: CSV fallback (summary + one CSV per property, recommend-only note present)")
+        assert "WITHOUT YOUR YES" in text, "approval note missing from summary"
+    print("  ok: CSV fallback (summary + one CSV per property, approval note present)")
 
 
 def test_partial_payload_does_not_crash():

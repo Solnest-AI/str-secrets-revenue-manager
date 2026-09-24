@@ -29,7 +29,7 @@ script uses safe defaults so a partial payload never crashes it):
     "generated_date": "2026-06-17",
     "portfolio_name": "My Portfolio",
     "default_currency": "USD",
-    "recommend_only_note": "RECOMMEND-ONLY — you approve every change."
+    "recommend_only_note": "NOTHING CHANGES WITHOUT YOUR YES."
   },
   "portfolio_summary": {
     "property_count": 4, "proposed_change_count": 7,
@@ -59,7 +59,7 @@ script uses safe defaults so a partial payload never crashes it):
       ],
       "safety_layer": {
         "bounds_used": "min 99 / max 199 (from PriceLabs)",
-        "max_delta": "25%", "currency": "USD asserted",
+        "max_delta": "15%", "currency": "USD asserted",
         "freshness": "live", "confidence": "high — 42 comps, live pacing"
       }
     }
@@ -154,7 +154,7 @@ def build_xlsx(data, out_path):
     ws.cell(r, 1, f"Generated {_today_str(meta)}  ·  currency shown per property")
     r += 1
     note = _g(meta, "recommend_only_note",
-              "RECOMMEND-ONLY — you approve every change. Nothing was pushed automatically.")
+              "NOTHING CHANGES WITHOUT YOUR YES. Nothing was pushed automatically.")
     ws.cell(r, 1, note).font = WARN_FONT
     r += 2
 
@@ -411,7 +411,7 @@ def build_csv_fallback(data, out_path):
         w = csv.writer(f)
         w.writerow(["Revenue Manager — Portfolio Summary", _today_str(meta)])
         w.writerow([_g(meta, "recommend_only_note",
-                       "RECOMMEND-ONLY — you approve every change.")])
+                       "NOTHING CHANGES WITHOUT YOUR YES.")])
         w.writerow([])
         w.writerow(["Properties analyzed", _g(summary, "property_count", len(props))])
         w.writerow(["Proposed changes", _g(summary, "proposed_change_count")])

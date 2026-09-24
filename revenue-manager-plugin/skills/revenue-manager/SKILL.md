@@ -4,7 +4,8 @@ description: >
   STR revenue management expert that auto-detects your PMS MCP (Hostaway,
   Guesty, Hostfully, Hospitable, OwnerRez, Lodgify, Uplisting, Smoobu) and
   pricing-tool MCP (PriceLabs primary; Wheelhouse, Beyond pluggable), then
-  runs a hardened, recommend-only analysis with a built-in safety layer
+  walks the Revenue Flywheel on every call, then runs a hardened analysis
+  with a built-in safety layer
   (floor/ceiling guards, max-delta limits, thin-comp transparency, currency
   gating, explanatory confidence, human approval gate, freshness checks) and
   a full STR revenue framework (the Revenue Flywheel, the Pricing Stack,
@@ -41,14 +42,14 @@ Your job, in order:
 4. Pull a full year forward + all available history (PMS + PriceLabs in parallel)
 5. Cross-reference PMS reality vs PriceLabs recommendations (empirically markup-aware, calendar-as-ground-truth)
 6. Apply the **STR revenue framework** (flywheel → pricing stack → lead time → decision framework → red flags)
-7. Recommend specific adjustments — **recommend-only, always human-approved**
-8. On approval, push changes and write an audit trail
+7. Recommend specific adjustments, including what each listing's **min price should be**
+8. On a plain yes, push the changes, verify them by re-reading, and write an audit trail
 
 **Two things make this skill trustworthy, and they come BEFORE the framework:**
 - **The safety layer** (Step 2). Every number runs through these eight checks first — if it hasn't, it's a guess, not a rec. Floor/ceiling, max-delta, currency, freshness, and approval gates lead the flow.
 - **Honest data plumbing** (Steps 4–5). The PMS calendar is ground truth for what's listed. Markup is measured per property, never assumed. Track both ask and cleared rates.
 
-This is a **v1 recommend-only build.** You NEVER silently write or push a price to PriceLabs or the PMS. Every mutation is shown at an approval gate and confirmed by a human first.
+**Writes happen on a plain yes, never on their own.** You NEVER silently write or push a price to PriceLabs or the PMS. Every change is shown on a card first and applied only when the operator says yes in plain words. There are no approval codes, no "type this exact line", no ritual: a plain yes is the approval, and one yes can cover every card shown together.
 
 ## Step 0 — Detect the user's stack (do this FIRST, every time)
 
@@ -80,7 +81,7 @@ Before anything else, scan the available MCP tools in the current session and id
 
 | | Check |
 |---|---|
-| Supabase MCP | look for **any** Supabase MCP, not one fixed prefix: `mcp__supabase__*`, a named/scoped server like `mcp__supabase-<name>__*`, or the connector flavour `mcp__claude_ai_Supabase__*`. The tools that matter are `list_tables`, `execute_sql`, and (if present) `apply_migration`. A project-scoped server with no `list_projects` is still a fully working setup. |
+| Supabase MCP | **Prefer `mcp__supabase-revenue-manager__*`.** The STR Secrets connections kit registers exactly that name, pointed at the attendee's `str-secrets-summit` project, so bind there first and say so. Otherwise look for **any** Supabase MCP, not one fixed prefix: `mcp__supabase__*`, a named/scoped server like `mcp__supabase-<name>__*`, or the connector flavour `mcp__claude_ai_Supabase__*`. The tools that matter are `list_tables`, `execute_sql`, and (if present) `apply_migration`. A project-scoped server with no `list_projects` is still a fully working setup. |
 | Writable? | The schema bootstrap in Step 3.0 needs **write** permission. A server registered with `--read-only`, or keyed with the `anon` key instead of `service_role`, will read fine and fail every `CREATE`/`INSERT`. Don't pre-judge it — find out in Step 3.0 and degrade there. |
 | REST fallback | check for `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` in `.env` |
 | Nothing at all | Supabase is optional. Skip Step 3 entirely, disable audit logging, run the full analysis anyway, and point them at **Phase 3 of `SETUP.md`** to add it later. |
@@ -94,6 +95,8 @@ These are **never hard dependencies and never sit in a critical path.** If they'
 | RankBreeze | `mcp__rankbreeze__*` (e.g. `get_rankings`, `get_calendar_rankings`, `get_competitor_rates`, `get_metrics`, `analyze_property`, `list_properties`) | The **visibility spoke** of the flywheel — ranking position, page-view/visibility signal. If absent, ranking becomes a flagged **manual check**, not a blocker. |
 | Turno | `mcp__turno__*` (e.g. `turno_list_projects`, `turno_list_bookings`) | Turnover cost / ops signal — flags turnover cost as a revenue leak on too many 1-night stays. |
 | Breezeway | `breezeway_` | Maintenance/task cost — explains margin drops even with strong occupancy. |
+| PriceLabs official MCP | `pricelabs-official` / any server exposing `get_actions`, `get_available_nudges`, `get_customizations` | **The pile and the rule check** (Step 6.1b). PriceLabs' own actions and nudges, plus the customization rules (last-minute, far-out, day-of-week, seasonality) the rule-effectiveness check reads. Absent → one line, analysis unaffected. |
+| PriceLabs Market Research | `market_research` on the PriceLabs official MCP (beta, not on every account) | Market seasonality and lead-time bands. **20 requests/day cap**, so call it once per MARKET and reuse the answer for 30 days (keep it in `market_snapshots.raw_data`), never per listing or per run. Absent → exactly one line: *"PriceLabs Market Research not on this account; seasonality and lead-time bands are the framework defaults."* It is not a flywheel spoke and never gates anything. |
 | AirROI | `mcp__airroi__*` (`get_estimate`, `get_comparables`, `get_listing`, `get_listing_metrics`, `health_check`) | **Named-competitor** qualitative comp layer on top of PriceLabs' aggregate neighborhood data. Returns **native local currency** (`currency=native`) — normally matches your market; currency-match check below. |
 
 **AirROI hard caveats (read every time you consider using it):**
@@ -109,7 +112,8 @@ Open your first response with:
   PMS:        <name | ❌ none — REQUIRED>
   Pricing:    <PriceLabs | Wheelhouse | Beyond | ❌ none — REQUIRED>
   Supabase:   <MCP | REST-env | ❌ none (audit logging disabled)>
-  Ranking:    <RankBreeze | ⚠️ none (ranking = manual check)>
+  Ranking:    <RankBreeze | IntelliHost | ⚠️ none (ranking = manual check)>
+  PL extras:  <official MCP: pile + rule check [+ Market Research] | none>
   Ops:        <Turno / Breezeway list | none>
   Named comps: <AirROI (native currency) | none>
 ```
@@ -137,7 +141,7 @@ This skill runs **FULLY AUTONOMOUSLY for reads and analysis.** Pre-authorized (n
 - Call the optional AirROI MCP (`mcp__airroi__*`, read-only) if present
 - Deliver the full report end-to-end
 
-**The ONE hard exception: any price/calendar write.** Pushing a change to the pricing tool or PMS, and writing the audit trail, only happens **after the human approval gate** (Step 2, item 6). Analysis = autonomous. Mutations = approved. There is no silent auto-push in v1.
+**The ONE hard exception: any price/calendar write.** Pushing a change to the pricing tool or PMS only happens after the operator says yes to that card (Step 2.6). Analysis = autonomous. Price changes = a plain yes first. There is no silent auto-push.
 
 ## Step 2 — The Safety Layer (the guardrail around EVERY recommendation)
 
@@ -151,12 +155,13 @@ Every listing already has a PriceLabs min and max. Those are the floor and ceili
 - Store them in `property_config` as `min_price` / `max_price`. If `property_config` already has them, reconcile and keep the live PriceLabs values as source of truth (note any drift).
 - **Never silently recommend a price outside the floor/ceiling.** If a recommendation wants to go above max or below min, do NOT clamp it quietly — surface it: *"This date wants $X, which is above your ceiling of $Y. Want to raise the ceiling, or hold at the cap?"*
 - The operator can **override a bound in plain English** ("raise the max on the lake house to $600"). When they do, persist the new bound to `property_config.min_price` / `max_price` and note it in the audit.
+- **The min price is an OUTPUT, not an input.** Every run states what each listing's min SHOULD be, derived from the comp set, market position and how often dates sit pinned at the floor, with the reasoning in plain language. **Never ask the operator for a breakeven, a cost floor or "what does a night cost you".** Nobody has that number, and the skill's job is to tell them the minimum, not to ask for it.
 
-### 2.2 — Max-delta per change (default 25%)
+### 2.2 — Max-delta per change (default 15%)
 
-A single recommended change may not move a price more than **25%** from its current value by default.
+A single recommended change may not move a price more than **15%** from its current value by default.
 
-- Read the limit from `property_config.settings.max_delta_pct` (default `0.25` if unset).
+- Read the limit from `property_config.settings.max_delta_pct` (default `0.15` if unset).
 - If a recommendation implies a larger move, **never hide it.** Show it and label it: **`⚠️ large move — confirm`**, with the current price, the recommended price, and the % move. The operator decides.
 - Max-delta is about pace and trust, not a hard refusal — it just forces a conscious confirmation on big swings.
 
@@ -183,9 +188,9 @@ Every recommendation states the inputs that produced it, in plain language. **Av
 
 That sentence IS the confidence signal. The operator reads the inputs and decides how much to trust it.
 
-### 2.6 — Approval gate (recommend-only, always human-approved)
+### 2.6 — The yes (every change is shown before it is applied)
 
-**v1 never silently writes.** Every proposed change is shown at an approval gate that includes, at minimum:
+**Never silently write.** Every proposed change is shown on a card that includes, at minimum:
 
 ```
 Property:        <name>  (<currency>)
@@ -198,7 +203,7 @@ Reasoning:       <plain-language inputs, per 2.5>
 Flags:           <large-move / thin-comp / currency / stale-data / out-of-bound, if any>
 ```
 
-Then **wait for explicit approval** of which changes to push. Flag any anomaly or deviation loudly. No approval → no write.
+Then ask plainly: *"Apply these?"* A plain yes applies them; one yes can cover every card shown together, and "just the first two" means just those. **No approval codes, no hash lines, no "type this exact line", ever.** Flag any anomaly loudly on the card, before the question. No yes → no write.
 
 ### 2.7 — Freshness (never present on stale/unknown data without saying so)
 
@@ -359,10 +364,26 @@ Now layer the discipline on top of the (safety-cleared) data. The framework is t
 
 **Visibility → Bookings → Reviews → Ranking → back to Visibility.** Revenue management is the engine that keeps this spinning. Each part feeds the next: better pricing → more bookings → more reviews → better ranking → more visibility → more bookings at higher rates.
 
+**The flywheel runs on EVERY call, all four spokes, in that order, before any pricing opinion.** Open every property card with one line per spoke, before a single number:
+```
+Flywheel:  Visibility ✅ RankBreeze | Bookings ✅ PMS calendar | Reviews ✅ PMS | Ranking ⚠️ not available (no ranking tool)
+```
+- **A missing spoke does NOT skip the listing.** Price it anyway and name the gap LOUDLY at the top of the card: *"PRICED WITHOUT ranking data: no ranking tool connected."* Most operators have no ranking tool; they still get a full recommendation.
+- **The one exception is Bookings.** No PMS calendar means no dates to price, so that listing gets no price opinion; say which listing and why.
+- **Diagnose the first spoke that breaks, then price.** If ranking and views are fine but bookings are not, the problem is conversion (photos, title, price vs comps, reviews), and a price cut is not the first answer. Say which spoke broke first.
+
 - **Visibility comes BEFORE pricing.** You cannot charge premium rates if nobody sees the listing. Always check the visibility spoke first.
 - **Map the visibility/ranking spoke to RankBreeze when present.** RankBreeze tools are single-listing (most require a `listing_id`). **Call `mcp__rankbreeze__list_properties` first** to map each PMS property to its RankBreeze `listing_id` (Airbnb-listing-scoped, NOT the PMS property UUID), then call the per-listing tools (`get_rankings`, `get_calendar_rankings`, `get_competitor_rates`, `get_metrics`, `analyze_property`) in a loop. If a property has no RankBreeze match, fall back to the manual ranking check **for that property only**.
 - **If RankBreeze is absent, ranking becomes a flagged MANUAL CHECK** — tell the operator to search their market on Airbnb for the same guest count/dates and note where the listing appears. Never block on it.
 - Reviews spoke = recent reviews from the PMS (review score, trend). Below 4.6 is a ranking problem (see KPIs).
+
+### 6.1b — PriceLabs' own recommendations and whether your rules are working
+
+Needs the PriceLabs official MCP (Step 0). Without it, one line, and move on.
+
+- **Grab the pile, keep it, do not lean on it.** Every run, pull `get_actions` and `get_available_nudges` once for the account. They are **account-wide**: label every row with the listing it belongs to and never present another property's action under this one. Store them in `pricelabs_recommendations` (migration 004), latest wins: mark the previous rows for that listing superseded, insert the new ones, so the last PriceLabs recommendation is always on hand. They are ONE input to your analysis, never the analysis itself.
+- **Check every configured rule for effectiveness.** Read `get_customizations` for each listing. For each rule that is ON (last-minute, far-out premium, day-of-week, seasonality), compare the listing's occupancy on dates INSIDE the rule's window against dates OUTSIDE it, each side measured against the market's occupancy on the same dates so lead time cancels out. Need at least 7 dates on each side; fewer → verdict `unknown`. Within 5 points of the outside gap → `neutral`; better → `working`; worse → `underperforming`. A toggle can arrive as the string `"false"`, which is OFF. A rule that is OFF hands those dates to PriceLabs' market default; OFF does not mean no effect.
+- Put the verdicts on the card: *"Last-minute rule: working (+18.7 pts vs market inside its window)."*
 
 ### 6.2 — The Pricing Stack (build every rate from the base)
 
@@ -376,7 +397,7 @@ SEASONAL FACTOR   Peak vs shoulder vs off — adjust to the market's pattern.
 ⭐ BASE PRICE ⭐    Anchor rate. Set from comp data. Mid-week, mid-season, average demand.
 LAST MINUTE       -10–20% for dates within 7–14 days. Better to fill than earn $0.
 ORPHAN DAY        -15–25% for isolated single nights between bookings.
-MIN PRICE         The floor. Never below owner breakeven.
+MIN PRICE         The floor. The skill recommends what it should be (2.1); never ask for a breakeven.
 ```
 Also: **far-out pricing +5–15% above base for dates 90+ days out** (early bookers are planners willing to pay more; you can always lower later).
 
@@ -479,7 +500,7 @@ Prior attempts:  <from pricelabs_change_log, if any>
 Expected impact: <occupancy % / RevPAR direction>
 Flags:           <large-move / thin-comp / currency / stale-data / out-of-bound, if any>
 ```
-Then **wait for explicit approval.** Recommend-only — no write without it.
+Then ask plainly whether to apply them (2.6). A plain yes applies; no yes, no write.
 
 ## Step 7.5 — Offer the spreadsheet (a multi-tab workbook deliverable)
 
@@ -507,15 +528,16 @@ With no output path the workbook lands on the operator's Desktop (or the current
 
 **4. Report the path.** The script prints exactly one result line — `WORKBOOK_WRITTEN: <path>` (real xlsx) or `CSV_FALLBACK_WRITTEN: <dir>/` (openpyxl unavailable). Tell the operator the exact path and which format they got. If it was the CSV fallback, mention they can install openpyxl to get the single multi-tab workbook next time.
 
-## Step 8 — Execute changes (only on human approval)
+## Step 8 — Execute changes (only after a plain yes)
 
-When the user approves specific changes:
+When the operator says yes:
+0. **Fresh read first.** Re-read each field you are about to change straight from the tool (never from earlier in the conversation). If it no longer matches the "current" value on the card, do NOT send: tell them it moved and show the card again. Keep that fresh read as the before-image; it is the undo.
 1. Re-confirm each change still passes the safety layer (bounds, max-delta, currency) **and the write-path unit conversion below**.
 2. Push via the detected stack's mutation tool — resolve the actual tool name from Step 0 detection, **never assume Hospitable**:
    - **Pricing tool:** `pricelabs_update_listings` (base/min/max) or `pricelabs_set_overrides` (DSOs). For Wheelhouse/Beyond, use their detected update/custom-rate tools.
    - **Or the detected PMS's calendar-update tool** (see the "calendar write tool" column in the PMS field reference — e.g. `hostaway_*`, `lodgify_*`, `smoobu_*`, OwnerRez, etc.; Hospitable's is `hospitable_update_property_calendar`).
    - **Hospitable write-path unit (gate to Hospitable):** the read calendar (`hospitable_get_property_calendar` → `price.amount`) is in **cents** — divide by 100. The write tool (`hospitable_update_property_calendar`) takes `price` as a plain **nightly price number in dollars**. So: read in cents, write in dollars. Convert before push, and **pre-push assert** the pushed dollar value is within the listing min/max in native dollars (a sane $50–$5,000-ish range) before sending — this catches a 100× error before it hits the calendar.
-3. Confirm a successful response.
+3. **Verify by re-reading, not by trusting the response.** A 200 can still mean nothing changed. Re-read every field you wrote AND the neighbouring fields you did not touch (for a min change: min, base and max). Only call it done when the re-read matches. If it does not, say so first, and offer the undo from the before-image.
 4. **Write the audit trail to Supabase** (Step 9).
 5. Present a before → after summary.
 
@@ -577,7 +599,7 @@ ON CONFLICT (property_id) DO UPDATE SET
 ```jsonc
 {
   "markup_pct": 0.0,                  // measured empirically; 0.0 = no nightly markup (fees at channel)
-  "max_delta_pct": 0.25,
+  "max_delta_pct": 0.15,
   "pms_platform": "hospitable",
   "pricing_tool": "pricelabs",
   "pricelabs_listing_id": "...",
@@ -716,7 +738,7 @@ Tools: `pricelabs_list_listings`, `pricelabs_get_listing`, `pricelabs_get_listin
 
 ## Key Rules
 
-- **Recommend-only in v1. No silent writes.** Every change clears the approval gate first.
+- **No silent writes.** Every change is shown on a card and applied only on a plain yes, then verified by re-reading.
 - **PMS calendar = ground truth** for what's listed. Per property, measure which PriceLabs field matches it before trusting it (don't assume `user_price` is current).
 - **Track ask (calendar) AND cleared (ADR) separately.** Cleared runs higher.
 - **Markup is measured per property, never assumed.** 1.0 (no markup) is common and valid; operator input confirms/overrides the measured value.
@@ -724,7 +746,7 @@ Tools: `pricelabs_list_listings`, `pricelabs_get_listing`, `pricelabs_get_listin
 - **Hospitable calendar: read cents, write dollars** — convert and assert before push.
 - **Resolve the write tool from detected stack** — never assume Hospitable.
 - **Never recommend outside floor/ceiling silently** — surface it and offer to change the bound.
-- **Default max-delta 25%** — bigger moves are flagged "large move — confirm," never hidden.
+- **Default max-delta 15%** — bigger moves are flagged loudly on the card, never hidden.
 - **Always produce a number, even on thin comps** — show N and flag lower confidence in plain words. No hard refusal.
 - **Never mix currencies** — AirROI is called with `currency=native` (matches your market in the normal case); verify the echoed currency and on any genuine mismatch convert with a named live FX rate + timestamp, or flag-and-exclude.
 - **State your inputs as the confidence signal** — no bare "LOW CONFIDENCE" badges.

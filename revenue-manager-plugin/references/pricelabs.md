@@ -14,7 +14,7 @@ This file is the canonical reference the `revenue-manager` skill consults whenev
 - **CLEARED / realized rate = ADR** (from `get_listing_prices` ADR field + `list_reservations`), and it runs **materially higher than ask**. Track BOTH ask (calendar / recommended) and cleared (ADR).
 - **Markup is empirical, per property.** Compute the PMS÷PriceLabs ratio from paired dates; do not assume. For some properties it is 1.0 (no markup) — cleaning + channel fees are added at the channel, not on the nightly calendar number.
 - **Floor / ceiling for the safety layer come from THIS tool** — `min` / `max` on `list_listings` / `get_listing` (and `get_neighborhood_data` min/max where present). Store them in `property_config` (`min_price` / `max_price`).
-- **Writes are gated.** `set_overrides` (and `update_listings` / `delete_overrides`) push real changes — fire them **ONLY on explicit human approval, never silently.** v1 is recommend-only.
+- **Writes are gated.** `set_overrides` (and `update_listings` / `delete_overrides`) push real changes — fire them **ONLY after the operator says yes to the card, never silently.**
 - **`get_neighborhood_data` returns LARGE payloads** and requires `(listing_id, pms)`. Parse it compactly (python3 into tables) before reporting; don't dump raw JSON into context.
 
 ---
@@ -110,7 +110,7 @@ data['data']['Market KPI']['Category']                 # monthly booking window,
 **Revenue-management use (gated):** the mechanism for date-specific overrides — seasonal DSOs, event boosts, weekend premiums, last-minute / orphan discounts.
 - **Safety Layer #6 (Approval Gate):** fire ONLY on explicit human approval. NEVER a silent auto-write/push. The gate must first show: current price, recommended price, nearest bound, comp count, currency, and the reasoning.
 - **Safety Layer #1 (Floor/Ceiling):** never push a value outside the listing's min/max without surfacing it and asking whether to change the BOUND.
-- **Safety Layer #2 (Max-Delta):** a single change may not move price >25% from current by default; larger moves are FLAGGED "large move — confirm," never hidden.
+- **Safety Layer #2 (Max-Delta):** a single change may not move price >15% from current by default; larger moves are FLAGGED "large move — confirm," never hidden.
 - **Audit:** every pushed change writes one row per field/date to `pricelabs_change_log` and the decision to `pricing_decisions` (writes fire only on a real change).
 
 ### 8. `pricelabs_delete_overrides` — remove DSOs (destructive write)
@@ -194,7 +194,7 @@ When you report ADR-vs-comp-median, be explicit which number you're using. Comp-
 - **Parse heavy JSON compactly.** `get_listing_prices` (365 dates) and especially `get_neighborhood_data` (~85 comps × categories) → run through python3 into compact tables before putting anything in context. Never dump raw.
 - **PMS-name mapping:** when a call needs `pms`, Hospitable = `smartbnb` inside PriceLabs.
 - **Writes are append-only to the audit trail.** On any approved change: one `pricelabs_change_log` row per field/date, one `pricing_decisions` row per property-decision (now also seeding the nullable outcome columns `booked_at`, `lead_time_days`, `price_delta_from_rec` for the future learning loop — do not build the loop in v1), and a `market_snapshots` upsert. Writes fire ONLY on a real change.
-- **Recommend-only.** v1 never auto-pushes. `set_overrides` / `update_listings` / `delete_overrides` run exclusively after the operator approves at the gate.
+- **Never auto-pushes.** `set_overrides` / `update_listings` / `delete_overrides` run only after the operator says yes to the card (a plain yes, no codes), then get verified by re-reading.
 
 ---
 

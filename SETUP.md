@@ -530,7 +530,7 @@ After each add-on the operator connects: **full restart** of Claude Code, then c
 
 ### PHASE 5 — Install the plugin & first run
 
-**Goal:** the Revenue Manager plugin installed, configured for their properties, and a successful recommend-only first run.
+**Goal:** the Revenue Manager plugin installed, configured for their properties, and a successful first run.
 
 > **Reminder:** the plugin installs from the **local folder** at `<BUNDLE_ROOT>/revenue-manager-plugin`. It's already on disk (Phase 0 confirmed it), so this is straightforward.
 
@@ -564,19 +564,17 @@ Now configure each property so the skill can tell real markup from price drift. 
    > What's your **PriceLabs markup %**? A common setup is **16%** (Airbnb 14% + a 2% buffer). If you don't add a nightly markup at all, that's totally normal too — just say "no markup" and I'll measure it.
 
    Store it (it confirms/overrides the empirically measured value).
-3. **Optional Tier-2 cost-based floor.** Offer it, don't push it:
+Do not ask for a breakeven or a cost floor. The skill works out what the min price should be and tells them.
 
-   > Optional: I can also set a **cost-based floor** — your breakeven (cleaning + fixed nightly cost) so the floor never drops below what the night actually costs you. Want that, or skip for now?
-
-Also note the **default max-delta is 25%** (no single recommended change moves a price more than 25% at once unless they confirm) — mention it once so they know the guardrail exists. They can change any of this in plain English later.
+Also note the **default max-delta is 15%** (no single recommended change moves a price more than 15% at once without a loud flag) — mention it once so they know the guardrail exists. They can change any of this in plain English later.
 
 A clean way to kick this off (mirror the plugin's first-run line):
 
 > "Set up property config for all my listings. My PriceLabs markup is 16% (Airbnb 14% + 2% buffer)."
 
-**Step 5.4 — Test run: "check my pricing" (recommend-only).**
+**Step 5.4 — Test run: "check my pricing".**
 
-Run a real, recommend-only pass. Have the operator say:
+Run a real pass. It reads everything and changes nothing unless they say yes. Have the operator say:
 
 > Check my pricing
 
@@ -584,7 +582,7 @@ Then confirm the skill does all of this (this is the proof it's wired up right):
 - **Detects the stack** and prints the detection report (PMS ✅, Pricing ✅, Supabase ✅, plus any optional enrichment it happens to find).
 - **Reads Supabase history** (prior decisions / change log / snapshots / config — empty on the first run, that's expected).
 - **Pulls PMS + PriceLabs in parallel** — full-year forward calendar + history from the PMS, and listings + recommendations + neighborhood comp data from PriceLabs.
-- **Produces a recommend-only report** with the **safety layer** visibly applied: floor/ceiling shown, comp count (N) transparency, native currency, and data freshness (PriceLabs `last_refreshed_at`).
+- **Produces a report** with the **safety layer** visibly applied: floor/ceiling shown, comp count (N) transparency, native currency, and data freshness (PriceLabs `last_refreshed_at`).
 - **Never auto-writes.** Every proposed change sits behind the approval gate — nothing is pushed to PriceLabs or the PMS without an explicit yes.
 - **Offers a spreadsheet at the end.** After the recommendations, the skill asks if you want a workbook — Summary tab + one tab per property (full breakdown), saved to your Desktop. Say yes to see it; it's report-only and pushes nothing. (First time, it quietly sets up a small local `openpyxl` venv; if that can't install, it falls back to CSVs.)
 
@@ -592,7 +590,7 @@ If the detection report is missing the PMS or pricing tool, **stop and fix it** 
 
 > **If Supabase shows "not connected" on this first run even though Phase 3 passed:** this is almost always a **detection-prefix gap, not a setup failure.** The plugin's own first-run check currently looks specifically for the `mcp__supabase__*` flavor; if you connected Supabase under a *scoped or Claude-connector* prefix (e.g. `mcp__supabase-jarvis__*` or `mcp__claude_ai_Supabase__*`), the plugin may report it as missing even though the migrations ran fine and the tables exist. Don't send the operator back to redo Phase 3. Confirm the 4 tables + 3 columns are really there (a quick `list_tables` / SELECT on the connected server), tell the operator the audit DB is good, and — if they want the plugin to auto-detect it cleanly every run — either register Supabase under the plain `supabase` name or note it as a known prefix-matching quirk. Only treat it as a real failure if the tables genuinely don't exist.
 
-> **Checkpoint 5:** Plugin installed + restarted ✅ · property config set (floors/ceilings auto-read, markup captured, max-delta 25%) ✅ · "check my pricing" produced a recommend-only report with the safety layer and **no** auto-write ✅. (A Supabase "not connected" notice that turns out to be a prefix-detection quirk — tables actually present — counts as a pass.)
+> **Checkpoint 5:** Plugin installed + restarted ✅ · property config set (floors/ceilings auto-read, markup captured, max-delta 15%) ✅ · "check my pricing" produced a report with the safety layer and **no** auto-write ✅. (A Supabase "not connected" notice that turns out to be a prefix-detection quirk — tables actually present — counts as a pass.)
 
 ---
 
@@ -608,7 +606,7 @@ Once the core phases are done — PMS, pricing, Supabase, the Phase 4 add-on off
 > - ✅ **Any enrichment add-ons you connected** (RankBreeze · Turno · AirROI) — folded into every report automatically (skipped any? add them anytime later)
 > - ✅ **The Revenue Manager plugin** — tested with a real "check my pricing" run
 >
-> **The deal — and this is the important part:** it's **recommend-only.** It tells you exactly where you're leaving money on the table, shows you the comps, the floor/ceiling, the currency, and how fresh the data is — and then **you approve every single change.** Nothing gets pushed to PriceLabs or your PMS silently, ever. You're always in the driver's seat.
+> **The deal — and this is the important part:** nothing changes without your yes. It tells you exactly where you're leaving money on the table, shows you the comps, the floor/ceiling, the currency, and how fresh the data is — and then **you say yes to the changes you want.** Nothing gets pushed to PriceLabs or your PMS silently, ever. You're always in the driver's seat.
 >
 > **Try these next:**
 > - "How are my properties doing?"
