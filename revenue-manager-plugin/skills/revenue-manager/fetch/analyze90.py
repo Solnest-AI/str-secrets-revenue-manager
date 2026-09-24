@@ -169,11 +169,17 @@ def run_live(args, client, connections, as_of):
             args.refresh_context,
         ),
     }
+    ih_id = str(settings.get("intellihost_property_id") or "")
     if rid:
         jobs["funnel"] = lambda: sources.funnel(rid, start)
         jobs["rankings"] = lambda: sources.rankings(rid, start, prop["capacity"]["max"])
+    elif ih_id:
+        from _rank_intellihost import IntelliHostSource
+        ih = IntelliHostSource(client, connections)
+        jobs["funnel"] = lambda: ih.funnel(ih_id, start)
+        jobs["rankings"] = lambda: ih.rankings(ih_id, start, prop["capacity"]["max"])
     else:
-        errors.append("No verified RankBreeze listing mapping")
+        errors.append("No verified RankBreeze or IntelliHost listing mapping")
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(loader): name for name, loader in jobs.items()}
         for future in as_completed(futures):

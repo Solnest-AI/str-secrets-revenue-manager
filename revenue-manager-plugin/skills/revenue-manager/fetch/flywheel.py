@@ -87,7 +87,7 @@ def _num(value):
     return None
 
 
-def funnel_diagnosis(comparison: dict) -> dict:
+def funnel_diagnosis(comparison: dict, stages=None) -> dict:
     """Walk the funnel in order and name the FIRST stage that trails its benchmark.
 
     `comparison` is RankBreeze's `similar_listings_comparison`: each key carries
@@ -97,8 +97,12 @@ def funnel_diagnosis(comparison: dict) -> dict:
     A stage with no benchmark is `unknown` and stops the walk, because we cannot claim
     the stages after it are the problem when we could not check this one.
     """
+    # A source may declare which stages it measures (IntelliHost has impressions, click rate and
+    # click-to-book, no views or wishlists). Declared stages are walked in funnel order; with no
+    # declaration all six are required, which is RankBreeze's contract, unchanged.
+    walk = [(k, m) for k, m in FUNNEL if stages is None or k in stages]
     healthy, stages = [], []
-    for key, meaning in FUNNEL:
+    for key, meaning in walk:
         row = comparison.get(key) if isinstance(comparison, dict) else None
         row = row if isinstance(row, dict) else {}
         mine = _num(row.get("listing"))
@@ -138,7 +142,7 @@ def spoke_visibility(summary_row: dict | None) -> dict:
     if not comparison:
         return _fail("visibility", "no similar_listings_comparison; the benchmark IS "
                                    "the diagnosis, so a bare number cannot replace it")
-    diag = funnel_diagnosis(comparison)
+    diag = funnel_diagnosis(comparison, summary_row.get("stages"))
     if diag["verdict"] == "unknown":
         return _fail("visibility", diag["why"])
     return {"spoke": "visibility", "ok": True, "diagnosis": diag,

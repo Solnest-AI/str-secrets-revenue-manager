@@ -95,7 +95,8 @@ def match_rankbreeze(room_id, rb_listings):
     return hits[0] if len(hits) == 1 else None
 
 
-def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_NAME, pms_source="hospitable") -> dict:
+def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_NAME, pms_source="hospitable",
+                   intellihost=None) -> dict:
     settings = {
         "pms_source": pms_source,
         "pms_name": pms_name,
@@ -112,6 +113,8 @@ def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_N
         settings["airbnb_listing_id"] = airbnb
     if rankbreeze:
         settings["rankbreeze_listing_id"] = rankbreeze
+    if intellihost:
+        settings["intellihost_property_id"] = intellihost
     return settings
 
 
@@ -231,6 +234,17 @@ def main(argv=None) -> int:
                 rb_note = f"RankBreeze: {len(rb)} listing(s) found"
             except CannotAnalyze as exc:
                 rb_note = f"RankBreeze could not be read ({exc}); ranking will show as a gap"
+        ih_map, ih_note = {}, None
+        try:
+            connections.key("intellihost")
+            from _rank_intellihost import IntelliHostSource
+            ih_map = IntelliHostSource(client, connections).airbnb_map()
+            ih_note = f"IntelliHost: {len(ih_map)} listing(s) found"
+        except CannotAnalyze as exc:
+            from _rank_intellihost import PREMIUM_GAP
+            ih_note = (None if "Missing" in str(exc) else
+                       "IntelliHost is connected, but reading it needs IntelliHost Premium; ranking comes from "
+                       "RankBreeze or shows as a named gap" if str(exc) == PREMIUM_GAP else f"IntelliHost could not be read ({exc})")
         now = datetime.now(timezone.utc)
         rows, missing = [], []
         for p in props:
@@ -246,11 +260,13 @@ def main(argv=None) -> int:
             ab = airbnb_id(p)
             rows.append({"property_id": p["id"], "display_name": p.get("name"),
                          "settings": build_settings(p["id"], ab, match_rankbreeze(ab, rb) if rb else None, markups, now,
-                                                    pms_name=pl_pms, pms_source=pms)})
-        print(f"{pms.capitalize()}: {len(props)} listed propert{'y' if len(props) == 1 else 'ies'}. {rb_note}.")
+                                                    pms_name=pl_pms, pms_source=pms, intellihost=ih_map.get(ab or ""))})
+        print(f"{pms.capitalize()}: {len(props)} listed propert{'y' if len(props) == 1 else 'ies'}. {rb_note}."
+              + (f" {ih_note}." if ih_note else ""))
         for r in rows:
             s = r["settings"]
             print(f"  ✅ {r['display_name']}: PriceLabs ✅  RankBreeze {'✅' if 'rankbreeze_listing_id' in s else '—'}  "
+                  f"IntelliHost {'✅' if 'intellihost_property_id' in s else '—'}  "
                   f"Airbnb id {'✅' if 'airbnb_listing_id' in s else '—'}")
         for name, why in missing:
             print(f"  ❌ {name}: NOT IN PRICELABS under the same id ({why}). The runner cannot price it.")

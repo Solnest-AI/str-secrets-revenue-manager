@@ -141,6 +141,22 @@ class ReadClient:
                 and str(body.get("query", "")).lstrip().upper().startswith("SELECT ")
             )
             or (
+                provider == "intellihost"
+                and operation == "rpc"
+                and target.netloc == "clients.intellihost.co"
+                and isinstance(body, dict)
+                and (
+                    body.get("method") in {"initialize", "notifications/initialized"}
+                    or (
+                        body.get("method") == "tools/call"
+                        # IntelliHost also exposes 7 WRITE tools (price overrides, thresholds,
+                        # rules, auto-sync...). Only these reads may pass this transport.
+                        and body.get("params", {}).get("name")
+                        in {"whoami-tool", "list-properties-tool", "get-funnel-dashboard", "get-rank-series-tool"}
+                    )
+                )
+            )
+            or (
                 provider == "rankbreeze"
                 and operation == "rpc"
                 and isinstance(body, dict)

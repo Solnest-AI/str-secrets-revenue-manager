@@ -149,7 +149,17 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             "detail": "Review sample is unreadable or absent, not empty",
         }
     rank = flywheel.spoke_ranking(rankings)
-    if any(r.get("date") != start for r in rankings):
+
+    def _stale(r):
+        # A source may declare how old a scrape it accepts (IntelliHost scrapes every few days:
+        # max_age_days 7). Without a declaration the row must be today's, as before.
+        try:
+            age = (Date.fromisoformat(start) - Date.fromisoformat(str(r.get("date")))).days
+        except ValueError:
+            return True
+        return not 0 <= age <= (r.get("max_age_days") or 0)
+
+    if any(_stale(r) for r in rankings):
         rank = {
             "spoke": "ranking",
             "ok": False,

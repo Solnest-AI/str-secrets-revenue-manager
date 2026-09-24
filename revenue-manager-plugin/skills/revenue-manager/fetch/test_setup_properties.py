@@ -73,6 +73,11 @@ class Settings(unittest.TestCase):
         later = datetime(2026, 9, 25, tzinfo=timezone.utc)
         self.assertEqual(markups({"settings": s}, later), {"airbnb": 16.0})
 
+    def test_intellihost_id_is_stored_when_mapped(self):
+        s = build_settings("prop-0001", "1734", None, {"airbnb": 16.0}, NOW, intellihost="11")
+        self.assertEqual(s["intellihost_property_id"], "11")
+        self.assertNotIn("intellihost_property_id", build_settings("prop-0001", "1734", None, {"airbnb": 16.0}, NOW))
+
     def test_optional_ids_are_left_out_not_blank(self):
         s = build_settings("prop-0001", None, None, {"airbnb": 16.0}, NOW)
         self.assertNotIn("rankbreeze_listing_id", s)
