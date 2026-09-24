@@ -1,6 +1,7 @@
 """Offline contracts for the OwnerRez adapter. Fixtures follow shapes measured live 2026-09-24
-(values made up): int ids, arrival/departure dates, type booking|block, status `active`,
-charges[type=rent] as room revenue, listing_numbers.Airbnb on the property detail."""
+(values made up): GET /v2/calendar/{id} nights with rate.rent and rules, int ids,
+arrival/departure dates, type booking|block, charges[type=rent] as room revenue,
+listing_numbers.Airbnb on the property detail."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import unittest
 from datetime import date, datetime, timezone
 
 from _mvp_pms import analyze, normalize_calendar, normalize_property, normalize_reservation, normalize_review
-from _pms_ownerrez import OwnerRezError, calendar_rows, property_row, reservation_row, review_row
+from _pms_ownerrez import OwnerRezError, day_row, property_row, reservation_row, review_row
 
 PROP = {"id": 4401, "name": "Lake Cabin", "external_name": "Lake Cabin on the water", "active": True, "is_snoozed": False,
         "time_zone": "America/New_York", "currency_code": "USD", "max_guests": 8, "bedrooms": 3, "bathrooms": 2,
@@ -35,21 +36,30 @@ class Property(unittest.TestCase):
         self.assertFalse(normalize_property(property_row(dict(PROP, is_snoozed=True)))["listed"])
 
 
-class Calendar(unittest.TestCase):
-    def test_built_from_bookings_and_blocks_with_no_prices(self):
-        rows = normalize_calendar(calendar_rows([BOOK, BLOCK], "USD", date(2026, 10, 4), 9))
-        self.assertEqual([r["date"] for r in rows][:2], ["2026-10-04", "2026-10-05"])
-        by = {r["date"]: r["status_reason"] for r in rows}
-        self.assertEqual(by["2026-10-04"], "AVAILABLE")
-        self.assertEqual([by[d] for d in ("2026-10-05", "2026-10-06", "2026-10-07")], ["RESERVED"] * 3)
-        self.assertEqual(by["2026-10-08"], "AVAILABLE", "departure day is free")
-        self.assertEqual([by[d] for d in ("2026-10-10", "2026-10-11")], ["BLOCKED"] * 2)
-        self.assertTrue(all(r["price_cents"] is None and r["min_stay"] is None for r in rows))
-        self.assertTrue(all(r["currency"] == "USD" for r in rows))
+def night(d, status, rent=180.0, **rules):
+    return {"date": f"{d}T00:00:00", "status": status, "rate": {"amount": rent, "rent": rent, "is_spot_rate": True},
+            "rules": {"min_nights": 2, **rules}}
 
-    def test_cancelled_booking_frees_the_night(self):
-        rows = normalize_calendar(calendar_rows([dict(BOOK, status="canceled")], "USD", date(2026, 10, 5), 3))
-        self.assertTrue(all(r["status_reason"] == "AVAILABLE" for r in rows))
+
+class Calendar(unittest.TestCase):
+    def test_reads_rate_min_stay_status_and_rules(self):
+        rows = normalize_calendar([day_row(night("2026-10-04", "available"), "USD"),
+                                   day_row(night("2026-10-05", "booked"), "USD"),
+                                   day_row(night("2026-10-06", "blocked"), "USD"),
+                                   day_row(night("2026-10-07", "available", is_arrival_disallowed=True), "USD")])
+        self.assertEqual([r["status_reason"] for r in rows], ["AVAILABLE", "RESERVED", "BLOCKED", "AVAILABLE"])
+        self.assertEqual([r["price_cents"] for r in rows], [18000] * 4)
+        self.assertEqual([r["min_stay"] for r in rows], [2] * 4)
+        self.assertEqual((rows[3]["closed_for_checkin"], rows[3]["closed_for_checkout"]), (True, False))
+        self.assertEqual(rows[0]["date"], "2026-10-04", "the date-time is trimmed to the local date")
+
+    def test_gap_is_bookable_but_stay_disallowed_is_not(self):
+        self.assertEqual(day_row(night("2026-10-04", "gap"), "USD")["status_reason"], "AVAILABLE")
+        self.assertEqual(day_row(night("2026-10-04", "available", is_stay_disallowed=True), "USD")["status_reason"], "BLOCKED")
+        self.assertEqual(day_row(night("2026-10-04", "unavailable"), "USD")["status_reason"], "BLOCKED")
+
+    def test_missing_rate_is_unknown_not_zero(self):
+        self.assertIsNone(day_row({"date": "2026-10-04", "status": "available"}, "USD")["price_cents"])
 
 
 class Reservations(unittest.TestCase):
@@ -104,11 +114,11 @@ class Paging(unittest.TestCase):
 
 
 class EndToEnd(unittest.TestCase):
-    def test_runs_through_the_real_pms_analysis_in_no_rates_mode(self):
+    def test_runs_through_the_real_pms_analysis_with_rates(self):
         start = date(2026, 10, 4)
-        facts = analyze(property_row(PROP), calendar_rows([BOOK, BLOCK], "USD", start, 10),
-                        [reservation_row(BOOK)], [], start, 10, datetime(2026, 10, 1, tzinfo=timezone.utc))
-        self.assertFalse(facts["coverage"]["pms_rates_exposed"])
+        cal = [day_row(night(f"2026-10-{d:02d}", "booked" if d in (5, 6, 7) else "available"), "USD") for d in range(4, 14)]
+        facts = analyze(property_row(PROP), cal, [reservation_row(BOOK)], [], start, 10, datetime(2026, 10, 1, tzinfo=timezone.utc))
+        self.assertTrue(facts["coverage"]["pms_rates_exposed"])
         self.assertTrue(facts["coverage"]["analysable"], facts["warnings"])
 
 

@@ -2,9 +2,13 @@
 
 Measured live 2026-09-24 on a real account (read-only):
   - HTTP Basic (login email + `pt_` token) and a User-Agent, or OwnerRez answers 403
-  - NO endpoint returns nightly rates or min-stay (rates are write-only: PATCH /v2/spotrates).
-    The calendar is therefore built from bookings and blocks, with price and min-stay unknown;
-    the runner's no-rates mode then reconciles bookings and availability only, and says so.
+  - NIGHTLY RATES ARE READABLE: GET /v2/calendar/{property_id}?from&to (up to 366 days) returns
+    per night `status` (available|booked|blocked|gap|unavailable), `rate.rent` / `rate.amount`,
+    `rate.is_spot_rate`, `rules.min_nights`, and `rules.is_arrival_disallowed` /
+    `is_departure_disallowed` (present only when true). Measured on 8 properties x 90 nights:
+    every rate was a spot rate (what PriceLabs pushes) and amount == rent on all 720.
+    (An earlier note, from the connections kit's build doc, said there was no rate GET. OwnerRez's
+    own docs and the live API say otherwise; that note was wrong.)
   - /bookings: int ids, `arrival`/`departure` dates (check_in/check_out are TIMES), `type`
     booking|block, `status` (`active` measured), `booked_utc`, `listing_site`. The property
     filter `property_ids` WORKS here. `include_charges=true` puts charges on the list rows;
@@ -70,24 +74,24 @@ def property_row(raw: dict) -> dict:
     }
 
 
-def calendar_rows(bookings: list, currency: str, start: date, days: int) -> list:
-    """One row per night: RESERVED under a live booking, BLOCKED under a block, else AVAILABLE.
-    Price and min-stay are None because OwnerRez does not expose them."""
-    live = [b for b in bookings if isinstance(b, dict) and not _cancelled(b)]
-    out = []
-    for i in range(days):
-        d = (start + timedelta(days=i)).isoformat()
-        over = [b for b in live if str(b.get("arrival")) <= d < str(b.get("departure"))]
-        if any(not b.get("is_block") and b.get("type") != "block" for b in over):
-            reason = "RESERVED"
-        elif over:
-            reason = "BLOCKED"
-        else:
-            reason = "AVAILABLE"
-        out.append({"date": d, "price_cents": None, "currency": currency, "min_stay": None,
-                    "available": reason == "AVAILABLE", "status_reason": reason,
-                    "closed_for_checkin": None, "closed_for_checkout": None})
-    return out
+def day_row(raw: dict, currency: str) -> dict:
+    status = str(raw.get("status") or "").lower()
+    rules = raw.get("rules") or {}
+    reason = {"available": "AVAILABLE", "gap": "AVAILABLE", "booked": "RESERVED",
+              "blocked": "BLOCKED", "unavailable": "BLOCKED"}.get(status, "UNKNOWN")
+    if reason == "AVAILABLE" and rules.get("is_stay_disallowed") is True:
+        reason = "BLOCKED"  # documented: Available with this rule is still not bookable
+    rent = (raw.get("rate") or {}).get("rent")
+    min_n = rules.get("min_nights")
+    return {
+        "date": str(raw.get("date") or "")[:10], "price_cents": _cents(rent), "currency": currency,
+        "min_stay": min_n if isinstance(min_n, int) and not isinstance(min_n, bool) else None,
+        "available": {"AVAILABLE": True, "RESERVED": False, "BLOCKED": False}.get(reason),
+        "status_reason": reason,
+        # documented optional booleans, present only when the rule is set
+        "closed_for_checkin": rules.get("is_arrival_disallowed") is True,
+        "closed_for_checkout": rules.get("is_departure_disallowed") is True,
+    }
 
 
 def reservation_row(raw: dict) -> dict:
@@ -183,9 +187,15 @@ class OwnerRezSource:
         return rows
 
     def calendar(self, pid, start, days):
+        end = start + timedelta(days=days - 1)
         def load():
-            cur = self._detail(pid)["currency"]
-            return normalize_calendar(calendar_rows(self._bookings(pid), cur, start, days))
+            raw = self._get(f"/calendar/{urllib.parse.quote(str(pid))}", {"from": start.isoformat(), "to": end.isoformat()}, op="calendar")
+            if str(raw.get("property_id")) != str(pid):
+                raise OwnerRezError("OwnerRez calendar belongs to another property")
+            nights = raw.get("days")
+            if not isinstance(nights, list):
+                raise OwnerRezError("OwnerRez calendar has no days list")
+            return normalize_calendar([day_row(d, raw.get("currency_code")) for d in nights])
         return self.client.fetch("pms.calendar", [self.connections.account("ownerrez"), pid, start.isoformat(), days], load)
 
     def reservations(self, pid, start, days):
