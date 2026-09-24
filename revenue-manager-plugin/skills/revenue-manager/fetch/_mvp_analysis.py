@@ -109,6 +109,9 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         blockers.append("PriceLabs calculation timestamp is unreadable")
     if not pms["coverage"]["analysable"]:
         blockers.append("PMS inventory or reservation evidence is incomplete")
+    if pms["coverage"].get("pms_rates_exposed") is False:
+        notes.append("Your PMS does not expose nightly prices or min-stay, so reconciliation checked "
+                     "bookings and availability only; the prices shown are PriceLabs'.")
     settings_delta = context.get("settings", {}).get("max_delta_pct")
     if settings_delta is not None and settings_delta != 0.15:
         notes.append("Saved movement threshold differs; this analysis uses 15% scrutiny")
@@ -183,8 +186,11 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         pl_status = pricelabs_status(price)
         classification = day["classification"]
         opened = classification == "open"
+        # With no PMS nightly price or min-stay (see pms_rates_exposed), only the booking half of
+        # the check can run; the price/stay half is skipped for that night, never guessed.
         drift = opened and (
-            abs(day["price_cents"] / 100 - net) > 0.011 or day["min_stay"] != price.get("min_stay")
+            (day["price_cents"] is not None and abs(day["price_cents"] / 100 - net) > 0.011)
+            or (day["min_stay"] is not None and day["min_stay"] != price.get("min_stay"))
         )
         paid_gap = classification == "confirmed_paid" and pl_status != "RESERVED"
         unexpected_booked = opened and pl_status == "RESERVED"
@@ -209,7 +215,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             "status": classification,
             "net": net,
             "airbnb": rounded(net * multiplier),
-            "min_stay": day["min_stay"],
+            "min_stay": day["min_stay"] if day["min_stay"] is not None else price.get("min_stay"),
             "p50": values["p50"],
             "p75": values["p75"],
             "p90": values["p90"],
@@ -236,7 +242,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
                 row["action"] = "review_restrictions"
             elif i < 14 and row["airbnb"] > values["p75"]:
                 row["action"] = "review_price"
-            if day["min_stay"] > 1 and i < 14:
+            if (row["min_stay"] or 1) > 1 and i < 14:
                 row["flags"].append("near_term_min_stay")
         rows.append(row)
     if mismatches:

@@ -576,19 +576,28 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
     if overlap_dates:
         warnings["overlapping_accepted_stay_dates"] = len(overlap_dates)
     daily = []
+    # A PMS that never exposes nightly rates (OwnerRez: no GET for rates, measured 2026-09-24)
+    # is a different source, not a broken one. Only when NO night carries a price or min-stay
+    # do rates and restrictions become optional. A PMS that sends some prices and drops others
+    # is still refused night by night, as before.
+    rates_exposed = any(row["price_cents"] is not None or row["min_stay"] is not None for row in rows)
+    if not rates_exposed:
+        warnings["pms_does_not_expose_nightly_rates"] += 1
     for calendar in rows:
         day = calendar["date"]
         group = inventory.get(day, [])
         classification = "unknown"
         cents = None
-        calendar_ok = (
-            calendar["currency"] == prop["currency"]
-            and calendar["price_cents"] is not None
-            and calendar["price_cents"] >= 0
-            and calendar["min_stay"] is not None
-            and calendar["min_stay"] >= 1
-            and isinstance(calendar["closed_for_checkin"], bool)
-            and isinstance(calendar["closed_for_checkout"], bool)
+        calendar_ok = calendar["currency"] == prop["currency"] and (
+            not rates_exposed
+            or (
+                calendar["price_cents"] is not None
+                and calendar["price_cents"] >= 0
+                and calendar["min_stay"] is not None
+                and calendar["min_stay"] >= 1
+                and isinstance(calendar["closed_for_checkin"], bool)
+                and isinstance(calendar["closed_for_checkout"], bool)
+            )
         )
         if not calendar_ok:
             warnings["calendar_price_currency_or_restrictions_unknown"] += 1
@@ -652,8 +661,8 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
             "on_books_accommodation_cents": known_revenue if clean else None,
             "known_on_books_accommodation_cents": known_revenue,
             "on_books_adr_cents": _mean([row["accommodation_cents"] for row in paid]),
-            "available_mean_rate_cents": _mean([row["price_cents"] for row in opened]),
-            "available_min_stay_counts": dict(Counter(str(row["min_stay"]) for row in opened)),
+            "available_mean_rate_cents": _mean([row["price_cents"] for row in opened if row["price_cents"] is not None]),
+            "available_min_stay_counts": dict(Counter(str(row["min_stay"]) for row in opened if row["min_stay"] is not None)),
             "inventory_complete": clean,
         }
 
@@ -989,6 +998,7 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
         },
         "coverage": {
             "calendar_complete": True,
+            "pms_rates_exposed": rates_exposed,
             "calendar_days": len(rows),
             "calendar_rows_outside_horizon": len(normalized_days) - len(rows),
             "reservation_source_records": len(reservations),

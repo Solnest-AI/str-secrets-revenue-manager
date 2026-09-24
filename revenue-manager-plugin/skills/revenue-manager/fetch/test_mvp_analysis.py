@@ -371,6 +371,36 @@ class AnalysisIntegrationTests(unittest.TestCase):
                 self.assertEqual(result["candidates"], [])
                 self.assertEqual(len(result["reconciliation"]["mismatches"]), 1)
 
+    def test_pms_without_nightly_prices_reconciles_bookings_only_and_says_so(self):
+        # OwnerRez has no API for nightly rates or min-stay (measured 2026-09-24). Without this,
+        # every OwnerRez property would crash or block on a comparison it can never make.
+        bundle = synthetic_bundle()
+        for day in bundle["inputs"]["calendar"]:
+            day["price_cents"], day["min_stay"] = None, None
+        result = compute(bundle)
+        self.assertNotEqual(result["status"], "blocked", result.get("blockers"))
+        self.assertEqual(result["reconciliation"]["mismatches"], [])
+        self.assertTrue(result["candidates"])
+        self.assertTrue(any("nightly prices" in n for n in result.get("notes", [])), result.get("notes"))
+
+    def test_a_pms_that_drops_some_prices_is_still_refused(self):
+        # Only a PMS that exposes NO nightly price at all gets the bookings-only check. One
+        # missing price among priced nights is a broken source, and it still blocks.
+        bundle = synthetic_bundle()
+        bundle["inputs"]["calendar"][80]["price_cents"] = None
+        result = compute(bundle)
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("PMS inventory or reservation evidence is incomplete", result["blockers"])
+
+    def test_booking_conflict_still_blocks_when_the_pms_has_no_prices(self):
+        bundle = synthetic_bundle()
+        for day in bundle["inputs"]["calendar"]:
+            day["price_cents"], day["min_stay"] = None, None
+        bundle["inputs"]["prices"]["data"][80]["booking_status"] = "Booked"
+        result = compute(bundle)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(len(result["reconciliation"]["mismatches"]), 1)
+
     def test_review_ranges_respect_15_percent_and_current_bounds(self):
         result = compute(synthetic_bundle())
         for row in result["candidates"]:
