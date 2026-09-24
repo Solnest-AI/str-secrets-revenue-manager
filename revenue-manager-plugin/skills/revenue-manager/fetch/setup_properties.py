@@ -95,9 +95,10 @@ def match_rankbreeze(room_id, rb_listings):
     return hits[0] if len(hits) == 1 else None
 
 
-def build_settings(property_id, airbnb, rankbreeze, markups, now) -> dict:
+def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_NAME, pms_source="hospitable") -> dict:
     settings = {
-        "pms_name": PMS_NAME,
+        "pms_source": pms_source,
+        "pms_name": pms_name,
         "pricelabs_listing_id": property_id,
         "max_delta_pct": MAX_DELTA,
         "channel_markup_pct": dict(markups),
@@ -199,6 +200,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--markup", action="append", default=[], help="channel=percent, e.g. airbnb=16 (repeat)")
     ap.add_argument("--dry-run", action="store_true", help="show the rows; write nothing")
+    ap.add_argument("--pms", default="auto", help="auto (the one connected), hospitable, guesty or ownerrez")
     ap.add_argument("--env-file", action="append", default=[])
     default_cache = Path(os.environ.get("RC_CACHE_DIR", str(Path.home() / ".cache/revenue-manager")))
     ap.add_argument("--db", type=Path, default=default_cache / "workbench.sqlite3")
@@ -214,8 +216,12 @@ def main(argv=None) -> int:
         connections.key("pricelabs")
         args.db.parent.mkdir(parents=True, exist_ok=True)
         client = ReadClient(Store(args.db), max_calls=400)
-        sources = Sources(client, connections)
-        inventory = sources.pages("/properties", {"include": "listings"}, normalize_property)["data"]
+        from _pms_registry import choose
+        pms = choose(connections, args.pms)
+        sources = Sources(client, connections, pms=pms)
+        inventory = (sources._pms.inventory() if sources._pms else
+                     sources.pages("/properties", {"include": "listings"}, normalize_property))["data"]
+        pl_names = sources.pricelabs_inventory()
         props = [p for p in inventory if p.get("listed") is not False]
         rb, rb_note = [], "RankBreeze not connected (ranking will show as a gap on each card)"
         url = connections.rankbreeze_url()
@@ -228,15 +234,20 @@ def main(argv=None) -> int:
         now = datetime.now(timezone.utc)
         rows, missing = [], []
         for p in props:
+            pl_pms = pl_names.get(p["id"])
+            if not pl_pms:
+                missing.append((p.get("name") or p["id"], "no PriceLabs listing has this PMS id"))
+                continue
             try:
-                sources.listing(p["id"], PMS_NAME)
+                sources.listing(p["id"], pl_pms)
             except CannotAnalyze as exc:
                 missing.append((p.get("name") or p["id"], str(exc)))
                 continue
             ab = airbnb_id(p)
             rows.append({"property_id": p["id"], "display_name": p.get("name"),
-                         "settings": build_settings(p["id"], ab, match_rankbreeze(ab, rb) if rb else None, markups, now)})
-        print(f"Hospitable: {len(props)} listed propert{'y' if len(props) == 1 else 'ies'}. {rb_note}.")
+                         "settings": build_settings(p["id"], ab, match_rankbreeze(ab, rb) if rb else None, markups, now,
+                                                    pms_name=pl_pms, pms_source=pms)})
+        print(f"{pms.capitalize()}: {len(props)} listed propert{'y' if len(props) == 1 else 'ies'}. {rb_note}.")
         for r in rows:
             s = r["settings"]
             print(f"  ✅ {r['display_name']}: PriceLabs ✅  RankBreeze {'✅' if 'rankbreeze_listing_id' in s else '—'}  "

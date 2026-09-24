@@ -123,7 +123,8 @@ def market_start(probe, start):
 
 
 def run_live(args, client, connections, as_of):
-    sources = Sources(client, connections)
+    from _pms_registry import choose
+    sources = Sources(client, connections, pms=choose(connections, getattr(args, "pms", "auto")))
     prop = sources.property(args.property)
     start = local_date(prop, as_of)
     if args.start:
@@ -136,7 +137,9 @@ def run_live(args, client, connections, as_of):
     context = read_context(client, connections, pid, args.settings)
     settings = context["settings"]
     lid = str(settings.get("pricelabs_listing_id") or pid)
-    pms_name = settings.get("pms_name") or "smartbnb"
+    pms_name = settings.get("pms_name") or ("smartbnb" if sources.pms == "hospitable" else None)
+    if not pms_name:
+        raise CannotAnalyze("This property has no PriceLabs PMS name on record; run setup_properties.py first")
     rid = str(settings.get("rankbreeze_listing_id") or "")
     inputs = {"property": prop, "context": context}
     errors = []
@@ -257,6 +260,7 @@ def parser():
         "--inputs", type=Path, help="Offline normalized fixture bundle, including as_of and start"
     )
     ap.add_argument("--days", type=int, default=90, help="Forward calendar days, default 90 (7-90)")
+    ap.add_argument("--pms", default="auto", help="auto (the one connected), hospitable, guesty or ownerrez")
     ap.add_argument("--start", help="Assert property local current date, YYYY-MM-DD")
     default_cache = Path(
         os.environ.get("RC_CACHE_DIR", str(Path.home() / ".cache/revenue-manager"))

@@ -28,9 +28,12 @@ class MarketRolledOver(CannotAnalyze):
 
 
 class Sources:
-    def __init__(self, client, connections):
+    def __init__(self, client, connections, pms="hospitable"):
         self.client = client
         self.connections = connections
+        self.pms = pms
+        from _pms_registry import adapter
+        self._pms = adapter(pms, client, connections)
 
     def pms_get(self, path, params=None):
         body, _ = self.client.request(
@@ -82,6 +85,8 @@ class Sources:
         raise CannotAnalyze("Hospitable pagination exceeds safety limit")
 
     def property(self, selector):
+        if self._pms:
+            return self._pms.property(selector)
         account = self.connections.account("hospitable")
 
         def load():
@@ -108,6 +113,8 @@ class Sources:
         return self.client.fetch("pms.property", [account, selector], load)
 
     def calendar(self, pid, start, days):
+        if self._pms:
+            return self._pms.calendar(pid, start, days)
         end = start + timedelta(days=days - 1)
         return self.client.fetch(
             "pms.calendar",
@@ -121,6 +128,8 @@ class Sources:
         )
 
     def reservations(self, pid, start, days):
+        if self._pms:
+            return self._pms.reservations(pid, start, days)
         def normalize(raw):
             row = normalize_reservation(raw)
             if pid not in row.get("property_ids", []):
@@ -145,11 +154,22 @@ class Sources:
         )
 
     def reviews(self, pid):
+        if self._pms:
+            return self._pms.reviews(pid)
         return self.client.fetch(
             "pms.reviews",
             [self.connections.account("hospitable"), pid],
             lambda: self.pages("/properties/" + pid + "/reviews", {}, normalize_review, limit=100),
         )
+
+    def pricelabs_inventory(self):
+        """Every listing in the PriceLabs account: id -> pms name. The PMS name PriceLabs
+        uses for a listing is looked up here, never assumed (Hospitable is `smartbnb`)."""
+        raw = self.pl_get("/v1/listings")
+        rows = raw.get("listings") if isinstance(raw, dict) else None
+        if not isinstance(rows, list):
+            raise CannotAnalyze("PriceLabs listing inventory is unreadable")
+        return {str(r.get("id")): r.get("pms") for r in rows if isinstance(r, dict) and r.get("id") and r.get("pms")}
 
     def pl_get(self, path, params=None, body=None):
         result, _ = self.client.request(
