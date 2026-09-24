@@ -22,7 +22,13 @@ KEYS = {
     "PRICELABS_KEY",
     "AIRROI_API_KEY",
     "RANKBREEZE_SESSION",
+    "GUESTY_CLIENT_ID",
+    "GUESTY_CLIENT_SECRET",
+    "OWNERREZ_EMAIL",
+    "OWNERREZ_TOKEN",
+    "INTELLIHOST_MCP_TOKEN",
 }
+PROVIDERS = ("hospitable", "pricelabs", "airroi", "rankbreeze", "guesty", "ownerrez", "intellihost")
 
 
 def load_env(path):
@@ -47,7 +53,7 @@ class Connections:
             except (ValueError, OSError):
                 raise CannotAnalyze("Local MCP connection configuration is unreadable") from None
         root = Path(__file__).resolve().parents[4]
-        for provider in ("hospitable", "pricelabs", "airroi", "rankbreeze"):
+        for provider in PROVIDERS:
             server = self.servers.get(provider, {})
             dirs = [root / "mcp-servers" / provider, Path.home() / ".claude/mcp-servers" / provider]
             for value in [
@@ -82,6 +88,9 @@ class Connections:
             "pricelabs": ("PRICELABS_API_KEY", "PRICELABS_KEY"),
             "airroi": ("AIRROI_API_KEY",),
             "rankbreeze": ("RANKBREEZE_SESSION",),
+            "guesty": ("GUESTY_CLIENT_ID",),
+            "ownerrez": ("OWNERREZ_TOKEN",),
+            "intellihost": ("INTELLIHOST_MCP_TOKEN",),
         }[provider]
         key = next((self.values[n] for n in names if self.values.get(n)), None)
         if not key:
@@ -93,6 +102,14 @@ class Connections:
     def account(self, provider):
         # Cache isolation across operators without persisting the credential itself.
         return identity([provider, self.key(provider)])
+
+    def account_or(self, provider):
+        """Like account(), but for a provider reached through a cached token (Guesty's
+        shared cache) when no key is configured here: isolate by provider alone."""
+        try:
+            return self.account(provider)
+        except CannotAnalyze:
+            return identity([provider, "cached-token"])
 
     def supabase(self):
         server = self.servers.get(SUPABASE_SERVER, {})
