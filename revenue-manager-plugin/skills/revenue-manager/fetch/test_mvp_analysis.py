@@ -527,4 +527,3 @@ class MarketRollover(unittest.TestCase):
         def probe(start):
             raise CannotAnalyze("Neighborhood data is missing")
         self.assertEqual(market_start(probe, date(2026, 9, 23)), (date(2026, 9, 23), None))
-
