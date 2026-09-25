@@ -165,7 +165,7 @@ class ReadClient:
                     or (
                         body.get("method") == "tools/call"
                         and body.get("params", {}).get("name")
-                        in {"get_listing_rankings", "get_user_listings"}
+                        in {"get_listing_rankings", "get_user_listings", "get_listing_metrics_summary"}
                     )
                 )
             )

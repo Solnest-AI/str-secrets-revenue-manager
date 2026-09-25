@@ -311,3 +311,41 @@ def parse_booking_funnel(
         },
     )
     return result
+
+
+def funnel_from_summary(payload: dict, as_of: date, listing_id: str, max_age_days: int = 3) -> dict:
+    """The Visibility spoke from RankBreeze's OFFICIAL hosted MCP (get_listing_metrics_summary,
+    interval=daily). Measured live 2026-09-25: the last 3 pull dates, each carrying
+    integration_status and all six stages vs similar listings. Replaces the web-cookie scrape
+    (RANKBREEZE_SESSION), which the summit connections kit retired.
+
+    Only this listing's rows are used; the newest pull not in the future and no more than
+    `max_age_days` old wins. Anything else is `skipped` with a reason: empty is not zero."""
+    base = {"status": "skipped", "reason": "RankBreeze returned no funnel summary for this listing",
+            "current_month": as_of.strftime("%Y-%m"), "last_sync_date": None, "age_days": None,
+            "visibility_row": None, "source": "rankbreeze-mcp"}
+    rows = payload.get("metrics") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return base
+    mine = []
+    for r in rows:
+        if not isinstance(r, dict) or str(r.get("listing_id")) != str(listing_id):
+            continue
+        try:
+            pulled = date.fromisoformat(str(r.get("pull_date"))[:10])
+        except ValueError:
+            continue
+        if 0 <= (as_of - pulled).days <= max_age_days:
+            mine.append((pulled, r))
+    if not mine:
+        return base
+    pulled, r = max(mine, key=lambda x: x[0])
+    comparison = r.get("similar_listings_comparison")
+    if not isinstance(comparison, dict) or not comparison:
+        return {**base, "reason": "RankBreeze funnel has no similar-listings comparison"}
+    return {**base, "status": "ok", "reason": "fresh funnel with peer comparisons (official MCP)",
+            "last_sync_date": pulled.isoformat(), "age_days": (as_of - pulled).days,
+            "visibility_row": {"integration_status": r.get("integration_status"), "date": pulled.isoformat(),
+                               "period": as_of.strftime("%Y-%m"), "source": "rankbreeze-mcp",
+                               "similar_listings_comparison": comparison}}
+

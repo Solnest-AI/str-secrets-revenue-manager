@@ -418,27 +418,52 @@ class Sources:
         # Account-scoped cache key: the pile is the same for every listing on the account.
         return self.client.fetch("pile", [self.connections.account("pricelabs")], load)
 
+    def _rankbreeze_rpc(self):
+        """One MCP session on RankBreeze's official hosted server; returns rpc(method, params)."""
+        url = self.connections.rankbreeze_url()
+        if not url or urlsplit(url).scheme != "https":
+            raise CannotAnalyze("A hosted RankBreeze connection is required")
+        state = {"session": None, "counter": 0}
+
+        def rpc(method, params):
+            state["counter"] += 1
+            headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+            if state["session"]:
+                headers["Mcp-Session-Id"] = state["session"]
+            text, response_headers = self.client.request(
+                "rankbreeze", "rpc", url, headers=headers, text=True,
+                body={"jsonrpc": "2.0", "id": state["counter"], "method": method, "params": params})
+            state["session"] = next(
+                (v for k, v in response_headers.items() if k.lower() == "mcp-session-id"), state["session"])
+            if text.lstrip().startswith("{"):
+                result = json.loads(text)
+            else:
+                events = [json.loads(line[5:]) for line in text.splitlines() if line.startswith("data:")]
+                result = next((x for x in reversed(events) if x.get("id") == state["counter"]), {})
+            if result.get("error") or "result" not in result:
+                raise CannotAnalyze("RankBreeze RPC returned an error")
+            return result["result"]
+
+        rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
+                           "clientInfo": {"name": "revenue-manager-analysis", "version": "1"}})
+        return rpc, url
+
     def funnel(self, rid, start):
+        """Visibility via RankBreeze's official MCP (get_listing_metrics_summary). The old
+        web-cookie scrape is gone: the summit kit retired that cookie."""
         def load():
-            raw, _ = self.client.request(
-                "rankbreeze",
-                "booking_funnel",
-                "https://app.rankbreeze.com/rankings/" + quote(rid) + "/booking_funnel",
-                headers={
-                    "Cookie": "_godzilla_session=" + self.connections.key("rankbreeze"),
-                    "User-Agent": UA,
-                    "Accept": "text/html",
-                    "X-Requested-With": "XMLHttpRequest",
-                },
-                text=True,
-            )
-            return parse_booking_funnel(raw, start, expected_listing_id=rid)
+            from _mvp_rankbreeze import funnel_from_summary
+            rpc, _ = self._rankbreeze_rpc()
+            result = rpc("tools/call", {"name": "get_listing_metrics_summary", "arguments": {
+                "listing_id": int(rid), "interval": "daily",
+                "start_date": (start - timedelta(days=3)).isoformat(), "end_date": start.isoformat()}})
+            texts = [x["text"] for x in result.get("content", []) if x.get("type") == "text"]
+            if result.get("isError") or len(texts) != 1:
+                raise CannotAnalyze("Unreadable RankBreeze funnel summary")
+            return funnel_from_summary(json.loads(texts[0]), start, rid)
 
         return self.client.fetch(
-            "rankbreeze.funnel",
-            [self.connections.account("rankbreeze"), rid, start.isoformat()],
-            load,
-        )
+            "rankbreeze.funnel", [identity(self.connections.rankbreeze_url() or ""), rid, start.isoformat()], load)
 
     def rankings(self, rid, start, guest_capacity=1):
         url = self.connections.rankbreeze_url()

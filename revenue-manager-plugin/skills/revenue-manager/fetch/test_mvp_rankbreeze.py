@@ -193,3 +193,48 @@ class BookingFunnelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OfficialMcpFunnelTests(unittest.TestCase):
+    """RankBreeze's official hosted MCP (get_listing_metrics_summary, interval=daily), measured
+    live 2026-09-25: the last 3 pull dates, each with all six stages vs similar listings. No
+    web cookie involved. Values below are made up."""
+
+    @staticmethod
+    def row(pull, booking=4.8, status="active", lid="555"):
+        comp = {k: {"format": "numeric", "listing": v, "similar_listings": s, "difference": v - s}
+                for k, v, s in (("first_page_impressions", 2400, 2200), ("click_through_rate", 19.0, 14.0),
+                                ("view", 470, 380), ("wishlist", 8, 2), ("booking_rate", booking, 33.7),
+                                ("conversion_rate", 12.5, 6.2))}
+        return {"listing_id": lid, "integration_status": status, "pull_date": pull, "similar_listings_comparison": comp}
+
+    def test_latest_pull_feeds_the_visibility_spoke(self):
+        from _mvp_rankbreeze import funnel_from_summary
+        payload = {"metrics": [self.row("2026-09-22", 3.7), self.row("2026-09-24", 4.8), self.row("2026-09-23", 4.9)]}
+        f = funnel_from_summary(payload, date(2026, 9, 25), "555")
+        self.assertEqual((f["status"], f["last_sync_date"], f["current_month"]), ("ok", "2026-09-24", "2026-09"))
+        vis = spoke_visibility(f["visibility_row"])
+        self.assertTrue(vis["ok"], vis)
+        self.assertEqual(vis["diagnosis"]["stage"], "booking_rate")
+
+    def test_other_listing_rows_are_never_used(self):
+        from _mvp_rankbreeze import funnel_from_summary
+        f = funnel_from_summary({"metrics": [self.row("2026-09-24", lid="999")]}, date(2026, 9, 25), "555")
+        self.assertEqual(f["status"], "skipped")
+
+    def test_future_pull_is_not_trusted_and_empty_is_not_zero(self):
+        from _mvp_rankbreeze import funnel_from_summary
+        self.assertEqual(funnel_from_summary({"metrics": [self.row("2026-09-30")]}, date(2026, 9, 25), "555")["status"], "skipped")
+        self.assertEqual(funnel_from_summary({"metrics": []}, date(2026, 9, 25), "555")["status"], "skipped")
+        self.assertEqual(funnel_from_summary({}, date(2026, 9, 25), "555")["status"], "skipped")
+
+    def test_inactive_integration_reaches_the_spoke_as_a_named_gap(self):
+        from _mvp_rankbreeze import funnel_from_summary
+        f = funnel_from_summary({"metrics": [self.row("2026-09-24", status="deactivated")]}, date(2026, 9, 25), "555")
+        self.assertFalse(spoke_visibility(f["visibility_row"])["ok"])
+
+    def test_the_transport_allows_the_summary_tool(self):
+        from _mvp_store import ReadClient
+        ReadClient._read_only("rankbreeze", "rpc", "POST",
+                              {"method": "tools/call", "params": {"name": "get_listing_metrics_summary"}},
+                              "https://app.rankbreeze.com/api/mcp/x")
