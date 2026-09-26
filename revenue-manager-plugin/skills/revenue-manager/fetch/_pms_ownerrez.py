@@ -160,8 +160,25 @@ class OwnerRezSource:
             offset += len(page)
         raise OwnerRezError(f"OwnerRez {path} pagination exceeds the safety limit")
 
+    def _account_tz(self):
+        """MEASURED LIVE 2026-09-25 (a 23-property account, read-only): 8 active properties carry
+        no time_zone (the key is simply absent), so every one of their cards blocked on "PMS
+        property timezone is missing or unreadable". The account itself carries one
+        (/v2/users/me time_zone). Read once per run, only when a property needs it."""
+        if not hasattr(self, "_tz"):
+            try:
+                tz = self._get("/users/me", op="user").get("time_zone")
+            except CannotAnalyze:
+                tz = None
+            self._tz = tz if isinstance(tz, str) and tz.strip() else None
+        return self._tz
+
     def _detail(self, pid):
-        return normalize_property(property_row(self._get(f"/properties/{urllib.parse.quote(str(pid))}", op="property")))
+        p = normalize_property(property_row(self._get(f"/properties/{urllib.parse.quote(str(pid))}", op="property")))
+        if not p.get("timezone") and self._account_tz():
+            p["timezone"] = self._account_tz()
+            p["timezone_source"] = "account"  # named on the card by analyze90, never silent
+        return p
 
     def inventory(self):
         rows, count = self._paged("/properties", {})

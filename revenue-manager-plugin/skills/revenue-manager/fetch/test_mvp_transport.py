@@ -515,7 +515,9 @@ class SourceTests(StoreCase):
         sources = self.sources(price_payload())
         result = sources.prices(PROPERTY, "smartbnb", "CAD", START, 2)
         self.assertEqual([row["price"] for row in result["data"]], [120, 121])
-        self.assertNotIn("user_price", self.cached_payloads())
+        # user_price is kept ONLY so reconciliation can tell "recalculated, not pushed yet"
+        # from a broken sync (live 2026-09-25). It is never the ask: `price` stays the price.
+        self.assertEqual([row["user_price"] for row in result["data"]], [999, 999])
         self.assertNotIn("PRIVATE", self.cached_payloads())
         self.assertNotIn('"reason"', self.cached_payloads())
 
@@ -563,6 +565,38 @@ class SourceTests(StoreCase):
         self.assertEqual(result["category"], "1")
         self.assertEqual(result["listings_used"], 25)
         self.assertEqual([r["p50"] for r in result["data"]], [100, 100])
+
+    def _one_category_market(self, key, used=85, past_days=0):
+        dates = [(START + timedelta(days=i)).isoformat() for i in range(-past_days, 2)]
+        n = len(dates)
+        return {"data": {
+            "currency": "CAD",
+            "Future Percentile Prices": {
+                "Labels": ["25th Percentile", "50th Percentile", "75th Percentile", "90th Percentile"],
+                "Category": {key: {"Listings Used": used, "X_values": dates,
+                                   "Y_values": [[90] * n, [100] * n, [130] * n, [150] * n]}}},
+            "Future Occ/New/Canc": {"Labels": ["Occupancy"],
+                                    "Category": {key: {"X_values": dates, "Y_values": [[[60] * n]]}}},
+            "Summary Table Base Price": {
+                "Labels": ["25th Percentile", "50th Percentile", "75th Percentile", "90th Percentile"],
+                "Category": {key: {"Y_values": [90, 100, 130, 150]}}},
+        }}
+
+    def test_custom_comp_set_replaces_bedroom_buckets(self):
+        # MEASURED LIVE 2026-09-25: a 3-bedroom listing on a PriceLabs custom comp set gets ONE
+        # category, "Apres Comps" (85 listings), whose series start in the past.
+        raw = self._one_category_market("Apres Comps", past_days=3)
+        result = self.sources(raw).neighborhood(PROPERTY, "smartbnb", 3, "CAD", START, 2)
+        self.assertEqual(result["category"], "Apres Comps")
+        self.assertEqual(result["custom_comp_set"], "Apres Comps")
+        self.assertEqual(result["listings_used"], 85)
+        self.assertEqual([r["date"] for r in result["data"]],
+                         [START.isoformat(), (START + timedelta(days=1)).isoformat()])
+
+    def test_missing_bedroom_bucket_among_buckets_is_a_named_refusal(self):
+        raw = self._one_category_market("2")
+        with self.assertRaisesRegex(CannotAnalyze, "no 3-bedroom category.*categories present: 2"):
+            self.sources(raw).neighborhood(PROPERTY, "smartbnb", 3, "CAD", START, 2)
 
     def test_market_utc_rollover_does_not_shift_the_property_local_window(self):
         dates = [(START + timedelta(days=i)).isoformat() for i in (1, 2)]
@@ -655,7 +689,8 @@ class SourceTests(StoreCase):
         )
         self.assertEqual(
             sources.rankings("123", START),
-            [{"date": START.isoformat(), "guest_count": 1, "page": 1, "position": 5}],
+            [{"date": START.isoformat(), "guest_count": 1, "page": 1, "position": 5,
+              "max_age_days": 2, "source": "rankbreeze"}],
         )
         self.assertNotIn("PRIVATE", self.cached_payloads())
         self.assertEqual(sources.client.metrics()["http_calls"], 2)
@@ -725,12 +760,13 @@ class SourceTests(StoreCase):
             self.assertEqual({r["guest_count"] for r in result}, {1, 2, 3})
             self.assertEqual(sources.client.metrics()["http_calls"], 3)
 
-    def test_only_historical_rankings_cannot_be_current_evidence(self):
+    def test_only_stale_rankings_cannot_be_current_evidence(self):
+        # Older than RB_RANK_MAX_AGE_DAYS: every probe (start, start-1, start-2) finds no row.
         raw = {
             "listing_id": 123,
             "rankings": [
                 {
-                    "date": (START - timedelta(days=1)).isoformat(),
+                    "date": (START - timedelta(days=3)).isoformat(),
                     "guest_count": 1,
                     "page": 1,
                     "position": 5,
@@ -739,10 +775,26 @@ class SourceTests(StoreCase):
             "total_count": 1,
             "nextCursor": None,
         }
-        sources = self.ranking_sources(raw)
+        sources = self.ranking_sources(raw, raw, raw)
         with self.assertRaises(CannotAnalyze):
             sources.rankings("123", START, guest_capacity=1)
         self.assertEqual(self.cached_payloads(), "")
+
+    def test_rollover_reads_yesterdays_tracked_guest_counts(self):
+        # MEASURED LIVE 2026-09-25: after the UTC rollover `start` is tomorrow and has no
+        # row; RankBreeze tracks only the host's configured guest counts (here 2-4 on a
+        # 4-guest listing), never always 1..capacity.
+        empty = {"listing_id": 123, "rankings": [], "total_count": 0}
+        yesterday = (START - timedelta(days=1)).isoformat()
+        rows = {"listing_id": 123, "total_count": 3, "rankings": [
+            {"date": yesterday, "guest_count": str(g), "page": str(p), "position": str(pos)}
+            for g, p, pos in ((2, 2, 31), (3, 2, 20), (4, 1, 18))]}
+        sources = self.ranking_sources(empty, rows)
+        result = sources.rankings("123", START, guest_capacity=4)
+        self.assertEqual({r["guest_count"] for r in result}, {2, 3, 4})
+        self.assertEqual({r["date"] for r in result}, {yesterday})
+        self.assertTrue(all(r["max_age_days"] == 2 for r in result))
+        self.assertEqual(sources.client.metrics()["http_calls"], 3)
 
 
 class ConfigurationTests(unittest.TestCase):

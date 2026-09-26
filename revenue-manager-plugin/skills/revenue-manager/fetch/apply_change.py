@@ -22,10 +22,13 @@ Exit 2: nothing trustworthy to report (refused, drifted, failed, or sent-but-unv
 Apply stops at the first plan that is not verified; later plans are not attempted.
 
 Change file shape (one listing per file):
-    {"listing_id": "...", "pms": "hospitable", "reason": "why, in one line",
+    {"listing_id": "...", "pms": "smartbnb", "reason": "why, in one line",
      "listing_prices": {"min": 180},
      "overrides_set": [{"date": "2026-10-03", "price": 260, "price_type": "fixed", "min_stay": 2}],
      "overrides_delete": ["2026-10-10"]}
+
+"pms" here is PriceLabs' name for the PMS, not the PMS's own name: Hospitable is "smartbnb"
+(the `pms_name` in the property's property_config row, also on analyze90 --details).
 
 --target (default pricelabs, exactly the behaviour above) picks where the change is written.
 A PMS name writes the nightly price / min stay straight to that PMS calendar through

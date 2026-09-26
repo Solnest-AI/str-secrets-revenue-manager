@@ -114,6 +114,7 @@ def compute(inputs, as_of, start, days):
         inputs["context"],
         as_of,
         pile=inputs.get("pile"),
+        rank_gap=inputs.get("rank_gap"),
         today=min(today, start),
         **({"pricing": "beyond", "comps": inputs.get("comps")} if beyond else {}),
     )
@@ -152,6 +153,15 @@ def visibility_jobs(settings, sources, client, connections, start, prop):
     jobs, errors = {}, []
     rid = str(settings.get("rankbreeze_listing_id") or "")
     ih_id = str(settings.get("intellihost_property_id") or "")
+    gap = "no RankBreeze or IntelliHost listing is mapped"
+    # Live 2026-09-25: setup MERGES settings, so a RankBreeze id outlives a disconnected
+    # RankBreeze, and this function then never reached IntelliHost; both spokes read "no
+    # RankBreeze summary row" with the real cause buried at the bottom. A mapping is only
+    # used when its source is connected here; otherwise the next source, otherwise the reason.
+    if rid and not connections.rankbreeze_url():
+        errors.append("This property is mapped to RankBreeze, but RankBreeze is not connected on this "
+                      "machine" + ("; using IntelliHost instead" if ih_id else ""))
+        gap, rid = "RankBreeze is not connected (the property is mapped to it)", ""
     if rid:
         jobs["funnel"] = lambda: sources.funnel(rid, start)
         jobs["rankings"] = lambda: sources.rankings(rid, start, prop["capacity"]["max"])
@@ -161,7 +171,12 @@ def visibility_jobs(settings, sources, client, connections, start, prop):
         jobs["funnel"] = lambda: ih.funnel(ih_id, start)
         jobs["rankings"] = lambda: ih.rankings(ih_id, start, prop["capacity"]["max"])
     else:
-        errors.append("No verified RankBreeze or IntelliHost listing mapping")
+        if not errors:
+            errors.append("No verified RankBreeze or IntelliHost listing mapping")
+
+        def missing():  # run_jobs turns this into the spoke's named reason
+            raise CannotAnalyze(gap)
+        jobs["funnel"] = jobs["rankings"] = missing
     return jobs, errors
 
 
@@ -170,6 +185,8 @@ def run_live(args, client, connections, as_of):
     sources = Sources(client, connections, pms=choose(connections, getattr(args, "pms", "auto")))
     prop = sources.property(args.property)
     start = local_date(prop, as_of)
+    tz_note = (f"The PMS has no time zone on this property, so the account's ({prop['timezone']}) "
+               "is used to decide which night is tonight." if prop.get("timezone_source") == "account" else None)
     if args.start:
         requested = date.fromisoformat(args.start)
         if requested != start:
@@ -183,7 +200,8 @@ def run_live(args, client, connections, as_of):
         raise CannotAnalyze(f"This property was set up from {settings['pms_source']}, but this run reads "
                             f"{sources.pms}; pass --pms {settings['pms_source']}")
     if pricing_tool(getattr(args, "pricing", "auto"), settings) == "beyond":
-        return run_live_beyond(args, client, connections, sources, prop, context, start)
+        inputs, start, errors = run_live_beyond(args, client, connections, sources, prop, context, start)
+        return inputs, start, ([tz_note] if tz_note else []) + errors
     if settings.get("pricing_gap"):
         raise CannotAnalyze(settings["pricing_gap"])
     lid = str(settings.get("pricelabs_listing_id") or pid)
@@ -191,7 +209,7 @@ def run_live(args, client, connections, as_of):
     if not pms_name:
         raise CannotAnalyze("This property has no PriceLabs PMS name on record; run setup_properties.py first")
     inputs = {"property": prop, "context": context}
-    errors = []
+    errors = [tz_note] if tz_note else []
     start, rollover_note = market_start(
         lambda s: sources.neighborhood(lid, pms_name, prop["capacity"]["bedrooms"],
                                        prop["currency"], s, args.days, args.refresh_context),
@@ -234,6 +252,10 @@ def run_jobs(jobs, inputs, errors, client, connections, prop, settings, args):
                 inputs[name] = future.result()
             except (CannotAnalyze, ValueError, KeyError, TypeError) as exc:
                 errors.append(f"{name}: {exc}")
+                if name == "funnel":
+                    inputs["funnel"] = {"status": "skipped", "reason": str(exc)}
+                elif name == "rankings":
+                    inputs["rank_gap"] = str(exc)
     if "listing" in inputs:
         try:
             from _mvp_comps import fetch_comps

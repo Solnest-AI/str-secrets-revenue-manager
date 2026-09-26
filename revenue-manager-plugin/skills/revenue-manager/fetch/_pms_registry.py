@@ -15,10 +15,15 @@ SUPPORTED = ("hospitable", "guesty", "ownerrez", "hostaway", "lodgify", "uplisti
 
 
 def _has_guesty(connections) -> bool:
-    if connections.values.get("GUESTY_CLIENT_ID") or os.environ.get("GUESTY_TOKEN_CACHE"):
+    """Credentials, or a token cache that still holds a FRESH token. Live 2026-09-25: a bare
+    cache FILE counted, expired or not, so a Hospitable operator who once tried Guesty had
+    every card stop with "More than one PMS is connected (hospitable, guesty)"."""
+    from _pms_guesty import token_from_cache
+    if connections.values.get("GUESTY_CLIENT_ID"):
         return True
-    return any((Path(d) / ".cache" / "guesty.token").is_file()
-               for d in (connections.paths or {}).get("guesty", []))
+    caches = [os.environ["GUESTY_TOKEN_CACHE"]] if os.environ.get("GUESTY_TOKEN_CACHE") else []
+    caches += [Path(d) / ".cache" / "guesty.token" for d in (connections.paths or {}).get("guesty", [])]
+    return any(token_from_cache(Path(c).expanduser()) for c in caches)
 
 
 def connected(connections) -> list:

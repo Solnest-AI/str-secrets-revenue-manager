@@ -272,12 +272,12 @@ class GuestySource:
                                  lambda: self._paged("/reservations", reservation_query(pid, fields), "results", mapper))
 
     def reviews(self, pid):
-        # Same trap as reservations: the bare listingId param is not trusted to narrow the
-        # account-wide collection, so use the filters JSON, then keep ONLY rows that say they
-        # belong to this listing. A row with no listingId cannot be attributed and is dropped.
+        # NOT the reservations trap. MEASURED LIVE 2026-09-25 (Somos, read-only): /reviews
+        # REFUSES `filters` (HTTP 400 VALIDATION_FAILED, "filters" is not allowed), which failed
+        # the reviews spoke on every Guesty card, and honours `listingId` (35 rows, all on the
+        # listing). The per-row scope check below stays as the guard either way.
         def load():
-            q = reservation_query(pid, "")
-            raw = self._get("/reviews", {"filters": q["filters"], "limit": 100})
+            raw = self._get("/reviews", {"listingId": pid, "limit": 100})
             page = raw.get("data")
             if not isinstance(page, list):
                 raise GuestyError("Guesty reviews have no data list")

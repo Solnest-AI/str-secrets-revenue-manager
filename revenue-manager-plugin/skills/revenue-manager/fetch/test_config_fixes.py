@@ -148,6 +148,17 @@ class Windows(unittest.TestCase):
 
 # ------------------------------------------------------------------ item 16: context fields
 
+class BlankEnvLines(unittest.TestCase):
+    def test_blank_placeholder_in_a_later_file_does_not_erase_a_real_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real, blank = Path(tmp, "real.env"), Path(tmp, "blank.env")
+            real.write_text("HOSPITABLE_API_KEY=abc\n")
+            blank.write_text("HOSPITABLE_API_KEY=\nPRICELABS_API_KEY=''\nOWNERREZ_TOKEN=pt_x\n")
+            self.assertEqual(_mvp_config.load_env(blank), {"OWNERREZ_TOKEN": "pt_x"})
+            merged = {**_mvp_config.load_env(real), **_mvp_config.load_env(blank)}
+            self.assertEqual(merged["HOSPITABLE_API_KEY"], "abc")
+
+
 class Context(unittest.TestCase):
     def test_normalized_context_keeps_intellihost_and_pms_source(self):
         row = {"property_id": "g-1", "settings": {"pms_source": "guesty", "intellihost_property_id": "11",
@@ -244,6 +255,30 @@ class Onboarding(unittest.TestCase):
         self.assertEqual((seen["ih_funnel"], seen["ih_rank"]), ("11", "11"), "IntelliHost branch not taken")
         self.assertNotIn("No verified RankBreeze or IntelliHost listing mapping", errors)
         self.assertIn("context", inputs)
+
+    def test_stale_rankbreeze_mapping_falls_back_to_intellihost_and_says_why(self):
+        # Live 2026-09-25: setup merges settings, so a RankBreeze id survives RankBreeze being
+        # disconnected; the runner then never reached IntelliHost and both spokes read "no
+        # RankBreeze summary row". rankbreeze_url() is None in analyze_branch's connections.
+        code, sql, out, err, fake = self.run_setup("guesty", {"GUESTY_CLIENT_ID": "cid", "GUESTY_CLIENT_SECRET": "s",
+                                                              "PRICELABS_API_KEY": "pl"})
+        self.assertEqual(code, 0, err)
+        row = self.row_from(sql)
+        row["settings"]["rankbreeze_listing_id"] = "148285"
+        inputs, errors, seen = self.analyze_branch(row, "guesty")
+        self.assertEqual((seen.get("ih_funnel"), seen.get("ih_rank")), ("11", "11"), "IntelliHost branch not taken")
+        self.assertTrue(any("RankBreeze is not connected" in e for e in errors), errors)
+
+    def test_stale_rankbreeze_mapping_without_intellihost_names_the_reason(self):
+        code, sql, out, err, fake = self.run_setup("guesty", {"GUESTY_CLIENT_ID": "cid", "GUESTY_CLIENT_SECRET": "s",
+                                                              "PRICELABS_API_KEY": "pl"})
+        row = self.row_from(sql)
+        row["settings"]["rankbreeze_listing_id"] = "148285"
+        row["settings"].pop("intellihost_property_id", None)
+        inputs, errors, seen = self.analyze_branch(row, "guesty")
+        self.assertNotIn("ih_funnel", seen)
+        self.assertIn("RankBreeze is not connected", inputs["funnel"]["reason"])
+        self.assertIn("RankBreeze is not connected", inputs["rank_gap"])
 
     def test_ownerrez_without_hospitable_key_sets_up_and_analyses(self):
         code, sql, out, err, fake = self.run_setup("ownerrez", {"OWNERREZ_EMAIL": "a@b.c", "OWNERREZ_TOKEN": "t",
@@ -388,7 +423,9 @@ class Pile(unittest.TestCase):
 # ------------------------------------------------------------------ item 28: Guesty reviews
 
 class GuestyReviews(unittest.TestCase):
-    def test_reviews_use_filters_and_drop_unscoped_rows(self):
+    def test_reviews_ask_by_listingId_and_drop_unscoped_rows(self):
+        # Live 2026-09-25: Guesty /reviews answers `filters` with HTTP 400 ("filters" is not
+        # allowed) and honours listingId. The per-row scope check still drops foreign rows.
         from urllib.parse import parse_qs, urlsplit
 
         from _pms_guesty import GuestySource
@@ -408,8 +445,8 @@ class GuestyReviews(unittest.TestCase):
         src._token = "tok"
         out = src.reviews("L1")
         self.assertEqual([r["id"] for r in out["data"]], ["r1"])
-        self.assertNotIn("listingId", seen["q"])
-        self.assertEqual(json.loads(seen["q"]["filters"][0]), [{"field": "listingId", "operator": "$eq", "value": "L1"}])
+        self.assertEqual(seen["q"]["listingId"], ["L1"])
+        self.assertNotIn("filters", seen["q"])
 
 
 if __name__ == "__main__":

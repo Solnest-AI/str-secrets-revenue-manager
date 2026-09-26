@@ -993,3 +993,14 @@ class ZeroNight(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# live 2026-09-25 ---------------------------------------------- the PriceLabs PMS name, said plainly
+class PriceLabsPmsName(Base):
+    def test_change_file_with_the_pms_own_name_is_refused_with_the_fix(self):
+        # Real PriceLabs files a Hospitable listing under "smartbnb". A change file copied from
+        # --help said "hospitable" and got "PriceLabs returned a different listing or PMS".
+        fake = FakePriceLabs()
+        fake.listing["pms"] = "smartbnb"
+        with self.assertRaisesRegex(CannotWrite, "under pms 'smartbnb'.*set \"pms\": \"smartbnb\""):
+            self.plan(fake, change(listing_prices={"min": 160}))

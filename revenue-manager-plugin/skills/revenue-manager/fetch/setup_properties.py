@@ -467,7 +467,7 @@ def main(argv=None) -> int:
         print(f"Tables ready ({len(migration_files())} migrations applied, all idempotent).")
         post_sql(project, token, upsert_statement(rows))
         print(f"SETUP DONE: {len(rows)} propert{'y' if len(rows) == 1 else 'ies'} configured. "
-              f"Next: python3 fetch/analyze90.py --property \"Exact Property Name\"")
+              f"Next: uv run --python 3.13 python fetch/analyze90.py --property \"Exact Property Name\"")
         return 0
     except (SetupError, CannotAnalyze, OSError) as exc:
         print(f"CANNOT SET UP: {exc}", file=sys.stderr)

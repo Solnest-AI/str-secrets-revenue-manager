@@ -168,6 +168,12 @@ class Live:
         if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
             raise CannotWrite("PriceLabs did not return exactly this listing")
         item = rows[0]
+        if str(item.get("id")) == self.lid and item.get("pms") and item.get("pms") != self.pms:
+            # Live 2026-09-25: a change file copied from --help ("pms": "hospitable") hit the
+            # bare message below, which never said the fix. Same refusal, named.
+            raise CannotWrite(f"PriceLabs knows this listing under pms {item.get('pms')!r}, not "
+                              f"{self.pms!r}; set \"pms\": \"{item.get('pms')}\" in the change file "
+                              "(PriceLabs' name for the PMS, e.g. smartbnb for Hospitable)")
         if str(item.get("id")) != self.lid or item.get("pms") != self.pms:
             raise CannotWrite("PriceLabs returned a different listing or PMS")
         out = {"name": item.get("name"), "currency": item.get("currency") or None}

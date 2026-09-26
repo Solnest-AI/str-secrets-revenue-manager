@@ -113,6 +113,42 @@ class Paging(unittest.TestCase):
                 self.source(body)._paged("/bookings", {})
 
 
+class AccountTimeZone(unittest.TestCase):
+    """Live 2026-09-25: 8 of 23 active properties on a real account had no time_zone, and
+    every one of their cards blocked. The account (/v2/users/me) has one."""
+
+    def source(self, prop, me):
+        from _pms_ownerrez import OwnerRezSource
+        seen = []
+        class C:
+            def request(self, provider, op, url, **k):
+                seen.append(url)
+                return (me if url.endswith("/users/me") else prop), {}
+        class Conn:
+            values = {"OWNERREZ_EMAIL": "e", "OWNERREZ_TOKEN": "t"}
+        return OwnerRezSource(C(), Conn()), seen
+
+    def test_missing_property_zone_falls_back_to_the_account_and_is_marked(self):
+        prop = {k: v for k, v in PROP.items() if k != "time_zone"}
+        src, seen = self.source(prop, {"time_zone": "America/New_York"})
+        p = src._detail(4401)
+        self.assertEqual((p["timezone"], p["timezone_source"]), ("America/New_York", "account"))
+        src._detail(4401)
+        self.assertEqual(sum(u.endswith("/users/me") for u in seen), 1, "account zone read once")
+
+    def test_property_zone_wins_and_no_extra_call(self):
+        src, seen = self.source(PROP, {"time_zone": "America/Chicago"})
+        p = src._detail(4401)
+        self.assertEqual(p["timezone"], "America/New_York")
+        self.assertNotIn("timezone_source", p)
+        self.assertFalse(any(u.endswith("/users/me") for u in seen))
+
+    def test_no_zone_anywhere_stays_missing(self):
+        prop = {k: v for k, v in PROP.items() if k != "time_zone"}
+        src, _ = self.source(prop, {"time_zone": None})
+        self.assertIsNone(src._detail(4401)["timezone"])
+
+
 class EndToEnd(unittest.TestCase):
     def test_runs_through_the_real_pms_analysis_with_rates(self):
         start = date(2026, 10, 4)

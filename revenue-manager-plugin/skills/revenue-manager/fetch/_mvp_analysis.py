@@ -29,6 +29,11 @@ def rounded(value, places=2):
     return float(Decimal(str(value)).quantize(Decimal(10) ** -places, rounding=ROUND_HALF_UP))
 
 
+def _cell(value):
+    """A card never prints Python's None: an empty window has no mean, so say n/a."""
+    return "n/a" if value is None else value
+
+
 def average(values):
     vals = [v for v in values if v is not None]
     return rounded(mean(vals)) if vals else None
@@ -84,13 +89,15 @@ def min_price_recommendation(bounds, rows, multiplier, max_delta, comp_p25=None,
     """
     current = bounds["min"]
     near = [r for r in rows if 0 <= r["days_out"] < NEAR_TERM_DAYS]
-    booked_states = ("confirmed_paid", "zero_value_accepted", "accepted_unknown_value")
+    # ONE occupancy definition on the card: the table's (paid nights over non-blocked nights,
+    # _mvp_pms.forward). Live 2026-09-25 (The Apres Arcade) this function counted four $0
+    # nights as demand, printed "13% booked vs the market's 13%" under a table saying 0%, and
+    # kept a floor that 26 of 26 open nights were pinned to. A $0 stay did not sell at the min.
     open_near = [r for r in near if r["status"] == "open"]
     floor_open = sum(1 for r in open_near if r["at_floor"])
-    booked = [r for r in near if r["status"] in booked_states]
+    booked = [r for r in near if r["status"] == "confirmed_paid"]
     floor_sold = sum(1 for r in booked if r["at_floor"])
-    bookable = [r for r in near if r["status"] not in ("blocked", "pending_hold", "conflict",
-                                                       "unknown")]
+    bookable = [r for r in near if r["status"] != "blocked"]
     occ = 100.0 * len(booked) / len(bookable) if bookable else None
     mkts = [r["market_occ"] for r in near if r.get("market_occ") is not None]
     mkt = mean(mkts) if mkts else None
@@ -200,7 +207,7 @@ def markups(context, as_of):
 
 
 def build(pms, listing, prices, market, overrides, rules, funnel, rankings, context, as_of,
-          pile=None, today=None, pricing="pricelabs", comps=None):
+          pile=None, today=None, pricing="pricelabs", comps=None, rank_gap=None):
     """Full daily coverage is stored; only rollups and actionable exceptions are emitted.
 
     `today` is the PROPERTY-LOCAL current date. After the evening rollover the window
@@ -254,6 +261,12 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
     if len(override_map) != len(overrides):
         raise CannotAnalyze("Duplicate overrides prevent trustworthy attribution")
     blockers, notes, mismatches, held_gaps, rows = [], [], [], [], []
+    pending_pushes, unseen_bookings = [], []
+    try:
+        pl_refreshed = datetime.fromisoformat(str(prices.get("last_refreshed_at")).replace("Z", "+00:00"))
+        pl_refreshed = pl_refreshed if pl_refreshed.tzinfo else None
+    except ValueError:
+        pl_refreshed = None
     age = None
     if beyond:
         try:
@@ -315,6 +328,8 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             "detail": "Review sample is unreadable or absent, not empty",
         }
     rank = flywheel.spoke_ranking(rankings)
+    if not rank["ok"] and rank_gap:
+        rank["detail"] = rank_gap  # why it is missing, same as the funnel reason above
 
     def _stale(r):
         # A source may declare how old a scrape it accepts (IntelliHost scrapes every few days:
@@ -372,12 +387,35 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         opened = classification == "open"
         # With no PMS nightly price or min-stay (see pms_rates_exposed), only the booking half of
         # the check can run; the price/stay half is skipped for that night, never guessed.
-        drift = opened and (
-            (day["price_cents"] is not None and abs(day["price_cents"] / 100 - net) > 0.011)
-            or (not beyond  # Beyond has no per-night min stay: that half is a named gap
-                and day["min_stay"] is not None and day["min_stay"] != price.get("min_stay"))
-        )
+        pms_price = day["price_cents"] / 100 if day["price_cents"] is not None else None
+        price_drift = pms_price is not None and abs(pms_price - net) > 0.011
+        stay_drift = (not beyond  # Beyond has no per-night min stay: that half is a named gap
+                      and day["min_stay"] is not None and day["min_stay"] != price.get("min_stay"))
+        # MEASURED LIVE 2026-09-25 (Azure Palms): PriceLabs recalculated and reported a push at
+        # 01:36Z; 82 minutes later, on 21 of 27 open nights the PMS still equalled PriceLabs
+        # `user_price` (its previous price) to the cent, 1-3% off the new `price`. Whether the
+        # push lands later is NOT known, so this is not called "working". It is scoped to the
+        # dates (withheld, named at the top) instead of blocking the whole card as "sync
+        # broken", because the PMS provably holds a PriceLabs price. SKILL Step 5: both fields.
+        pushed = number(price.get("user_price"))
+        pending_push = bool(opened and price_drift and not stay_drift and pushed is not None
+                            and pushed > 0 and abs(pms_price - pushed) <= 0.011)
+        if pending_push:
+            pending_pushes.append({"date": date, "pms": pms_price, "pushed": pushed, "recalculated": net})
+        drift = opened and not pending_push and (price_drift or stay_drift)
         paid_gap = classification == "confirmed_paid" and pl_status != "RESERVED"
+        # MEASURED LIVE 2026-09-25 (Boho Bliss): an Airbnb booking created 03:06Z for 13 nights;
+        # PriceLabs last refreshed 07:48Z the day before, so it could not show it, and the whole
+        # card blocked as "the sync itself is broken". A booking made AFTER PriceLabs' last
+        # refresh is one PriceLabs has not seen yet: named, withheld, not a broken sync.
+        if paid_gap and pl_refreshed and day.get("booked_at"):
+            try:
+                unseen = datetime.fromisoformat(day["booked_at"].replace("Z", "+00:00")) > pl_refreshed
+            except ValueError:
+                unseen = False
+            if unseen:
+                paid_gap = False
+                unseen_bookings.append(date)
         unexpected_booked = opened and pl_status == "RESERVED"
         mismatched = bool(drift or paid_gap or unexpected_booked)
         if mismatched:
@@ -419,6 +457,10 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             "flags": [],
             "demand": price.get("demand_desc"),
         }
+        if pending_push:
+            row["withheld_reason"] = (
+                f"PriceLabs' newer price {net:g} is not in the PMS, which still shows PriceLabs' "
+                f"previous price {pushed:g}; rerun after the next sync")
         if mismatched:
             # Scoped: THIS date loses its pricing opinion, the rest of the run does not.
             row["withheld_reason"] = (
@@ -436,7 +478,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
                 row["flags"].append("above_market_reference")
             elif not beyond and row["airbnb"] > values["p90"]:
                 row["flags"].append("above_market_p90")
-            if mismatched:
+            if mismatched or pending_push:
                 row["action"] = "pricing_opinion_withheld"
             elif (
                 pl_status != "AVAILABLE"
@@ -559,6 +601,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
                 "confirmed": month["confirmed_paid_nights"],
                 "held": month["pending_held_nights"],
                 "open": month["open_nights"],
+                "zero_value": month.get("zero_value_accepted_nights", 0),
                 "blocked": month["blocked_nights"],
                 "bookable": month.get("bookable_nights"),
                 "occupancy_pct": month["confirmed_occupancy_pct"],
@@ -596,6 +639,8 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         },
         "reconciliation": {
             "mismatches": mismatches,
+            "pending_push": pending_pushes,
+            "booked_after_pricelabs_refresh": unseen_bookings,
             "held_dates_absent_from_pl": held_gaps,
             "open_dates_checked": open_count,
             "whole_run_block_share": MISMATCH_BLOCK_SHARE,
@@ -610,6 +655,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         "rules": [] if beyond else rules["summary"],
         "pms": {k: v for k, v in pms.items() if k not in {"daily", "property"}},
         "comp_count": market.get("listings_used"),
+        "custom_comp_set": market.get("custom_comp_set"),
         "price_freshness": {
             "calculated_at": prices.get("last_refreshed_at"),
             "age_hours": rounded(age),
@@ -696,6 +742,20 @@ def render(pack, run_id, metrics):
             f"SYNC MISMATCH on {len(mism)} date(s), pricing withheld on those dates only: "
             f"{dates}. PMS and {tool} disagree; fix the sync, then rerun."
         )
+    unseen = pack.get("reconciliation", {}).get("booked_after_pricelabs_refresh") or []
+    if unseen:
+        lines.append(
+            f"NEW BOOKING NOT IN PRICELABS YET: {len(unseen)} night(s) ({unseen[0]} to {unseen[-1]}) were "
+            f"booked after PriceLabs last refreshed ({pack['price_freshness'].get('calculated_at')}). They "
+            "are booked, so nothing is priced there; PriceLabs' other prices may move once it syncs.")
+    pend = pack.get("reconciliation", {}).get("pending_push") or []
+    if pend:
+        dates = ", ".join(m["date"] for m in pend[:8]) + (" ..." if len(pend) > 8 else "")
+        lines.append(
+            f"PRICELABS UPDATE NOT IN THE PMS on {len(pend)} date(s), pricing withheld on those "
+            f"dates only: {dates}. The PMS still shows PriceLabs' previous price. If a rerun after "
+            "the next PriceLabs sync still shows this, check the PriceLabs to PMS connection."
+        )
     lines += [
         f"Run {run_id}. Bounds min/base/max: {pack['bounds']['min']:g}/"
         f"{pack['bounds']['base']:g}/{ceiling}. "
@@ -704,7 +764,10 @@ def render(pack, run_id, metrics):
          f"calculation time); market: {pack.get('market_source') or 'unavailable'}. Full source "
          "timestamps are in --details." if beyond else
          f"PriceLabs calculated {pack['price_freshness']['age_hours']} hours ago; "
-         f"market comps: {comp_txt}. Full source timestamps are in --details."),
+         f"market comps: {comp_txt}"
+         + (f" (your PriceLabs custom comp set '{pack['custom_comp_set']}', not a bedroom bucket)"
+            if pack.get("custom_comp_set") else "")
+         + ". Full source timestamps are in --details."),
     ]
     if beyond:
         # Beyond's benchmark reports no comp count; AirROI's count is the only one there is.
@@ -733,31 +796,43 @@ def render(pack, run_id, metrics):
     lines += [
         "",
         "occ% = confirmed nights / bookable nights (owner-blocked nights excluded).",
-        "days | confirmed | held | open | blocked | occ% | market% | open Airbnb | "
+        "days | confirmed | $0 stay | held | open | blocked | occ% | market% | open Airbnb | "
         + ("market reference" if beyond else "matched p50/p90"),
+        # every night lands in exactly one column now: a $0 stay used to vanish from the table
+        # while still sitting in the occupancy denominator (live 2026-09-25).
     ]
     for w in pack["windows"]:
         lines.append(
-            f"{w['days']} | {w['confirmed']} | {w['held']} | {w['open']} | {w['blocked']} | "
-            f"{w['occupancy_pct']} | "
-            f"{w['market_occupancy_pct']} | {w['open_airbnb_mean']} | "
-            + (f"{w.get('open_reference_mean')}" if beyond
-               else f"{w['matched_open_p50']}/{w['matched_open_p90']}")
+            f"{w['days']} | {w['confirmed']} | {w['zero_value']} | {w['held']} | {w['open']} | "
+            f"{w['blocked']} | {_cell(w['occupancy_pct'])} | "
+            f"{_cell(w['market_occupancy_pct'])} | {_cell(w['open_airbnb_mean'])} | "
+            + (f"{_cell(w.get('open_reference_mean'))}" if beyond
+               else f"{_cell(w['matched_open_p50'])}/{_cell(w['matched_open_p90'])}")
         )
     lines.extend(["", "Calendar-month slices (partial first/last month):"])
     for m in pack["months"]:
         lines.append(
             f"{m['month']}: {m['days']} nights, {m['confirmed']} confirmed, "
-            f"{m['held']} held, {m['open']} open; "
-            f"occupancy {m['occupancy_pct']}% of {m['bookable']} bookable "
+            f"{m['zero_value']} at $0, {m['held']} held, {m['open']} open; "
+            f"occupancy {_cell(m['occupancy_pct'])}% of {m['bookable']} bookable "
             f"({m['blocked']} owner-blocked) vs market {m['market_occupancy_pct']}%; "
-            + (f"open Airbnb {m['open_airbnb_mean']}." if beyond else
+            + ("no open nights to price." if not m["open"] else
+               f"open Airbnb {m['open_airbnb_mean']}." if beyond else
                f"open Airbnb {m['open_airbnb_mean']} vs matched p90 {m['matched_open_p90']}.")
         )
     lines.extend(["", "Flywheel: Visibility > Bookings > Reviews > Ranking"])
     for key in pack["flywheel"]["order"]:
         s = pack["flywheel"]["spokes"][key]
-        lines.append(f"{key}: {'ok' if s['ok'] else 'unreadable'}, {s['detail']}")
+        # "ok" used to mean only "readable", so a funnel breaking at booking_rate 0.99 vs a
+        # comp-set 34.19 printed as "visibility: ok" (live, 2026-09-25). A readable spoke
+        # that FAILS its own diagnosis or carries a flag says so.
+        broken = (s.get("diagnosis") or {}).get("verdict") == "break"
+        state = ("unreadable" if not s["ok"] else "BREAK" if broken
+                 else "FLAG" if s.get("flag") else "ok")
+        lines.append(f"{key}: {state}, {s['detail']}")
+    if pack["flywheel"].get("headline"):
+        # flywheel.gate computes this every run; the card never printed it.
+        lines.append(f"diagnosis: {pack['flywheel']['headline']}")
     market = pack["flywheel"].get("market") or {}
     if beyond:
         from _beyond_runner import GAP_PILE, GAP_RULES
@@ -771,7 +846,7 @@ def render(pack, run_id, metrics):
         lines.append(f"{e['rule']}: {e['verdict']}. {e['why']}")
     withheld = [r for r in pack.get("daily", []) if r.get("withheld_reason")]
     if withheld:
-        lines.extend(["", "Pricing opinion withheld (sync mismatch, this date only):"])
+        lines.extend(["", "Pricing opinion withheld (this date only):"])
         for r in withheld[:10]:
             lines.append(f"  {r['date']}: {r['withheld_reason']}")
     pile = pack.get("pile") or {}
@@ -842,6 +917,11 @@ def render(pack, run_id, metrics):
         f"absent from {tool}, excluded from candidates."
         + (" Min stay not compared (Beyond has none per night)." if beyond else "")
     )
+    pending = pack["reconciliation"].get("pending_push") or []
+    if pending:
+        lines.append(
+            f"{len(pending)} date(s) where the PMS shows PriceLabs' previous price, not its newer "
+            "one: withheld date by date, not counted as a broken sync.")
     lines.extend(pack["blockers"] + pack["notes"])
     comps = pack.get("named_comps", {})
     if comps.get("status") == "ok":
@@ -849,7 +929,7 @@ def render(pack, run_id, metrics):
         lines.append(
             f"Named comps: {summary['comp_count']} bedroom/bath matches, "
             f"{capacity['count']} also fit guest capacity; trailing-year ADR median "
-            f"{capacity['summary'].get('adr_median')} for that subset. Not forward pace."
+            f"{_cell(capacity['summary'].get('adr_median'))} for that subset. Not forward pace."
         )
     else:
         lines.append("Named comps unavailable: " + comps.get("reason", "not loaded"))

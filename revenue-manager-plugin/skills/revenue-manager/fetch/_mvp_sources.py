@@ -15,6 +15,10 @@ from factcheck import neighborhood_base_percentiles, neighborhood_daily_from_raw
 from reduce_customizations import ALL_RULES, normalize_rules
 from reduce_prices import payload_matches, split_payload
 
+# RankBreeze pulls daily; its own guidance is to read yesterday, and after the UTC rollover the
+# run starts tomorrow, so the newest usable pull date can be up to 2 days before `start`.
+RB_RANK_MAX_AGE_DAYS = 2
+
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 PMS = "https://public.api.hospitable.com/v2"
 PL = "https://api.pricelabs.co"
@@ -248,6 +252,8 @@ class Sources:
             fields = (
                 "date",
                 "price",
+                # the price PriceLabs last PUSHED to the PMS; lags `price` after a recalculation
+                "user_price",
                 "uncustomized_price",
                 "min_stay",
                 "booking_status",
@@ -275,8 +281,19 @@ class Sources:
                 raise CannotAnalyze("Invalid property bedroom count")
             category = format(float(bedrooms), "g")
             cats = data.get("Future Percentile Prices", {}).get("Category", {})
+            custom = None
             if category not in cats:
-                raise CannotAnalyze("Exact bedroom category is absent from neighborhood comps")
+                # MEASURED LIVE 2026-09-25 (The Apres Arcade): a listing on a PriceLabs CUSTOM
+                # comp set gets ONE named category ("Apres Comps", 85 listings) and no bedroom
+                # buckets. factcheck already reads that shape; refusing it blocked the whole
+                # card. Use it and name it. Anything else stays a named refusal.
+                named = [k for k in cats if not re.fullmatch(r"-?\d+(\.\d+)?", str(k))]
+                if len(cats) == 1 and named:
+                    category = custom = named[0]
+                else:
+                    raise CannotAnalyze(
+                        f"PriceLabs neighborhood comps have no {category}-bedroom category "
+                        f"(categories present: {', '.join(sorted(map(str, cats))) or 'none'})")
             rows = neighborhood_daily_from_raw({"data": data}, category, days, start.isoformat())
             expected = [(start + timedelta(days=i)).isoformat() for i in range(days)]
             if [x.get("date") for x in rows] != expected:
@@ -299,6 +316,7 @@ class Sources:
             return {
                 "currency": currency,
                 "category": category,
+                "custom_comp_set": custom,
                 "listings_used": cats[category].get("Listings Used"),
                 "base_percentiles": neighborhood_base_percentiles(data, category),
                 "data": rows,
@@ -527,53 +545,55 @@ class Sources:
                 or not 1 <= float(guest_capacity) <= 100
             ):
                 raise CannotAnalyze("Property guest capacity is unreadable")
-            required_guests = set(range(1, int(guest_capacity) + 1))
-            arguments = {
-                "listing_id": int(rid),
-                "ranking_type": "daily",
-                "date": start.isoformat(),
-                "limit": 60,
-            }
-            current, seen_pages = [], set()
-            for _ in range(10):
-                result = rpc("tools/call", {"name": "get_listing_rankings", "arguments": arguments})
-                if result.get("isError"):
-                    raise CannotAnalyze("RankBreeze ranking tool refused the read")
-                texts = [x["text"] for x in result.get("content", []) if x.get("type") == "text"]
-                if len(texts) != 1:
-                    raise CannotAnalyze("Unreadable RankBreeze ranking response")
-                raw = json.loads(texts[0])
-                rows = raw.get("rankings")
-                if not isinstance(rows, list) or not rows:
-                    break
-                for entry in [raw, *rows]:
-                    if entry.get("listing_id") is not None and str(entry["listing_id"]) != rid:
-                        raise CannotAnalyze("RankBreeze returned a foreign listing identity")
-                page_key = identity(rows)
-                if page_key in seen_pages:
-                    raise CannotAnalyze("RankBreeze pagination repeated a page")
-                seen_pages.add(page_key)
-                # The hosted API can ignore date filters. Verify exact current-date
-                # guest coverage, rather than downloading unrelated historical pages.
-                current.extend(r for r in rows if r.get("date") == start.isoformat())
-                covered = {
-                    int(r["guest_count"])
+            cap = int(guest_capacity)
+            # MEASURED LIVE 2026-09-25 (6 Solnest listings): (1) RankBreeze has no row for
+            # `start` after the UTC rollover (start = tomorrow) and its own guidance is to read
+            # yesterday; `date` is honoured, `date_from`/`date_to` are IGNORED (whole history
+            # comes back). (2) It tracks only the guest counts the host configured (2-4 on a
+            # 4-guest listing, 4-12 on a 12-guest one), never always 1..capacity. Requiring
+            # both made the ranking spoke unreadable on every card. So: newest pull date within
+            # RB_RANK_MAX_AGE_DAYS of start, and whatever tracked guest counts fit capacity.
+            for back in range(RB_RANK_MAX_AGE_DAYS + 1):
+                day = (start - timedelta(days=back)).isoformat()
+                arguments = {"listing_id": int(rid), "ranking_type": "daily", "date": day, "limit": 60}
+                current, seen_pages = [], set()
+                for _ in range(10):
+                    result = rpc("tools/call", {"name": "get_listing_rankings", "arguments": arguments})
+                    if result.get("isError"):
+                        raise CannotAnalyze("RankBreeze ranking tool refused the read")
+                    texts = [x["text"] for x in result.get("content", []) if x.get("type") == "text"]
+                    if len(texts) != 1:
+                        raise CannotAnalyze("Unreadable RankBreeze ranking response")
+                    raw = json.loads(texts[0])
+                    rows = raw.get("rankings")
+                    if not isinstance(rows, list) or not rows:
+                        break
+                    for entry in [raw, *rows]:
+                        if entry.get("listing_id") is not None and str(entry["listing_id"]) != rid:
+                            raise CannotAnalyze("RankBreeze returned a foreign listing identity")
+                    page_key = identity(rows)
+                    if page_key in seen_pages:
+                        raise CannotAnalyze("RankBreeze pagination repeated a page")
+                    seen_pages.add(page_key)
+                    # Keep the exact-date filter: never trust the API to have applied it.
+                    current.extend(r for r in rows if r.get("date") == day)
+                    cursor = raw.get("nextCursor")
+                    # Newest-first: once a page reaches older dates, this day is complete.
+                    if not cursor or any(str(r.get("date", "")) < day for r in rows):
+                        break
+                    arguments = {**arguments, "cursor": cursor}
+                kept = [
+                    {"date": r.get("date"), "guest_count": int(r["guest_count"]),
+                     "position": r.get("position"), "page": r.get("page"),
+                     "max_age_days": RB_RANK_MAX_AGE_DAYS, "source": "rankbreeze"}
                     for r in current
-                    if str(r.get("guest_count", "")).isdigit()
-                }
-                if required_guests <= covered:
-                    fields = ("date", "guest_count", "position", "page")
-                    return [
-                        {k: r.get(k) for k in fields}
-                        for r in current
-                        if str(r.get("guest_count", "")).isdigit()
-                        and int(r["guest_count"]) in required_guests
-                    ]
-                cursor = raw.get("nextCursor")
-                if not cursor:
-                    break
-                arguments = {**arguments, "cursor": cursor}
-            raise CannotAnalyze("Current rankings do not cover the property's guest counts")
+                    if str(r.get("guest_count", "")).isdigit() and 1 <= int(r["guest_count"]) <= cap
+                ]
+                if kept:
+                    return kept
+            raise CannotAnalyze(
+                f"RankBreeze has no ranking rows for this listing's guest counts (1-{cap}) in the "
+                f"{RB_RANK_MAX_AGE_DAYS + 1} days up to {start.isoformat()}")
 
         return self.client.fetch(
             "rankbreeze.rankings", [identity(url), rid, start.isoformat(), guest_capacity], load

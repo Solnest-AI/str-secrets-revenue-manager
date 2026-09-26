@@ -610,6 +610,7 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
         group = inventory.get(day, [])
         classification = "unknown"
         cents = None
+        booked_at = None
         calendar_ok = calendar["currency"] == prop["currency"] and (
             not rates_exposed
             or (
@@ -642,6 +643,7 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
                     else ("confirmed_paid" if total > 0 else "zero_value_accepted")
                 )
                 cents = historical[day][0][1]
+                booked_at = record["_created"].isoformat() if record.get("_created") else None
         elif calendar["status_reason"] == "AVAILABLE":
             classification = "open"
         elif calendar["status_reason"] == "BLOCKED":
@@ -652,6 +654,7 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
                 "classification": classification,
                 "accommodation_cents": cents,
                 "reservation_count": len(group),
+                "booked_at": booked_at,
             }
         )
     warnings["calendar_reservation_conflict"] += sum(

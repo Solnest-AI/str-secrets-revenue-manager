@@ -118,7 +118,10 @@ def load_env(path, keys=None):
     if path.is_file():
         for line in read_text(path).splitlines():
             match = re.match(r"\s*(?:export\s+)?([A-Z_]+)\s*=\s*(.*?)\s*$", line)
-            if match and match[1] in keys:
+            # A blank `KEY=` placeholder is "not set here", never "set to nothing". Live
+            # 2026-09-25: an operator .env with `HOSPITABLE_API_KEY=` passed as --env-file
+            # replaced the real key found earlier, because later files win.
+            if match and match[1] in keys and match[2].strip("\"'"):
                 out[match[1]] = match[2].strip("\"'")
     return out
 

@@ -403,5 +403,116 @@ class HospitableMinorUnits(unittest.TestCase):
                "available": True, "status_reason": "AVAILABLE"}
         self.assertEqual(normalize_calendar([row])[0]["price_cents"], 1500000)
 
+
+# live 2026-09-25 --------------------------------------------------- funnel break on the card
+class FunnelBreakIsPrinted(unittest.TestCase):
+    def test_break_is_not_printed_as_ok_and_headline_is_shown(self):
+        bundle = synthetic_bundle()
+        comp = bundle["inputs"]["funnel"]["visibility_row"]["similar_listings_comparison"]
+        comp["booking_rate"] = {"listing": 0.99, "similar_listings": 34.19}
+        brief = render(compute(bundle), "run", METRICS)
+        self.assertIn("visibility: BREAK, booking_rate is 0.99 against a comp-set 34.19", brief)
+        self.assertIn("diagnosis: funnel breaks at booking_rate", brief)
+        self.assertNotIn("visibility: ok", brief)
+
+    def test_healthy_funnel_still_prints_ok_with_its_headline(self):
+        brief = render(compute(synthetic_bundle()), "run", METRICS)
+        self.assertIn("visibility: ok, every funnel stage is at or above its comp set", brief)
+        self.assertIn("diagnosis: funnel healthy against its comp set", brief)
+
+
+# live 2026-09-25 ------------------------------------- one occupancy on the card, no vanishing nights
+class OneOccupancyOnTheCard(unittest.TestCase):
+    bounds = {"min": 100.0, "base": 150.0, "max": 300.0}
+
+    def test_zero_value_nights_are_not_demand_in_the_min_price_pace(self):
+        # The Apres Arcade, live: 26 open nights pinned at the min + 4 $0 nights, market 13%.
+        # The card said "13% booked vs the market's 13%" under a table saying 0%.
+        rows = (_rows(26, "open", True, occ=13.0, p25=60.0)
+                + _rows(4, "zero_value_accepted", True, occ=13.0, p25=60.0, start=26))
+        rec = min_price_recommendation(self.bounds, rows, 1.2, 0.15)
+        self.assertIn("0% booked vs the market's 13%", rec["reason"])
+        self.assertEqual(rec["action"], "lower")
+
+    def test_table_shows_zero_value_column_and_every_night_is_counted(self):
+        brief = render(compute(synthetic_bundle()), "run", METRICS)
+        header, first = brief.split("days |", 1)[1].splitlines()[:2]
+        self.assertIn("$0 stay", header)
+        cells = [c.strip() for c in first.split("|")]
+        days, counted = int(cells[0]), sum(int(c) for c in cells[1:6])
+        self.assertEqual(days, counted, first)
+
+    def test_windows_with_no_open_nights_never_print_none(self):
+        # Azure Palms, live: 60 fully booked nights printed "None | None/None" and
+        # "open Airbnb None vs matched p90 None".
+        pack = compute(synthetic_bundle())
+        for key in ("open_airbnb_mean", "matched_open_p50", "matched_open_p90", "occupancy_pct"):
+            pack["windows"][0][key] = None
+        pack["months"][0].update(open=0, open_airbnb_mean=None, matched_open_p90=None,
+                                 occupancy_pct=None)
+        brief = render(pack, "run", METRICS)
+        self.assertNotIn("None", brief)
+        self.assertIn("no open nights to price", brief)
+
+
+# live 2026-09-25 ------------------------------------------ a PriceLabs push not yet made is not a broken sync
+class PendingPriceLabsPush(unittest.TestCase):
+    def test_pms_matching_the_last_pushed_price_does_not_block_the_card(self):
+        # Azure Palms, live: PMS == user_price to the cent on 21 of 27 open nights, `price`
+        # freshly recalculated 1-3% away. The whole card blocked as "sync broken".
+        bundle = synthetic_bundle()
+        for i in range(10, 40):
+            bundle["inputs"]["prices"]["data"][i].update(price=121, user_price=120)
+        result = compute(bundle)
+        self.assertNotEqual(result["status"], "blocked", result.get("blockers"))
+        self.assertEqual(result["reconciliation"]["mismatches"], [])
+        self.assertEqual(len(result["reconciliation"]["pending_push"]), 30)
+        withheld = [r for r in result["daily"] if r.get("withheld_reason")]
+        self.assertEqual(len(withheld), 30)
+        self.assertTrue(all("not in the PMS" in r["withheld_reason"] for r in withheld))
+        brief = render(result, "run", METRICS)
+        self.assertIn("PRICELABS UPDATE NOT IN THE PMS on 30 date(s)", brief.splitlines()[1])
+        self.assertNotIn("sync is working", brief)  # not measured, never claimed
+
+    def test_pms_matching_neither_price_still_blocks(self):
+        bundle = synthetic_bundle()
+        for i in range(10, 40):
+            bundle["inputs"]["prices"]["data"][i].update(price=121, user_price=125)
+        self.assertEqual(compute(bundle)["status"], "blocked")
+
+
+
+
+# live 2026-09-25 ------------------------------ a booking PriceLabs has not seen yet is not a broken sync
+class BookingAfterPriceLabsRefresh(unittest.TestCase):
+    def bundle(self, booked_minutes_ago):
+        from datetime import timedelta as td
+        bundle = synthetic_bundle()
+        for i in (0, 1):  # the paid stay: PriceLabs does not show it yet
+            bundle["inputs"]["prices"]["data"][i]["booking_status"] = ""
+        stamp = (AS_OF - td(minutes=booked_minutes_ago)).isoformat()
+        for r in bundle["inputs"]["reservations"]["data"]:
+            if r["id"] == "fixture-booked":
+                r["booking_date"] = stamp
+                r["reservation_status"]["history"][0]["changed_at"] = stamp
+        return bundle
+
+    def test_booked_after_the_refresh_is_named_not_a_mismatch(self):
+        # Boho Bliss, live: booked 03:06Z, PriceLabs refreshed 07:48Z the day before; the
+        # whole card blocked as "the sync itself is broken".
+        result = compute(self.bundle(booked_minutes_ago=10))  # PriceLabs refreshed 60 min ago
+        rec = result["reconciliation"]
+        self.assertEqual(rec["mismatches"], [])
+        self.assertEqual(rec["booked_after_pricelabs_refresh"],
+                         [START.isoformat(), (START + timedelta(days=1)).isoformat()])
+        self.assertIn("NEW BOOKING NOT IN PRICELABS YET: 2 night(s)", render(result, "run", METRICS))
+
+    def test_booked_before_the_refresh_is_still_a_mismatch(self):
+        rec = compute(self.bundle(booked_minutes_ago=24 * 60))["reconciliation"]
+        self.assertEqual([m["date"] for m in rec["mismatches"] if m["paid_booking_missing"]],
+                         [START.isoformat(), (START + timedelta(days=1)).isoformat()])
+        self.assertEqual(rec["booked_after_pricelabs_refresh"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

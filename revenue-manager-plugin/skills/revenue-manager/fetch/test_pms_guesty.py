@@ -134,6 +134,29 @@ class Reviews(unittest.TestCase):
         self.assertIsNone(normalize_review(review_row(raw))["rating"])
 
 
+class ReviewsQuery(unittest.TestCase):
+    def test_reviews_ask_by_listingId_and_still_drop_foreign_rows(self):
+        # Live 2026-09-25: /reviews answers `filters` with HTTP 400; `listingId` works.
+        seen = {}
+        class FakeClient:
+            def request(self, provider, op, url, headers=None):
+                seen["url"] = url
+                return {"data": [{"_id": "r1", "listingId": "gst-listing-0001", "channelId": "airbnb2",
+                                  "rawReview": {"overall_rating": 5}},
+                                 {"_id": "r2", "listingId": "someone-else", "channelId": "airbnb2",
+                                  "rawReview": {"overall_rating": 1}}]}, {}
+            def fetch(self, source, ident, loader, ttl_seconds=0):
+                return loader()
+        class FakeConn:
+            paths, values = {}, {}
+            def account_or(self, p): return "acct"
+        src = GuestySource(FakeClient(), FakeConn()); src._token = "t"
+        out = src.reviews("gst-listing-0001")
+        self.assertIn("listingId=gst-listing-0001", seen["url"])
+        self.assertNotIn("filters", seen["url"])
+        self.assertEqual([r["rating"] for r in out["data"]], [5])
+
+
 class TokenCache(unittest.TestCase):
     def test_kit_raw_cache_is_used_while_fresh(self):
         with tempfile.TemporaryDirectory() as d:
@@ -164,3 +187,26 @@ class EndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GuestyDetection(unittest.TestCase):
+    """Live 2026-09-25: any guesty.token FILE made Guesty 'connected', expired or not."""
+
+    def conns(self, d):
+        class C:
+            values, paths = {}, {"guesty": [d]}
+        return C()
+
+    def test_expired_cache_is_not_a_connection_fresh_one_is(self):
+        import os
+        import tempfile
+        import time
+        from pathlib import Path
+        from _pms_registry import _has_guesty
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, ".cache", "guesty.token"); p.parent.mkdir(); p.write_text("tok")
+            old = time.time() - 30 * 3600
+            os.utime(p, (old, old))
+            self.assertFalse(_has_guesty(self.conns(d)))
+            os.utime(p, None)
+            self.assertTrue(_has_guesty(self.conns(d)))
