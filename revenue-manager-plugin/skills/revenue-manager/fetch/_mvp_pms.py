@@ -11,6 +11,7 @@ import re
 import statistics
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import _money
 from _calendar import validate_calendar
 
 
@@ -48,6 +49,16 @@ _DETAIL_TYPES = {
     "overall",
 }
 
+
+
+def _two_decimal_or_refuse(currency) -> None:
+    """Hospitable money arrives in the currency's own minor unit; the engine's *_cents are
+    hundredths. They agree only for two-decimal currencies, so the rest are refused, never
+    shown 100x (JPY) or 10x (KWD) off."""
+    places = _money.decimals(currency)
+    if places is not None and places != 2:
+        raise ValueError(f"{str(currency).upper()} has {places} decimal places; Hospitable prices in this "
+                         "currency are not supported by this version yet")
 
 def _integer(value):
     return value if isinstance(value, int) and not isinstance(value, bool) else None
@@ -242,6 +253,8 @@ def normalize_calendar(raw):
             seen.add(row["date"])
             status, price = _object(row.get("status")), _object(row.get("price"))
             reason = row.get("status_reason", status.get("reason"))
+            if "price_cents" not in row and price.get("amount") is not None:
+                _two_decimal_or_refuse(row.get("currency", price.get("currency")))
             result.append(
                 {
                     "date": when.isoformat(),
@@ -296,6 +309,8 @@ def normalize_reservation(raw):
         "guest_total_cents": (guest, "total_price"),
     }
     clean = {"currency": _currency(financials.get("currency"))}
+    if not normalized:
+        _two_decimal_or_refuse(financials.get("currency"))
     for key, (parent, field) in money_fields.items():
         value = financials.get(key) if normalized else _object(parent.get(field)).get("amount")
         clean[key] = _integer(value)

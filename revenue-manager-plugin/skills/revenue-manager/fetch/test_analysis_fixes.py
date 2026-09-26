@@ -369,3 +369,31 @@ class ArrivalRulesNotExposed(unittest.TestCase):
     def test_smoobu_no_longer_assumes_false(self):
         import _pms_smoobu
         self.assertIsNone(_pms_smoobu.NO_ARRIVAL_RULES_EXPOSED)
+
+
+class HospitableMinorUnits(unittest.TestCase):
+    """Hospitable money is in the currency's own minor unit; the engine's *_cents are hundredths.
+    Non-two-decimal currencies are refused on that path instead of showing 100x or 10x off."""
+
+    def _raw_day(self, currency, amount):
+        return {"date": "2026-10-04", "price": {"amount": amount, "currency": currency},
+                "status": {"available": True, "reason": "AVAILABLE"}, "min_stay": 2}
+
+    def test_two_decimal_currencies_read_unchanged(self):
+        from _mvp_pms import normalize_calendar
+        for cur in ("USD", "CAD", "EUR", "GBP", "AUD"):
+            with self.subTest(cur=cur):
+                rows = normalize_calendar([self._raw_day(cur, 15025)])
+                self.assertEqual(rows[0]["price_cents"], 15025)
+
+    def test_jpy_and_kwd_are_refused_with_a_plain_reason(self):
+        from _mvp_pms import normalize_calendar
+        for cur in ("JPY", "KWD"):
+            with self.subTest(cur=cur), self.assertRaisesRegex(ValueError, f"{cur} has . decimal places"):
+                normalize_calendar([self._raw_day(cur, 15000)])
+
+    def test_adapter_rows_already_in_hundredths_are_untouched(self):
+        from _mvp_pms import normalize_calendar
+        row = {"date": "2026-10-04", "price_cents": 1500000, "currency": "JPY", "min_stay": 2,
+               "available": True, "status_reason": "AVAILABLE"}
+        self.assertEqual(normalize_calendar([row])[0]["price_cents"], 1500000)

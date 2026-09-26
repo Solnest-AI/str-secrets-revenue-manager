@@ -69,10 +69,8 @@ PRICING_TOOLS = {"pricelabs": "PriceLabs", "beyond": "Beyond"}
 UA = "Mozilla/5.0 (revenue-manager)"
 _ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
-# ISO 4217 minor units. Everything not listed has two decimals.
-ZERO_DECIMAL = {"BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX",
-                "UYI", "VND", "VUV", "XAF", "XOF", "XPF"}
-THREE_DECIMAL = {"BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"}
+# ISO 4217 minor units (shared with the readers). Everything not listed has two decimals.
+from _money import THREE_DECIMAL, ZERO_DECIMAL  # noqa: E402
 
 
 # ------------------------------------------------------------------------------ money units
