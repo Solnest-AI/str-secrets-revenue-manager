@@ -11,7 +11,7 @@ from pathlib import Path
 
 from _mvp_store import CannotAnalyze
 
-SUPPORTED = ("hospitable", "guesty", "ownerrez", "hostaway", "lodgify")
+SUPPORTED = ("hospitable", "guesty", "ownerrez", "hostaway", "lodgify", "uplisting", "smoobu", "hostfully")
 
 
 def _has_guesty(connections) -> bool:
@@ -33,6 +33,12 @@ def connected(connections) -> list:
         out.append("hostaway")
     if connections.values.get("LODGIFY_API_KEY"):
         out.append("lodgify")
+    if connections.values.get("UPLISTING_API_KEY"):
+        out.append("uplisting")
+    if connections.values.get("SMOOBU_API_KEY") and connections.values.get("SMOOBU_API_SECRET"):
+        out.append("smoobu")  # both: every Smoobu call is HMAC-signed with the secret
+    if connections.values.get("HOSTFULLY_API_KEY") and connections.values.get("HOSTFULLY_AGENCY_UID"):
+        out.append("hostfully")
     return out
 
 
@@ -63,4 +69,13 @@ def adapter(pms: str, client, connections):
     if pms == "lodgify":
         from _pms_lodgify import LodgifySource
         return LodgifySource(client, connections)
+    if pms == "uplisting":
+        from _pms_uplisting import UplistingSource
+        return UplistingSource(client, connections)
+    if pms == "smoobu":
+        from _pms_smoobu import SmoobuSource
+        return SmoobuSource(client, connections)
+    if pms == "hostfully":
+        from _pms_hostfully import HostfullySource
+        return HostfullySource(client, connections)
     return None
