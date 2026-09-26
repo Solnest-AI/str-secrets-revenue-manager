@@ -47,30 +47,38 @@ Claude: if someone says "finish the revenue manager setup", start here. First co
 skill loaded (the `revenue-manager` skill is in your skill list). If it is not, the restart
 did not happen: ask for a full quit and reopen again, then continue.
 
-Ask the operator one question: **what markup do you add per channel?** (For example
-Airbnb 16%, VRBO 20%. "No markup" is a real answer: that is 0.) Store exactly what they
-say. Never work it out from the calendar; a difference between the PMS and PriceLabs is not
-a markup.
+Ask the operator, in one message: **which booking sites are your properties on, and what
+markup do you add on each one?** (For example Airbnb 16%, VRBO 20%, Booking.com 18%.) Every
+OTA they list on needs its markup: they all matter equally, none is optional and none comes
+first. Also ask whether it is the same for every property; note any property that differs and
+its numbers. If they add a markup in two places (in the PMS and in the pricing tool), get both
+and store the combined figure, (1 + first) x (1 + second) - 1: 10% and 5% make 15.5%. Store
+exactly what they say. Never work it out from the calendar; a difference between the PMS and
+PriceLabs is not a markup.
 
 **Every PMS gets the same setup pass.** It maps each property to its pricing tool (and
 RankBreeze or IntelliHost, if connected) and stores the markups. Run it from this folder,
-dry run first. Pick the line for the attendee's PMS, put their Airbnb markup in place of
-`<AIRBNB_PERCENT>`, and never run a placeholder as written:
+dry run first. Pick the line for the attendee's PMS and write one `--markup <channel>=<percent>`
+for every booking site they named (for example `--markup airbnb=16 --markup vrbo=20
+--markup booking=18`). Never run a placeholder as written:
 
 | PMS | Setup line (dry run) |
 |---|---|
-| Hospitable | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hospitable --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
-| Guesty | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms guesty --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
-| OwnerRez | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms ownerrez --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
-| Hostaway | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hostaway --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
-| Lodgify | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms lodgify --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
-| Uplisting | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms uplisting --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
-| Smoobu | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms smoobu --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
-| Hostfully | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hostfully --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
+| Hospitable | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hospitable --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Guesty | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms guesty --markup <CHANNEL>=<PERCENT> --dry-run` |
+| OwnerRez | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms ownerrez --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Hostaway | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hostaway --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Lodgify | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms lodgify --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Uplisting | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms uplisting --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Smoobu | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms smoobu --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Hostfully | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hostfully --markup <CHANNEL>=<PERCENT> --dry-run` |
 
-If the dry run looks right, run the same line without `--dry-run`. Add one more
-`--markup <channel>=<percent>` per other channel they named (for example
-`--markup vrbo=<VRBO_PERCENT>`); Airbnb is required. It lists every property: ✅ mapped, or
+A property whose markup differs from the rest gets `--markup-for "<exact property name>:<channel>=<percent>"`
+(repeat per property and channel). If the dry run looks right, run the same line without
+`--dry-run`. Setup checks the answer against the PMS: Hospitable, Guesty and OwnerRez report
+every booking site each property is on, and setup stops with "<property> is listed on <site>
+with no markup" if one is missing. Ask the operator for that markup and run it again; nothing is
+written until every listed site has one. It lists every property: ✅ mapped, or
 ❌ with the reason (a property that is not in the pricing tool cannot be priced, and it says
 so instead of skipping it quietly). Running it again is safe.
 

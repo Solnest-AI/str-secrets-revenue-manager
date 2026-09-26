@@ -184,6 +184,21 @@ def min_price_recommendation(bounds, rows, multiplier, max_delta, comp_p25=None,
     }
 
 
+# OTAs in the order used to pick the market-comparison markup. The market data (AirROI,
+# RankBreeze, PriceLabs neighborhood) is Airbnb-facing, so Airbnb's markup is used when the
+# property has one; a property not on Airbnb uses its own OTA's markup, and the card says which.
+OTA_ORDER = ("airbnb", "vrbo", "booking", "expedia", "google", "tripadvisor", "hometogo")
+
+
+def market_markup(markup):
+    """(channel, percent) used to turn a net price into the guest-facing price the market sees."""
+    for channel in OTA_ORDER:
+        if channel in markup:
+            return channel, markup[channel]
+    raise CannotAnalyze("No OTA markup is confirmed for this property; run setup again with a "
+                        "markup for every booking site it is listed on")
+
+
 def markups(context, as_of):
     settings = context.get("settings", {})
     values = settings.get("channel_markup_pct")
@@ -196,7 +211,7 @@ def markups(context, as_of):
     }
     if (
         not isinstance(values, dict)
-        or "airbnb" not in values
+        or not any(k in values for k in OTA_ORDER)
         or not isinstance(source, dict)
         or source.get("source_type") not in verified_types
     ):
@@ -230,7 +245,8 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
     beyond = pricing == "beyond"
     tool = "Beyond" if beyond else "PriceLabs"
     markup = markups(context, as_of)
-    multiplier = 1 + markup["airbnb"] / 100
+    market_channel, market_pct = market_markup(markup)
+    multiplier = 1 + market_pct / 100
     if beyond:
         import _beyond_runner as BR
         market = BR.usable_market(market, listing.get("currency"))
@@ -673,6 +689,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         "property": pms["property"],
         "currency": listing["currency"],
         "markups": markup,
+        "market_markup_channel": market_channel,
         "markup_source": context["settings"]["channel_markup_source"],
         "bounds": bounds,
         "movement_scrutiny_pct": rounded(max_delta * 100, 1),
@@ -956,7 +973,9 @@ def render(pack, run_id, metrics):
     lines += [
         f"Run {run_id}. Bounds min/base/max: {pack['bounds']['min']:g}/"
         f"{pack['bounds']['base']:g}/{ceiling}. "
-        f"Airbnb markup {pack['markups']['airbnb']:g}%, confirmed listing setting.",
+        "Markups " + ", ".join(f"{k} {v:g}%" for k, v in pack["markups"].items())
+        + " (operator-confirmed); market comparison uses the "
+        + f"{pack.get('market_markup_channel', 'airbnb')} markup.",
         (f"Pricing tool Beyond: calendar read at {pack['price_freshness']['read_at']} (Beyond gives no "
          f"calculation time); market: {pack.get('market_source') or 'unavailable'}. Full source "
          "timestamps are in --details." if beyond else

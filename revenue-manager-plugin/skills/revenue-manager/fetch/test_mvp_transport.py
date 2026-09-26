@@ -940,6 +940,18 @@ class MarkupProvenanceTests(unittest.TestCase):
             with self.subTest(context=context), self.assertRaises(CannotAnalyze):
                 markups(context, self.as_of)
 
+    def test_a_property_off_airbnb_is_analyzed_with_its_own_ota_markup(self):
+        from _mvp_analysis import market_markup
+        self.assertEqual(market_markup(markups(self.context({"vrbo": 20}), self.as_of)), ("vrbo", 20.0))
+        self.assertEqual(market_markup(markups(self.context({"booking": 18, "vrbo": 20}), self.as_of)), ("vrbo", 20.0))
+        # Airbnb first when the property has it: the market data is Airbnb-facing
+        self.assertEqual(market_markup(markups(self.context({"vrbo": 20, "airbnb": 16}), self.as_of)), ("airbnb", 16.0))
+
+    def test_direct_only_or_made_up_channels_are_not_an_ota_markup(self):
+        for values in ({"direct": 10}, {"all": 0}, {}):
+            with self.subTest(values=values), self.assertRaises(CannotAnalyze):
+                markups(self.context(values), self.as_of)
+
     def test_explicit_dated_operator_confirmation_accepts_real_zero_or_positive_markup(self):
         for values in ({"airbnb": 0}, {"airbnb": 18.5, "direct": 10}):
             with self.subTest(values=values):

@@ -275,6 +275,12 @@ class Card(unittest.TestCase):
                       "the next 30 days sit at your min and your next 30 nights are 7% booked vs the "
                       "market's 60%; comp lower quartile unavailable, so the step is the cap", brief)
 
+    def test_the_card_shows_every_ota_markup_and_which_one_the_market_uses(self):
+        code, brief, _ = self.run_card(FakeBeyond(), settings={"channel_markup_pct": {"airbnb": 15, "vrbo": 20}})
+        self.assertIn("Markups airbnb 15%, vrbo 20% (operator-confirmed); market comparison uses the airbnb markup.", brief)
+        code, brief, _ = self.run_card(FakeBeyond(), settings={"channel_markup_pct": {"vrbo": 20}})
+        self.assertIn("Markups vrbo 20% (operator-confirmed); market comparison uses the vrbo markup.", brief)
+
     def test_a_ceiling_when_beyond_has_one_is_shown_not_gapped(self):
         fake = FakeBeyond()  # max 400
         fake.booked = {"2026-10-01", "2026-10-02"}

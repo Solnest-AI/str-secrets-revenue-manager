@@ -3,6 +3,7 @@
 
     python3 fetch/setup_properties.py --markup airbnb=16 --markup vrbo=20 --dry-run
     python3 fetch/setup_properties.py --markup airbnb=16 --markup vrbo=20
+    python3 fetch/setup_properties.py --markup airbnb=16 --markup vrbo=20 --markup-for "Lake House:vrbo=24"
     python3 fetch/setup_properties.py --markup airbnb=16 --min-price "Lake House=140"
     python3 fetch/setup_properties.py --markup airbnb=16 --pricing beyond   (Beyond users)
 
@@ -22,8 +23,14 @@ brand-new `str-secrets-summit` project has none. This builds them:
   4. finds its RankBreeze listing by Airbnb room id, if RankBreeze is connected
   5. writes one row per property, merged into any row already there
 
-Ask the operator one question first: what markup they add per channel. A calendar-vs-PriceLabs
-ratio is NOT a markup, so never infer it. Airbnb is required; other channels are optional.
+Ask the operator first: which booking sites they list on, and the markup they add on each one.
+Every OTA matters equally: a markup is required for every booking site they name AND for every
+OTA the PMS says a property is listed on; a missing one stops setup and is named. Hospitable,
+Guesty and OwnerRez report every channel a property is on; Hostaway and Hostfully only its Airbnb
+listing; Lodgify, Smoobu and Uplisting none, so there the operator's answer is the only source.
+No channel is special. A property
+whose markup differs from the rest gets --markup-for "<property id or exact name>:<channel>=<pct>".
+A calendar-vs-PriceLabs ratio is NOT a markup, so never infer it.
 
 Nothing here changes a price. Reads use the runner's read-only transport. The only writes are
 the migration files and the property_config upsert, both to the attendee's own Supabase.
@@ -71,6 +78,14 @@ MAX_DELTA = 0.15       # PRD D8
 MIGRATIONS = Path(__file__).resolve().parents[3] / "migrations"
 _ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _CHANNEL = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+# PMS and operator spellings of the same booking site, keyed by the name with punctuation removed.
+CHANNEL_ALIASES = {"homeaway": "vrbo", "homeaway2": "vrbo", "vrbo": "vrbo", "abritel": "vrbo",
+                   "bookingcom": "booking", "booking": "booking", "airbnb": "airbnb", "airbnb2": "airbnb",
+                   "airbnbofficial": "airbnb", "expedia": "expedia", "googlevacationrentals": "google", "gvr": "google",
+                   "google": "google", "tripadvisor": "tripadvisor", "hometogo": "hometogo"}
+# Channels a PMS reports that are not an OTA, so they carry no markup requirement.
+NOT_OTA = {"direct", "manual", "website", "owner", "block", "blocked", "other", "hospitable", "guesty",
+           "ownerrez", "hostaway", "hostfully", "lodgify", "smoobu", "uplisting", "none"}
 
 
 class SetupError(Exception):
@@ -79,27 +94,94 @@ class SetupError(Exception):
 
 # ------------------------------------------------------------------------------ pure parts
 
+def channel_name(raw) -> str:
+    """One name per booking site: 'Booking.com', 'booking_com' and 'booking' are the same OTA."""
+    text = str(raw or "").strip().lower()
+    return CHANNEL_ALIASES.get(re.sub(r"[^a-z0-9]", "", text), text)
+
+
+def _markup_pair(item, flag="--markup"):
+    if "=" not in str(item):
+        raise SetupError(f"{flag} takes channel=percent, e.g. vrbo=20 (got {item!r})")
+    raw, value = str(item).rsplit("=", 1)
+    channel = channel_name(raw)
+    if not _CHANNEL.match(channel):
+        raise SetupError(f"{raw.strip()!r} is not a channel name")
+    try:
+        pct = float(value)
+    except ValueError:
+        raise SetupError(f"{channel} markup {value!r} is not a number") from None
+    if not math.isfinite(pct) or not 0 <= pct <= 500:
+        raise SetupError(f"{channel} markup must be between 0 and 500 percent")
+    return channel, pct
+
+
 def parse_markups(items) -> dict:
+    """{channel: percent}, one per booking site the operator lists on. No channel is special."""
     out = {}
     for item in items or []:
-        if "=" not in str(item):
-            raise SetupError(f"--markup takes channel=percent, e.g. airbnb=16 (got {item!r})")
-        channel, value = str(item).split("=", 1)
-        channel = channel.strip().lower()
-        if not _CHANNEL.match(channel):
-            raise SetupError(f"{channel!r} is not a channel name")
+        channel, pct = _markup_pair(item)
         if channel in out:
             raise SetupError(f"{channel} given twice")
-        try:
-            pct = float(value)
-        except ValueError:
-            raise SetupError(f"{channel} markup {value!r} is not a number") from None
-        if not math.isfinite(pct) or not 0 <= pct <= 500:
-            raise SetupError(f"{channel} markup must be between 0 and 500 percent")
         out[channel] = pct
-    if "airbnb" not in out:
-        raise SetupError("The Airbnb markup is required (use --markup airbnb=0 if there is none)")
+    if not out:
+        raise SetupError("A markup is required for every booking site you list on, "
+                         "e.g. --markup airbnb=16 --markup vrbo=20")
     return out
+
+
+def parse_property_markups(items) -> dict:
+    """{property id or exact name: {channel: percent}}, from --markup-for "<property>:<channel>=<pct>".
+    Overrides the portfolio markup for that property and channel only."""
+    out = {}
+    for item in items or []:
+        if ":" not in str(item):
+            raise SetupError(f'--markup-for takes "<property id or exact name>:<channel>=<percent>" (got {item!r})')
+        who, pair = str(item).rsplit(":", 1)
+        who = who.strip()
+        if not who:
+            raise SetupError(f"--markup-for {item!r} names no property")
+        channel, pct = _markup_pair(pair, "--markup-for")
+        key = next((k for k in out if k.casefold() == who.casefold()), who)
+        if channel in out.setdefault(key, {}):
+            raise SetupError(f"--markup-for gives {who} a {channel} markup twice")
+        out[key][channel] = pct
+    return out
+
+
+def match_property_markups(per_property: dict, props: list) -> dict:
+    """{property id: {channel: percent}}. Every name must match exactly one property: an override
+    that silently lands nowhere is a markup the operator thinks is set and is not."""
+    out = {}
+    for who, values in per_property.items():
+        hits = [p for p in props if str(p.get("id")) == who
+                or str(p.get("name") or "").casefold() == who.casefold()]
+        if len(hits) != 1:
+            raise SetupError(f"--markup-for {who!r} matches {len(hits)} listed properties; use the exact "
+                             "property id or name")
+        out.setdefault(str(hits[0]["id"]), {}).update(values)
+    return out
+
+
+def listed_channels(prop: dict) -> set:
+    """The OTAs the PMS says this property is listed on (empty when the PMS does not report it)."""
+    names = {channel_name(x.get("platform")) for x in prop.get("listings") or [] if x.get("platform")}
+    return {n for n in names if n and n not in NOT_OTA}
+
+
+# PMSs measured to report EVERY channel a property is on (Hospitable, live 2026-09-26: airbnb, vrbo,
+# booking, gvr). Only for these is a portfolio OTA markup left off a property that is not on that
+# OTA; a PMS that reports only some channels keeps every markup the operator gave.
+REPORTS_ALL_CHANNELS = {"hospitable"}
+
+
+def property_markups(prop: dict, markups: dict, overrides: dict, pms: str = None):
+    """(the property's markups, the OTAs it is listed on that have none)."""
+    listed = listed_channels(prop)
+    values = {k: v for k, v in markups.items()
+              if not (pms in REPORTS_ALL_CHANNELS and listed and k not in NOT_OTA and k not in listed)}
+    values.update(overrides.get(str(prop.get("id")), {}))
+    return values, sorted(listed - set(values))
 
 
 def parse_min_prices(items) -> dict:
@@ -322,7 +404,10 @@ PRICE_OWNER = {"pricelabs": "PriceLabs", "beyond": "Beyond"}
 def main(argv=None) -> int:
     utf8_console()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--markup", action="append", default=[], help="channel=percent, e.g. airbnb=16 (repeat)")
+    ap.add_argument("--markup", action="append", default=[],
+                    help="channel=percent for every booking site you list on, e.g. airbnb=16 (repeat)")
+    ap.add_argument("--markup-for", action="append", default=[],
+                    help='one property\'s markup when it differs: "<property id or exact name>:<channel>=<percent>" (repeat)')
     ap.add_argument("--dry-run", action="store_true", help="show the rows; write nothing")
     ap.add_argument("--min-price", action="append", default=[],
                     help='operator floor per property: "<property id or exact name>=<amount>" (repeat)')
@@ -339,6 +424,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     try:
         markups = parse_markups(args.markup)
+        per_property = parse_property_markups(args.markup_for)
         min_prices = parse_min_prices(args.min_price)
         connections = Connections(env_files=args.env_file)
         supabase = connections.supabase()
@@ -375,6 +461,7 @@ def main(argv=None) -> int:
         beyond_rows = BeyondSource(client, connections).listings() if maps_beyond else []
         props = [p for p in inventory if p.get("listed") is not False]
         floors = match_min_prices(min_prices, props)
+        overrides = match_property_markups(per_property, props)
         rb, rb_note = [], "RankBreeze not connected (ranking will show as a gap on each card)"
         url = connections.rankbreeze_url()
         if url:
@@ -395,8 +482,11 @@ def main(argv=None) -> int:
                        "IntelliHost is connected, but reading it needs IntelliHost Premium; ranking comes from "
                        "RankBreeze or shows as a named gap" if str(exc) == PREMIUM_GAP else f"IntelliHost could not be read ({exc})")
         now = datetime.now(timezone.utc)
-        rows, missing = [], []
+        rows, missing, unpriced = [], [], []
         for p in props:
+            p_markups, no_markup = property_markups(p, markups, overrides, pms)
+            if no_markup:
+                unpriced.append((p.get("name") or p["id"], no_markup))
             pl_pms, bid, how, unmapped = None, None, None, None
             if maps_beyond:
                 bid, how = match_beyond(p, beyond_rows, pms)
@@ -419,7 +509,7 @@ def main(argv=None) -> int:
                     continue
             ab = airbnb_id(p)
             rows.append({"property_id": p["id"], "display_name": p.get("name"),
-                         "settings": build_settings(p["id"], ab, match_rankbreeze(ab, rb) if rb else None, markups, now,
+                         "settings": build_settings(p["id"], ab, match_rankbreeze(ab, rb) if rb else None, p_markups, now,
                                                     pms_name=pl_pms, pms_source=pms, intellihost=ih_map.get(ab or ""),
                                                     pricelabs=has_pricelabs,
                                                     pricing_tool="beyond" if pricing == "beyond" else "auto",
@@ -448,7 +538,8 @@ def main(argv=None) -> int:
                   f"IntelliHost {'✅' if 'intellihost_property_id' in s else '—'}  "
                   f"Airbnb id {'✅' if 'airbnb_listing_id' in s else '—'}  "
                   f"Prices set by {PRICE_OWNER.get(s['pricing_tool'], label)}"
-                  + (f"  Min {s['min_price']:g}" if "min_price" in s else ""))
+                  + (f"  Min {s['min_price']:g}" if "min_price" in s else "")
+                  + "  Markups " + ", ".join(f"{k} {v:g}%" for k, v in s["channel_markup_pct"].items()))
         for name, why in missing:
             if pricing == "beyond":
                 print(f"  ❌ {name}: NOT MAPPED TO BEYOND ({why}). Marked Beyond-priced; the runner cannot "
@@ -458,7 +549,16 @@ def main(argv=None) -> int:
         if not rows:
             raise SetupError(f"No {label} property maps to a PriceLabs listing, so there is nothing to set up"
                              if has_pricelabs else f"{label} returned no listed property, so there is nothing to set up")
-        print(f"Markups: {', '.join(f'{k} {v:g}%' for k, v in markups.items())}")
+        print(f"Markups: {', '.join(f'{k} {v:g}%' for k, v in markups.items())}"
+              + (f" ({len(overrides)} propert{'y has' if len(overrides) == 1 else 'ies have'} their own)" if overrides else ""))
+        if unpriced:
+            for name, channels in unpriced:
+                print(f"  ❌ {name} is listed on {', '.join(channels)} with no markup for "
+                      f"{'it' if len(channels) == 1 else 'them'}.")
+            need = sorted({c for _, cs in unpriced for c in cs})
+            raise SetupError("Every OTA a property is listed on needs its markup. Ask the operator for "
+                             + ", ".join(need) + " and add " + " ".join(f"--markup {c}=<percent>" for c in need)
+                             + " (or --markup-for for one property). Nothing was written.")
         if args.dry_run:
             print(f"DRY RUN: nothing written. {len(rows)} row(s) ready for {SUPABASE_SERVER}.")
             return 0

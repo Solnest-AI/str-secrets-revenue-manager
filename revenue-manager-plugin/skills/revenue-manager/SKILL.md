@@ -125,7 +125,7 @@ Any of the eight PMSs plus PriceLabs or Beyond runs through the runner in `fetch
 
 | Job | Command |
 |---|---|
-| Setup, once (dry run first, then the same line without `--dry-run`) | `fetch/setup_properties.py --pms <pms> --markup airbnb=<percent> --dry-run` |
+| Setup, once (dry run first, then the same line without `--dry-run`) | `fetch/setup_properties.py --pms <pms> --markup <channel>=<percent>` (one per booking site) `--dry-run` |
 | ... Beyond sets the prices | add `--pricing beyond` (the default, `--pricing auto`, picks PriceLabs if connected, else Beyond, else the PMS) |
 | ... the PMS sets the prices itself | add `--min-price "<property>=<amount>"` per property (no PMS API gives the writer a min) |
 | Run one property | `fetch/analyze90.py --property "<exact name>"` (Beyond: add `--pricing beyond`) |
@@ -142,7 +142,7 @@ Any of the eight PMSs plus PriceLabs or Beyond runs through the runner in `fetch
 First time on this Supabase project (no rows in `property_config`): ask the markup question (Step 5), then run setup, dry run first. One `--markup <channel>=<percent>` per channel, Airbnb required:
 
 ```bash
-uv run --python 3.13 python fetch/setup_properties.py --pms <PMS> --markup airbnb=<AIRBNB_PERCENT> --dry-run
+uv run --python 3.13 python fetch/setup_properties.py --pms <PMS> --markup <CHANNEL>=<PERCENT> --dry-run
 ```
 
 then the same line without `--dry-run`. It lists every property ✅ or ❌ with the reason. Per property:
@@ -321,7 +321,7 @@ The PMS calendar price, the PriceLabs recommended price, and realized ADR are th
 - **Ask** = calendar / forward-curve listed price. **Cleared = ADR** (PriceLabs ADR field + reservations, and the PMS's realized ADR). Cleared runs **materially higher**. Report both; never conflate them.
 
 ### Markup: ask the operator, per channel, never infer it
-- Ask once: **"What markup do you add per channel?"** (e.g. Airbnb 16%, VRBO 20%; "no markup" is 0). Store exactly that as `property_config.settings.channel_markup_pct`, e.g. `{"airbnb": 16, "vrbo": 20}`. That is the key the runner reads. If it's already stored, use it; ask again only if the operator says it changed.
+- Ask once: **"Which booking sites are your properties on, and what markup do you add on each one?"** (e.g. Airbnb 16%, VRBO 20%, Booking.com 18%). Every OTA they list on needs its markup; they all matter equally and none is optional. Store exactly that as `property_config.settings.channel_markup_pct`, e.g. `{"airbnb": 16, "vrbo": 20, "booking": 18}`; a property that differs gets its own values (`--markup-for`). Market comparisons use the Airbnb markup when the property is on Airbnb (the market data is Airbnb-facing), otherwise its own OTA's, and the card names which. That is the key the runner reads. If it's already stored, use it; ask again only if the operator says it changed.
 - **Never infer a markup from a gap between the PMS and PriceLabs** (or any other pair of prices). A gap that does not match the stated markup is a **sync or configuration finding**: report it as that. If the gap is wildly inconsistent across dates (stdev > 5%), flag broken sync.
 - **Never recommend a change to "fix" a difference that matches the stated markup.** That's the markup working.
 

@@ -28,8 +28,8 @@ Claude follows `SETUP.md`, in this order:
 2. Installs the plugin.
 3. You fully quit and reopen Claude Code in that folder (Cmd+Q on Mac, not just closing the
    window). The skill only loads on a fresh start.
-4. You say "finish the revenue manager setup". Claude asks you one question (what markup you
-   add per channel) and runs your first check.
+4. You say "finish the revenue manager setup". Claude asks which booking sites you list on and the markup you add on each
+   one, then runs your first check.
 
 > **Claude:** if someone pasted this repo's link and said "set this up", clone it to
 > `~/str-secrets-revenue-manager` (if that folder already exists, `git pull` there instead).

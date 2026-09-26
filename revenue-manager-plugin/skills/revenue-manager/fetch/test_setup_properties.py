@@ -14,6 +14,11 @@ from setup_properties import (
     match_rankbreeze,
     migration_files,
     parse_markups,
+    parse_property_markups,
+    match_property_markups,
+    listed_channels,
+    property_markups,
+    channel_name,
     parse_min_prices,
     upsert_statement,
 )
@@ -26,18 +31,83 @@ class Markups(unittest.TestCase):
         self.assertEqual(parse_markups(["airbnb=16", "vrbo=20", "Booking=22.5"]),
                          {"airbnb": 16.0, "vrbo": 20.0, "booking": 22.5})
 
-    def test_airbnb_is_required(self):
-        with self.assertRaisesRegex(SetupError, "airbnb"):
-            parse_markups(["vrbo=20"])
+    def test_no_channel_is_special(self):
+        # Ryan 2026-09-26: every OTA matters equally; Airbnb is not required over the others
+        self.assertEqual(parse_markups(["vrbo=20"]), {"vrbo": 20.0})
+        self.assertEqual(parse_markups(["booking=18", "airbnb=16"]), {"booking": 18.0, "airbnb": 16.0})
+
+    def test_at_least_one_markup_is_required(self):
+        with self.assertRaisesRegex(SetupError, "every booking site"):
+            parse_markups([])
+
+    def test_channel_spellings_collapse_to_one_name(self):
+        for raw, want in (("Booking.com", "booking"), ("booking_com", "booking"), ("HomeAway", "vrbo"),
+                          ("VRBO", "vrbo"), ("airbnb2", "airbnb"), ("Air BnB", "airbnb"), ("expedia", "expedia"),
+                          ("gvr", "google"), ("Google Vacation Rentals", "google")):  # Hospitable says gvr (live 2026-09-26)
+            with self.subTest(raw=raw):
+                self.assertEqual(channel_name(raw), want)
+        with self.assertRaisesRegex(SetupError, "twice"):
+            parse_markups(["booking=10", "Booking.com=12"])
 
     def test_zero_is_a_real_answer(self):
         self.assertEqual(parse_markups(["airbnb=0"]), {"airbnb": 0.0})
 
     def test_bad_values_are_refused(self):
         for bad in (["airbnb"], ["airbnb=abc"], ["airbnb=-1"], ["airbnb=600"], ["airbnb=nan"],
-                    ["airbnb=16", "airbnb=18"], ["air bnb=16"]):
+                    ["airbnb=16", "airbnb=18"], ["my site=16"]):
             with self.subTest(bad=bad), self.assertRaises(SetupError):
                 parse_markups(bad)
+
+
+class PerPropertyMarkups(unittest.TestCase):
+    PROPS = [{"id": "p1", "name": "Lake House", "listings": [{"platform": "airbnb", "platform_id": "1"},
+                                                              {"platform": "homeaway", "platform_id": "v"}]},
+             {"id": "p2", "name": "Beach Hut", "listings": [{"platform": "booking.com", "platform_id": "b"},
+                                                             {"platform": "direct", "platform_id": "d"}]},
+             {"id": "p3", "name": "Cabin", "listings": []}]
+
+    def test_override_parses_and_matches_by_name_or_id(self):
+        parsed = parse_property_markups(["Lake House:vrbo=24", "p2:booking=19", "lake house:airbnb=15"])
+        self.assertEqual(parsed, {"Lake House": {"vrbo": 24.0, "airbnb": 15.0}, "p2": {"booking": 19.0}})
+        self.assertEqual(match_property_markups(parsed, self.PROPS),
+                         {"p1": {"vrbo": 24.0, "airbnb": 15.0}, "p2": {"booking": 19.0}})
+
+    def test_override_that_lands_nowhere_is_refused(self):
+        with self.assertRaisesRegex(SetupError, "matches 0"):
+            match_property_markups(parse_property_markups(["Nowhere:vrbo=20"]), self.PROPS)
+
+    def test_bad_overrides_are_refused(self):
+        for bad in (["Lake House vrbo=20"], [":vrbo=20"], ["Lake House:vrbo=abc"], ["Lake House:vrbo=-2"],
+                    ["Lake House:vrbo=20", "Lake House:vrbo=21"]):
+            with self.subTest(bad=bad), self.assertRaises(SetupError):
+                parse_property_markups(bad)
+
+    def test_listed_channels_are_the_otas_only(self):
+        self.assertEqual(listed_channels(self.PROPS[0]), {"airbnb", "vrbo"})
+        self.assertEqual(listed_channels(self.PROPS[1]), {"booking"})      # direct is not an OTA
+        self.assertEqual(listed_channels(self.PROPS[2]), set())            # PMS reports no channels
+
+    def test_every_listed_ota_needs_a_markup(self):
+        values, missing = property_markups(self.PROPS[0], {"airbnb": 16.0}, {})
+        self.assertEqual((values, missing), ({"airbnb": 16.0}, ["vrbo"]))
+        values, missing = property_markups(self.PROPS[0], {"airbnb": 16.0}, {"p1": {"vrbo": 24.0}})
+        self.assertEqual((values, missing), ({"airbnb": 16.0, "vrbo": 24.0}, []))
+        values, missing = property_markups(self.PROPS[1], {"airbnb": 16.0, "vrbo": 20.0}, {})
+        self.assertEqual(missing, ["booking"])
+        self.assertEqual(property_markups(self.PROPS[2], {"vrbo": 20.0}, {}), ({"vrbo": 20.0}, []))
+
+    def test_a_property_off_an_ota_does_not_carry_its_markup_when_the_pms_reports_every_channel(self):
+        given = {"airbnb": 16.0, "vrbo": 20.0, "booking": 22.0, "direct": 10.0}
+        # Hospitable reports every channel: Beach Hut is on Booking.com only, so no Airbnb/VRBO markup
+        self.assertEqual(property_markups(self.PROPS[1], given, {}, "hospitable"),
+                         ({"booking": 22.0, "direct": 10.0}, []))
+        # a PMS that reports only some channels keeps every markup the operator gave
+        self.assertEqual(property_markups(self.PROPS[1], given, {}, "hostaway"), (given, []))
+        # no channels reported at all: keep everything
+        self.assertEqual(property_markups(self.PROPS[2], given, {}, "hospitable"), (given, []))
+        # an explicit per-property markup is kept even for an OTA the PMS does not list
+        self.assertEqual(property_markups(self.PROPS[1], given, {"p2": {"airbnb": 17.0}}, "hospitable")[0],
+                         {"booking": 22.0, "direct": 10.0, "airbnb": 17.0})
 
 
 class Mapping(unittest.TestCase):

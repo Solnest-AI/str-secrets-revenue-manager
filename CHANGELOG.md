@@ -1,5 +1,23 @@
 # Changelog
 
+## 5.0.2
+
+- **Every OTA needs its markup, and none is special.** Setup used to require only the Airbnb
+  markup and treat VRBO, Booking.com and the rest as optional, so a property priced for
+  those channels was compared to the market with the wrong number, and a property not on
+  Airbnb could not be analyzed at all. Setup now asks which booking sites you list on and
+  the markup on each, and stops ("<property> is listed on vrbo with no markup") until every
+  booking site has one. Hospitable, Guesty and OwnerRez report which sites each property is
+  on, so a missing one is caught even if it was not mentioned (measured live on Hospitable:
+  Airbnb, VRBO, Booking.com and Google Vacation Rentals, which Hospitable calls `gvr`).
+- **One property can have its own markup:** `--markup-for "<property>:<channel>=<percent>"`.
+- **Channel spellings are one name:** Booking.com/booking_com, HomeAway/VRBO, gvr/Google
+  Vacation Rentals.
+- **The card lists every markup** and says which one the market comparison used: Airbnb's
+  when the property is on Airbnb (the market data is Airbnb prices), otherwise its own OTA's.
+- **Already set up? Nothing breaks.** Stored markups keep working exactly as before; run
+  setup again to add the other booking sites.
+
 ## 5.0.1
 
 - **Update your installed copy.** Claude Code only refreshes an installed plugin when its

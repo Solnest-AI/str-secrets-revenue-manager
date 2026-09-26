@@ -190,8 +190,13 @@ class FakePMS:
 class Onboarding(unittest.TestCase):
     """setup_properties (fakes) -> the upserted row -> read_context -> analyze90.run_live's branch."""
 
-    def run_setup(self, pms, env, *, pricelabs=True, extra_servers=None):
+    def run_setup(self, pms, env, *, pricelabs=True, extra_servers=None, markup_args=("--markup", "airbnb=16"),
+                  channels=None):
         fake = FakePMS(f"{pms}-prop-1")
+        if channels:
+            base = fake.prop()
+            base["listings"] = [{"platform": c, "platform_id": f"{c}-1"} for c in channels]
+            fake.prop = lambda base=base: dict(base)
         sql = []
         servers = {"supabase-revenue-manager": SUPA, "intellihost": IH_HTTP, **(extra_servers or {})}
         out, err = io.StringIO(), io.StringIO()
@@ -202,8 +207,36 @@ class Onboarding(unittest.TestCase):
                 mock.patch("_rank_intellihost.IntelliHostSource.airbnb_map", return_value={"1734": "11"}), \
                 mock.patch.object(setup_properties, "post_sql", side_effect=lambda p, t, s: sql.append(s)), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = setup_properties.main(["--pms", pms, "--markup", "airbnb=16", "--db", str(h.home / "wb.sqlite3")])
+            code = setup_properties.main(["--pms", pms, *markup_args, "--db", str(h.home / "wb.sqlite3")])
         return code, sql, out.getvalue(), err.getvalue(), fake
+
+    GUESTY = {"GUESTY_CLIENT_ID": "cid", "GUESTY_CLIENT_SECRET": "s"}
+
+    def test_a_listed_ota_without_a_markup_stops_setup_and_writes_nothing(self):
+        code, sql, out, err, _ = self.run_setup("guesty", self.GUESTY, channels=("airbnb2", "homeaway2"))
+        self.assertEqual(code, 2)
+        self.assertIn("Lake House is listed on vrbo with no markup", out)
+        self.assertIn("--markup vrbo=<percent>", err)
+        self.assertEqual(sql, [])
+
+    def test_every_listed_ota_with_a_markup_writes_them_all(self):
+        code, sql, out, err, _ = self.run_setup("guesty", self.GUESTY, channels=("airbnb2", "homeaway2"),
+                                                markup_args=("--markup", "airbnb=16", "--markup", "HomeAway=20"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.row_from(sql)["settings"]["channel_markup_pct"], {"airbnb": 16.0, "vrbo": 20.0})
+        self.assertIn("Markups airbnb 16%, vrbo 20%", out)
+
+    def test_a_property_not_on_airbnb_sets_up_without_an_airbnb_markup(self):
+        code, sql, out, err, _ = self.run_setup("guesty", self.GUESTY, channels=("homeaway2",),
+                                                markup_args=("--markup", "vrbo=20"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.row_from(sql)["settings"]["channel_markup_pct"], {"vrbo": 20.0})
+
+    def test_per_property_markup_overrides_the_portfolio_one(self):
+        code, sql, out, err, _ = self.run_setup("guesty", self.GUESTY, channels=("airbnb2",),
+                                                markup_args=("--markup", "airbnb=16", "--markup-for", "Lake House:airbnb=22"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.row_from(sql)["settings"]["channel_markup_pct"], {"airbnb": 22.0})
 
     @staticmethod
     def row_from(sql):
