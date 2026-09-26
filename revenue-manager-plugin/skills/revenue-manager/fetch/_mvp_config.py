@@ -28,8 +28,10 @@ KEYS = {
     "OWNERREZ_EMAIL",
     "OWNERREZ_TOKEN",
     "INTELLIHOST_MCP_TOKEN",
+    "BEYOND_TOKEN",
 }
-PROVIDERS = ("hospitable", "pricelabs", "airroi", "rankbreeze", "guesty", "ownerrez", "intellihost")
+PROVIDERS = ("hospitable", "pricelabs", "airroi", "rankbreeze", "guesty", "ownerrez", "intellihost",
+             "beyond")
 
 
 def read_text(path) -> str:
@@ -166,6 +168,7 @@ class Connections:
             "guesty": ("GUESTY_CLIENT_ID",),
             "ownerrez": ("OWNERREZ_TOKEN",),
             "intellihost": ("INTELLIHOST_MCP_TOKEN",),
+            "beyond": ("BEYOND_TOKEN",),
         }[provider]
         key = next((self.values[n] for n in names if self.values.get(n)), None)
         if not key:
