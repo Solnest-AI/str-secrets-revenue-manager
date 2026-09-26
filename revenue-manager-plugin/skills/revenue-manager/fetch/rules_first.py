@@ -484,6 +484,12 @@ def recommend(rows, candidates, rules, levels, effect, bounds, max_delta, overri
         residual.append(c["date"])
         if c.get("layer") == "fixed_override":
             why_dso[c["date"]] = "a fixed DSO sets this night, so no rule reaches it: the DSO is the lever"
+        elif c.get("layer") == "relative_override":
+            o = c.get("override") or {}
+            pct = o.get("price")
+            size = f"{float(pct):+g}% " if pct not in (None, "") else ""
+            why_dso[c["date"]] = (f"an existing {size}DSO already prices this night on top of the rules: "
+                                  "that DSO is the lever, so change or remove that DSO rather than add one")
         elif hits and hits[0].get("caution"):
             why_dso[c["date"]] = (f"no rule change: {hits[0]['why']}. The same caution applies to this "
                                   "date's scenario")

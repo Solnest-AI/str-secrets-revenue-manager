@@ -206,7 +206,12 @@ class Card(unittest.TestCase):
         by = {c["direction"]: c["reference_source"] for c in facts["candidates"]}
         self.assertEqual(by, {"cut": "beyond_benchmark_avg", "raise": "airroi_adr_p25"})
         self.assertIn("vs Beyond benchmark avg 200; review cut net 187-209", brief)
-        self.assertIn("vs AirROI ADR p25 200; review raise net", brief)
+        # the raise scenarios exist, but this listing books 7% vs the market's 60%: the booking
+        # guard withholds the raises (cheap and still not booking is not a price problem) and the
+        # card says so instead of dropping them silently
+        self.assertTrue(all(c.get("withheld_by_guard") for c in facts["candidates"] if c["direction"] == "raise"))
+        self.assertNotIn("review raise net", brief)
+        self.assertIn("booking guard: nights 1-30 of the window are 7% booked vs the market's 60%", brief)
         self.assertTrue(all(c["days_out"] < 14 for c in facts["candidates"] if c["direction"] == "cut"))
         # read-only, and only Beyond + AirROI were called
         self.assertEqual([r for r in fake.requests if r[0] != "GET"], [])

@@ -409,6 +409,18 @@ class CardOrder(unittest.TestCase):
         self.assertEqual(facts["status"], "blocked")
         self.assertEqual(facts["rules_first"]["rule_changes"], [])
 
+class RelativeDsoIsTheLever(unittest.TestCase):
+    # Live 2026-09-25 (The Sunburst Chalet): raise DSO suggestions on nights already carrying a
+    # -25% DSO. The existing DSO is what prices them; it is the lever, not a new DSO on top.
+    def test_why_names_the_existing_percent_dso(self):
+        rows = [row(i, airbnb=60.0, p75=150.0, layer="relative_override",
+                    override={"price": -25, "price_type": "percent"}) for i in range(20)]
+        out = run(rows, dict(OFF))
+        self.assertTrue(out["dso_dates"])
+        why = out["why_dso"][out["dso_dates"][0]]
+        self.assertIn("-25% DSO", why)
+        self.assertIn("change or remove that DSO", why)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -552,6 +552,46 @@ class PriceLabsFreshnessWindow(unittest.TestCase):
         result, _ = self.card(-2)
         self.assertEqual(result["status"], "blocked")
 
+# Live 2026-09-25 (The Apres Arcade): raise DSOs suggested on nights under comp p25 while the
+# listing booked 0% vs the market's 13%. Cheap and still not booking is not a price problem; the
+# same booking guard the rule layer uses now holds for DSO suggestions, per 30-night block.
+class DsoBookingGuard(unittest.TestCase):
+    def rows(self, booked, market, n=30):
+        out = []
+        for i in range(n):
+            out.append({"date": f"d{i}", "status": "confirmed_paid" if i < booked else "open",
+                        "market_occ": market})
+        return out
+
+    def test_raise_withheld_when_the_block_books_under_the_market(self):
+        from _mvp_analysis import dso_booking_guard
+        rows = self.rows(booked=0, market=13.0)
+        why = dso_booking_guard(rows, 5, "raise")
+        self.assertIsNotNone(why)
+        self.assertIn("0% booked vs the market's 13%", why)
+        self.assertIn("not the price", why)
+
+    def test_raise_allowed_when_the_block_books_with_the_market(self):
+        from _mvp_analysis import dso_booking_guard
+        self.assertIsNone(dso_booking_guard(self.rows(booked=4, market=13.0), 5, "raise"))
+
+    def test_cut_withheld_when_the_block_is_selling_ahead(self):
+        from _mvp_analysis import dso_booking_guard
+        why = dso_booking_guard(self.rows(booked=20, market=40.0), 25, "cut")
+        self.assertIsNotNone(why)
+        self.assertIn("selling", why)
+
+    def test_no_market_yardstick_means_no_guard(self):
+        from _mvp_analysis import dso_booking_guard
+        self.assertIsNone(dso_booking_guard(self.rows(booked=0, market=None), 5, "raise"))
+
+    def test_blocked_nights_are_not_counted_as_unbooked(self):
+        from _mvp_analysis import dso_booking_guard
+        rows = self.rows(booked=3, market=13.0)
+        for r in rows[3:25]:
+            r["status"] = "blocked"
+        self.assertIsNone(dso_booking_guard(rows, 26, "raise"))  # 3 of 8 bookable = 37.5%
+
 
 if __name__ == "__main__":
     unittest.main()

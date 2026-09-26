@@ -553,8 +553,11 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         ):
             row["flags"].append("isolated_open_night_age_unknown")
     candidates = []
-    for row in rows:
+    for idx, row in enumerate(rows):
         if row["action"] == "review_price" and not blockers:
+            guard = dso_booking_guard(rows, idx, row.get("direction") or "cut")
+            if guard:
+                row["withheld_by_guard"] = guard
             # This is a review range, not a provider operation or an automatic recommendation.
             if row.get("direction") == "raise":
                 lower = max(bounds["min"], math.ceil(row["net"] * 1.05))
@@ -596,7 +599,8 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
     rules_plan = None
     if not beyond:
         rules_plan = rules_first.recommend(
-            rows, [] if blockers else candidates, rules.get("raw") or {}, rules.get("levels") or {},
+            rows, [] if blockers else [c for c in candidates if not c.get("withheld_by_guard")],
+            rules.get("raw") or {}, rules.get("levels") or {},
             [] if blockers else rule_effect, bounds, max_delta, overrides, today_date)
         for c in candidates:
             c["layers"] = rules_plan["layers"].get(c["date"], [])
@@ -789,6 +793,41 @@ def _candidate_line(r, beyond):
     return line + "."
 
 
+
+def dso_booking_guard(rows, i, direction):
+    """The booking guard the rule layer uses (rules_first.BOOKING_GUARD_PP), held for a DSO
+    suggestion too, per 30-night block of the window: no raise where the block books more than
+    the guard under the market (cheap and still not booking is visibility or the listing, not the
+    price), no cut where it books more than the guard over (it is selling). Occupancy is the card's:
+    paid nights over non-blocked nights. No market yardstick, no guard. Live 2026-09-25 (The Apres
+    Arcade): raise DSOs on a listing 0% booked against a 13% market."""
+    start = (i // 30) * 30
+    block = rows[start:start + 30]
+    bookable = [r for r in block if r.get("status") != "blocked"]
+    markets = [r["market_occ"] for r in block if r.get("market_occ") is not None]
+    if not bookable or not markets:
+        return None
+    occ = 100.0 * sum(r.get("status") == "confirmed_paid" for r in bookable) / len(bookable)
+    mkt = sum(markets) / len(markets)
+    gap = occ - mkt
+    span = f"nights {start + 1}-{start + len(block)} of the window are {occ:.0f}% booked vs the market's {mkt:.0f}%"
+    if direction == "raise" and gap < -rules_first.BOOKING_GUARD_PP:
+        return f"{span}: cheap and still not booking reads as visibility or the listing, not the price; no raise"
+    if direction == "cut" and gap > rules_first.BOOKING_GUARD_PP:
+        return f"{span}: they are selling ahead of the market, so no cut"
+    return None
+
+
+def _guarded_lines(guarded, indent="  "):
+    """Nights a booking guard held back, grouped by reason, so nothing disappears silently."""
+    by_reason, out = {}, []
+    for r in guarded:
+        by_reason.setdefault(r["withheld_by_guard"], []).append(r["date"])
+    for why, dates in by_reason.items():
+        shown = ", ".join(dates[:8]) + (" ..." if len(dates) > 8 else "")
+        out.append(f"{indent}Not suggested ({len(dates)} night(s)), booking guard: {why}. Dates: {shown}")
+    return out
+
 def render_rules_first(pack, beyond):
     """Rule changes first, then the DSO suggestions no rule explains, then the DSOs already set.
     Each with its reason. Beyond has no rule stack in the runner: its section says so."""
@@ -802,6 +841,7 @@ def render_rules_first(pack, beyond):
         lines += [_candidate_line(r, beyond) for r in residual]
         if not residual:
             lines.append("None emitted." if not pack["blockers"] else "Withheld because a required gate failed.")
+        lines += _guarded_lines(guarded, indent="")
         return lines
     lines.append("RULES FIRST, THEN DATE OVERRIDES. Rule changes are applied before any DSO; the DSO "
                  "list holds only the nights no rule explains.")
@@ -849,10 +889,7 @@ def render_rules_first(pack, beyond):
     lines += [f"  {_candidate_line(r, beyond)}" for r in residual]
     if not residual:
         lines.append("  No DSO suggestions." if not pack["blockers"] else "  Withheld because a required gate failed.")
-    if guarded:
-        shown = ", ".join(r["date"] for r in guarded[:8]) + (" ..." if len(guarded) > 8 else "")
-        lines.append(f"  Not suggested ({len(guarded)} night(s)), same booking guard as the rules above: "
-                     f"{guarded[0]['withheld_by_guard']}. Dates: {shown}")
+    lines += _guarded_lines(guarded)
     existing = rf["existing_dsos"]
     flagged = [e for e in existing if e["flags"]]
     counts = {}
