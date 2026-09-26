@@ -9,13 +9,13 @@ export function registerMarketTools(server: McpServer): void {
     description: "Get comp set market data for a listing — base price percentiles by bedroom count, future price percentiles by date, future occupancy/new bookings/cancellations (current year + STLY), and Market KPIs (available days, booking window, LOS, revenue, booked days by month).",
     inputSchema: {
       listing_id: z.string().describe("Listing ID"),
-      pms: z.string().describe("PMS name (e.g. 'airbnb', 'hospitable')"),
+      pms: z.string().describe("PMS name from list_listings (e.g. 'airbnb'; Hospitable uses 'smartbnb')"),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, async ({ listing_id, pms }) => {
     try {
       const res = await getPriceLabs().get("/v1/neighborhood_data", { params: { listing_id, pms } });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 }

@@ -19,7 +19,7 @@ export function registerListingTools(server: McpServer): void {
       if (only_syncing_listings !== undefined) params.only_syncing_listings = only_syncing_listings;
       const res = await getPriceLabs().get("/v1/listings", { params });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 
   server.registerTool("pricelabs_get_listing", {
@@ -33,7 +33,7 @@ export function registerListingTools(server: McpServer): void {
     try {
       const res = await getPriceLabs().get(`/v1/listings/${listing_id}`);
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 
   server.registerTool("pricelabs_update_listings", {
@@ -42,7 +42,7 @@ export function registerListingTools(server: McpServer): void {
     inputSchema: {
       listings: z.array(z.object({
         id: z.string().describe("Listing ID"),
-        pms: z.string().describe("PMS name (e.g. 'airbnb', 'hospitable')"),
+        pms: z.string().describe("PMS name from list_listings (e.g. 'airbnb'; Hospitable uses 'smartbnb')"),
         min: z.number().optional().describe("Minimum price"),
         base: z.number().optional().describe("Base price"),
         max: z.number().optional().describe("Maximum price"),
@@ -54,6 +54,6 @@ export function registerListingTools(server: McpServer): void {
     try {
       const res = await getPriceLabs().post("/v1/listings", { listings });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 }

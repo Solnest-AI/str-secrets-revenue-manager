@@ -72,34 +72,39 @@ def health_check() -> dict:
                 "hint": "Check AIRROI_API_KEY. Free key: https://www.airroi.com/api/developer/activate"}
 
 
+def _location_params(address, latitude, longitude, latitude_key, longitude_key) -> dict:
+    """Require one unambiguous location and preserve valid zero coordinates."""
+    address = address.strip() if address else None
+    has_coordinates = latitude is not None or longitude is not None
+    if address:
+        if has_coordinates:
+            raise ValueError("Provide an address OR latitude and longitude, not both.")
+        return {"address": address}
+    if latitude is None or longitude is None:
+        raise ValueError("Provide an address or both latitude and longitude.")
+    return {latitude_key: latitude, longitude_key: longitude}
+
+
 def get_estimate(*, bedrooms, baths, guests, address=None, lat=None, lng=None, currency="native") -> dict:
     params = {"bedrooms": bedrooms, "baths": baths, "guests": guests, "currency": currency}
-    if address and not (lat and lng):
-        params["address"] = address
-    else:
-        params["lat"] = lat
-        params["lng"] = lng
+    params.update(_location_params(address, lat, lng, "lat", "lng"))
     return _get("/calculator/estimate", params)
 
 
 def get_comparables(*, bedrooms, baths, guests, address=None, latitude=None, longitude=None,
                     currency="native", radius=None) -> dict:
     params = {"bedrooms": bedrooms, "baths": baths, "guests": guests, "currency": currency, "radius": radius}
-    if address and not (latitude and longitude):
-        params["address"] = address
-    else:
-        params["latitude"] = latitude
-        params["longitude"] = longitude
+    params.update(_location_params(address, latitude, longitude, "latitude", "longitude"))
     data = _get("/listings/comparables", params)
     listings = data.get("listings") or []
     return {"count": len(listings), "listings": listings}
 
 
 def get_listing(listing_id, currency="native") -> dict:
-    return _get("/listings", {"id": listing_id, "currency": currency})
+    return _get("/listings", {"listing_id": listing_id, "currency": currency})
 
 
 def get_listing_metrics(listing_id, num_months=12, currency="native") -> dict:
-    data = _get("/listings/metrics/all", {"id": listing_id, "num_months": num_months, "currency": currency})
+    data = _get("/listings/metrics/all", {"listing_id": listing_id, "num_months": num_months, "currency": currency})
     results = data.get("results") or []
     return {"count": len(results), "results": results}

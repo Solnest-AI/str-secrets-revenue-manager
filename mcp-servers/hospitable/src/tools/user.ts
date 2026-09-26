@@ -12,6 +12,6 @@ export function registerUserTools(server: McpServer): void {
     try {
       const res = await getHospitable().get("/user");
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 }

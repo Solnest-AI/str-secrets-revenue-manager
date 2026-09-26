@@ -25,7 +25,7 @@ export function registerTransactionTools(server: McpServer): void {
       if (per_page) params.per_page = per_page;
       const res = await getHospitable().get("/transactions", { params });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 
   server.registerTool("hospitable_get_transaction", {
@@ -39,6 +39,6 @@ export function registerTransactionTools(server: McpServer): void {
     try {
       const res = await getHospitable().get(`/transactions/${transactionId}`);
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 }

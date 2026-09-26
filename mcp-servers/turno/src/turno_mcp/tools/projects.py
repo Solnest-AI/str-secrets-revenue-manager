@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from ..client import get_client
@@ -32,14 +33,30 @@ def register(mcp) -> None:
     ) -> Any:
         """List cleaning projects (turnovers), filtered by date and by properties/cleaners/customers.
 
-        Dates are 'YYYY-MM-DD'. List filters (properties, cleaners, customers,
+        Dates are 'YYYY-MM-DD' and filter the project's start date inclusively.
+        Date filters require fetch_all=true: the API can ignore date parameters,
+        so all matching property pages are fetched and filtered locally.
+        start/end and date_range_start/date_range_end are equivalent aliases.
+        List filters (properties, cleaners, customers,
         property_groups, project_ids) take id lists. Set fetch_all=true to walk
         every page. Returns {items, current_page, last_page, total}, or a flat
         list when fetch_all is true.
         """
+        if ((start and date_range_start and start != date_range_start)
+                or (end and date_range_end and end != date_range_end)):
+            raise ValueError("Conflicting project date filters. Use one start/end pair.")
+        lower_text = date_range_start if date_range_start is not None else start
+        upper_text = date_range_end if date_range_end is not None else end
+        has_date_filter = lower_text is not None or upper_text is not None
+        if has_date_filter and not fetch_all:
+            raise ValueError("Project date filters require fetch_all=true so all pages can be filtered reliably.")
+        if has_date_filter and page != 1:
+            raise ValueError("Project date filters require page=1 to include the complete date window.")
+        lower = date.fromisoformat(lower_text) if lower_text is not None else None
+        upper = date.fromisoformat(upper_text) if upper_text is not None else None
+        if lower and upper and lower > upper:
+            raise ValueError("Project start date must be on or before the end date.")
         params = {
-            "start": start,
-            "end": end,
             "properties": csv(properties),  # Turno /projects uses CSV encoding, e.g. "1,2,3"
             "cleaners": csv(cleaners),
             "customers": csv(customers),
@@ -50,14 +67,23 @@ def register(mcp) -> None:
             "none": none,
             "integration_only": integration_only,
             "integration_uid": integration_uid,
-            "date_range_start": date_range_start,
-            "date_range_end": date_range_end,
             "limit": limit,
             "page": page,
         }
         client = get_client()
         if fetch_all:
-            return await client.paginate("/projects", params=params)
+            rows = await client.paginate("/projects", params=params)
+            if not has_date_filter:
+                return rows
+            filtered = []
+            for row in rows:
+                try:
+                    project_date = date.fromisoformat(str(row.get("start"))[:10])
+                except (AttributeError, TypeError, ValueError) as exc:
+                    raise ValueError("Cannot apply project date window: a project has a missing or invalid start date.") from exc
+                if (lower is None or project_date >= lower) and (upper is None or project_date <= upper):
+                    filtered.append(row)
+            return filtered
         return await client.get("/projects", params=params)
 
     @mcp.tool

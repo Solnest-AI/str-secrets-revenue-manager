@@ -125,6 +125,41 @@ def _sanitize_sheet_title(name, used):
     return candidate
 
 
+def _recommendation_status(prop):
+    recs = (prop.get("recommendations") or []) + (prop.get("dso_recommendations") or [])
+    if not recs:
+        return "no change"
+    statuses = {_g(rec, "status", "proposed") for rec in recs}
+    if statuses == {"applied"}:
+        return "applied"
+    return "partly applied" if "applied" in statuses else "proposed"
+
+
+def _action_rows(prop):
+    for rec in prop.get("recommendations") or []:
+        yield [_g(prop, "name"), _g(rec, "field"), _g(rec, "from"), _g(rec, "to"),
+               _pct(_g(rec, "pct_move")), _g(rec, "reasoning"),
+               ", ".join(rec.get("flags") or []), _g(rec, "status", "proposed")]
+    for rec in prop.get("dso_recommendations") or []:
+        yield [_g(prop, "name"), "Date-specific", _g(rec, "date_range"),
+               _g(rec, "change"), "", _g(rec, "reasoning"), "",
+               _g(rec, "status", "proposed")]
+
+
+class _SafeCSVWriter:
+    """CSV quoting does not stop spreadsheet applications from evaluating text."""
+    def __init__(self, stream):
+        self.writer = csv.writer(stream)
+
+    def writerow(self, values):
+        self.writer.writerow([
+            "'" + value if isinstance(value, str)
+            and value.lstrip().startswith(("=", "+", "-", "@")) else value
+            for value in values
+        ])
+
+
+
 # ── xlsx path (openpyxl) ─────────────────────────────────────────────────────
 
 def build_xlsx(data, out_path):
@@ -196,9 +231,7 @@ def build_xlsx(data, out_path):
         avc = p.get("ask_vs_cleared", {}) or {}
         kpis = p.get("kpis", {}) or {}
         flags = p.get("red_flags", []) or []
-        recs = p.get("recommendations", []) or []
-        status = "applied" if any(_g(x, "status") == "applied" for x in recs) else (
-            "proposed" if recs else "no change")
+        status = _recommendation_status(p)
         row = [
             _g(p, "name", "Property"), _g(p, "currency", _g(meta, "default_currency")),
             _g(base, "current"), _g(base, "recommended"),
@@ -222,13 +255,8 @@ def build_xlsx(data, out_path):
     r += 1
     any_change = False
     for p in props:
-        for rec in p.get("recommendations", []) or []:
+        for vals in _action_rows(p):
             any_change = True
-            vals = [
-                _g(p, "name"), _g(rec, "field"), _g(rec, "from"), _g(rec, "to"),
-                _pct(_g(rec, "pct_move")), _g(rec, "reasoning"),
-                ", ".join(rec.get("flags", []) or []), _g(rec, "status", "proposed"),
-            ]
             for ci, value in enumerate(vals, start=1):
                 cell = ws.cell(r, ci, value)
                 if ci == 6:
@@ -249,6 +277,12 @@ def build_xlsx(data, out_path):
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # This report authors no formulas. Provider names and model text are literal data.
+    for sheet in wb:
+        for row in sheet:
+            for cell in row:
+                if cell.data_type == "f":
+                    cell.data_type = "s"
     wb.save(out_path)
     return out_path
 
@@ -408,7 +442,7 @@ def build_csv_fallback(data, out_path):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with (out_dir / "summary.csv").open("w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
+        w = _SafeCSVWriter(f)
         w.writerow(["Revenue Manager — Portfolio Summary", _today_str(meta)])
         w.writerow([_g(meta, "recommend_only_note",
                        "NOTHING CHANGES WITHOUT YOUR YES.")])
@@ -419,6 +453,8 @@ def build_csv_fallback(data, out_path):
         w.writerow(["Overpriced flags", _g(summary, "overpriced_count")])
         w.writerow(["Avg occupancy", _pct(_g(summary, "avg_occupancy_pct"))])
         w.writerow(["RevPAR direction", _g(summary, "revpar_direction")])
+        if _g(summary, "notes"):
+            w.writerow(["Notes", _g(summary, "notes")])
         w.writerow([])
         w.writerow(["Property", "Currency", "Base now", "Base rec", "Min now", "Min rec",
                     "Max now", "Max rec", "Comps", "Ask", "ADR", "Occupancy", "Top flag", "Status"])
@@ -428,21 +464,25 @@ def build_csv_fallback(data, out_path):
             avc = p.get("ask_vs_cleared", {}) or {}
             kpis = p.get("kpis", {}) or {}
             flags = p.get("red_flags", []) or []
-            recs = p.get("recommendations", []) or []
-            status = "applied" if any(_g(x, "status") == "applied" for x in recs) else (
-                "proposed" if recs else "no change")
+            status = _recommendation_status(p)
             w.writerow([_g(p, "name"), _g(p, "currency", _g(meta, "default_currency")),
                         _g(base, "current"), _g(base, "recommended"),
                         _g(pmin, "current"), _g(pmin, "recommended"),
                         _g(pmax, "current"), _g(pmax, "recommended"),
                         _g(p.get("comps", {}), "count"), _g(avc, "ask"), _g(avc, "adr"),
                         _pct(_g(kpis, "occupancy_pct")), (flags[0] if flags else ""), status])
+        w.writerow([])
+        w.writerow(["Proposed changes (pending approval)"])
+        w.writerow(["Property", "Field", "From", "To", "Move", "Reasoning", "Flags", "Status"])
+        for p in props:
+            for row in _action_rows(p):
+                w.writerow(row)
 
     used = {"summary"}
     for p in props:
         fname = _sanitize_sheet_title(_g(p, "name", "Property"), used)
         with (out_dir / f"{fname}.csv").open("w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
+            w = _SafeCSVWriter(f)
             w.writerow([_g(p, "name"), _g(p, "currency", _g(meta, "default_currency")),
                         _g(p, "listing_id"), _g(p, "data_freshness")])
             w.writerow([])
@@ -452,13 +492,50 @@ def build_csv_fallback(data, out_path):
                 blk = pr.get(field, {}) or {}
                 w.writerow([field, _g(blk, "current"), _g(blk, "recommended"),
                             _pct(_g(blk, "pct_move")), _g(blk, "bound_flag")])
+            comps = p.get("comps") or {}
+            avc = p.get("ask_vs_cleared") or {}
+            kpis = p.get("kpis") or {}
+            w.writerow([])
+            w.writerow(["Comps"])
+            w.writerow(["Comp count", _g(comps, "count")])
+            w.writerow(["Percentile context", _g(comps, "percentile_context")])
+            w.writerow([])
+            w.writerow(["Ask vs cleared"])
+            for label, key in (("Ask (calendar)", "ask"), ("ADR (cleared)", "adr"),
+                               ("Spread", "spread"), ("Empirical markup", "markup")):
+                w.writerow([label, _g(avc, key)])
+            w.writerow([])
+            w.writerow(["KPIs"])
+            w.writerow(["Occupancy", _pct(_g(kpis, "occupancy_pct"))])
+            for label, key in (("RevPAR", "revpar"), ("Pacing vs STLY", "pacing_stly"),
+                               ("Avg lead time (days)", "lead_time_days")):
+                w.writerow([label, _g(kpis, key)])
+            w.writerow([])
+            w.writerow(["Red flags"])
+            for flag in p.get("red_flags") or ["None detected."]:
+                w.writerow([flag])
             w.writerow([])
             w.writerow(["Recommendations (pending approval)"])
-            w.writerow(["Field", "From", "To", "Move", "Reasoning", "Expected impact", "Flags", "Status"])
+            w.writerow(["Field", "From", "To", "Move", "Reasoning", "Expected impact",
+                        "Flags", "Prior attempts", "Status"])
             for rec in p.get("recommendations", []) or []:
                 w.writerow([_g(rec, "field"), _g(rec, "from"), _g(rec, "to"), _pct(_g(rec, "pct_move")),
                             _g(rec, "reasoning"), _g(rec, "expected_impact"),
-                            ", ".join(rec.get("flags", []) or []), _g(rec, "status", "proposed")])
+                            ", ".join(rec.get("flags", []) or []), _g(rec, "prior_attempts"),
+                            _g(rec, "status", "proposed")])
+            w.writerow([])
+            w.writerow(["Date-specific / min-stay recommendations"])
+            w.writerow(["Dates", "Change", "Reasoning", "Status"])
+            for rec in p.get("dso_recommendations") or []:
+                w.writerow([_g(rec, "date_range"), _g(rec, "change"), _g(rec, "reasoning"),
+                            _g(rec, "status", "proposed")])
+            w.writerow([])
+            w.writerow(["Safety layer"])
+            safety = p.get("safety_layer") or {}
+            for label, key in (("Bounds used", "bounds_used"), ("Max delta", "max_delta"),
+                               ("Currency", "currency"), ("Freshness", "freshness"),
+                               ("Confidence", "confidence")):
+                w.writerow([label, _g(safety, key)])
     return out_dir
 
 
