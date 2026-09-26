@@ -252,7 +252,7 @@ The four Supabase tables ship with migration 001; migration 002 adds three nulla
 
 1. **Look:** `list_tables` (or `SELECT tablename FROM pg_tables WHERE schemaname = 'public';`) for `property_config`, `pricing_decisions`, `pricelabs_change_log`, `market_snapshots`.
 2. **Create what's missing:** apply the plugin's `migrations/001_revenue_tables.sql`, `002_outcome_columns.sql`, `003_service_role_policies.sql`, `004_pricelabs_recommendations.sql`, in order, read off disk and applied **verbatim** (never retyped). All idempotent. Prefer `apply_migration`, else `execute_sql`, else REST.
-3. **All four exist:** still apply `002` (harmless, guarantees the outcome columns).
+3. **All four exist:** still apply `002`, `003` and `004` (all idempotent: `002` guarantees the outcome columns, `003` and `004` make sure row-level security is on for every table, including the suggestions table on installs made before 5.0.2).
 4. **Say it in one line:** `🗄️ Audit schema: created 4 tables (first run)` or `🗄️ Audit schema: verified`.
 
 **If the bootstrap fails, never abort.** Classify, degrade, keep going:

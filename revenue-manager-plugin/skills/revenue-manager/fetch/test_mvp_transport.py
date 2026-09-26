@@ -272,6 +272,30 @@ class StoreTests(StoreCase):
         self.assertEqual([r["attempt"] for r in metrics["attempts"]], [1, 2])
         self.assertNotIn("PRIVATE", json.dumps(metrics))
 
+    def test_a_per_minute_rate_limit_is_waited_out_not_turned_into_a_blocked_card(self):
+        # live 2026-09-26: 8+ properties back to back hit PriceLabs' 60 calls a minute
+        def limited(after=None):
+            e = HTTPError("https://example.invalid", 429, "rate", {"Retry-After": after} if after else {}, None)
+            self.addCleanup(e.close)
+            return e
+        client = self.client(limited(), limited(), Response({"ok": 1}))
+        with patch("_mvp_store.time.sleep") as sleep:
+            self.assertEqual(client.request("pricelabs", "listing_prices", "https://example.invalid")[0], {"ok": 1})
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [20, 45])
+        client = self.client(limited("120"), Response({"ok": 2}))
+        with patch("_mvp_store.time.sleep") as sleep:
+            client.request("pricelabs", "listings", "https://example.invalid")
+        self.assertEqual(sleep.call_args_list[0].args[0], 65)      # a stated wait is capped
+
+    def test_three_rate_limits_in_a_row_still_fail_clearly(self):
+        errs = [HTTPError("https://example.invalid", 429, "rate", {"Retry-After": "0"}, None) for _ in range(3)]
+        for e in errs:
+            self.addCleanup(e.close)
+        client = self.client(*errs, Response({}))
+        with patch("_mvp_store.time.sleep"), self.assertRaisesRegex(CannotAnalyze, "HTTP 429"):
+            client.request("pricelabs", "listings", "https://example.invalid")
+        self.assertEqual(client.metrics()["http_calls"], 3)
+
     def test_call_budget_prevents_retry_and_later_requests(self):
         err = HTTPError("https://example.invalid", 429, "rate", {"Retry-After": "0"}, None)
         self.addCleanup(err.close)

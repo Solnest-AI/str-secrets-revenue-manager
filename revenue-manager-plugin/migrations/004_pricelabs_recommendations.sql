@@ -32,3 +32,19 @@ CREATE INDEX IF NOT EXISTS pricelabs_recommendations_pulled
 
 COMMENT ON TABLE public.pricelabs_recommendations IS
   'PriceLabs actions and nudges, one row each, latest-wins via superseded_at. PRD D14.';
+
+-- Row-level security, like every other table here (migration 003's pattern). Without it
+-- Supabase's security check reports "RLS Disabled in Public" (ERROR) and the project's public
+-- API key could read and change this table. The runner and Claude write through the
+-- Management API, which RLS does not affect. Safe to re-run.
+ALTER TABLE public.pricelabs_recommendations ENABLE ROW LEVEL SECURITY;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public'
+             AND tablename = 'pricelabs_recommendations' AND policyname = 'service_all') THEN
+    ALTER POLICY service_all ON public.pricelabs_recommendations TO service_role;
+  ELSE
+    CREATE POLICY service_all ON public.pricelabs_recommendations
+      FOR ALL TO service_role USING (true) WITH CHECK (true);
+  END IF;
+END $$;

@@ -20,6 +20,14 @@
   `--airbnb-for "<property>=<room id>"` picks one. Measured live: The Farm House.
 - **The card lists every markup** and says which one the market comparison used: Airbnb's
   when the property is on Airbnb (the market data is Airbnb prices), otherwise its own OTA's.
+- **Security: the PriceLabs suggestions table now has row-level security.** Migration 004
+  created it without, so Supabase's security check showed an ERROR ("RLS Disabled in Public")
+  on every install and the project's public key could read and change that table. The skill
+  re-applies 003 and 004 on every run, so existing installs are fixed on their next run.
+  `set_updated_at` gets a fixed search path (Supabase warning).
+- **Big portfolios no longer block on PriceLabs' 60-calls-a-minute limit.** A property run
+  makes 7-8 PriceLabs calls, so 8 or more back to back hit it and the card was blocked. A
+  rate-limited read now waits out the minute (at most two retries); writes never retry.
 - **Already set up? Nothing breaks.** Stored markups keep working exactly as before; run
   setup again to add the other booking sites.
 

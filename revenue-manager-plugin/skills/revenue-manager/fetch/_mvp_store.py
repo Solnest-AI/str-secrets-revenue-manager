@@ -17,6 +17,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+# Seconds to wait before retrying a rate-limited read when the vendor sends no Retry-After, and
+# the most a stated Retry-After is honoured for. Two waits span a per-minute window.
+RATE_LIMIT_WAITS = (20, 45)
+RATE_LIMIT_MAX_WAIT = 65
+
 class CannotAnalyze(ValueError):
     """Missing or untrustworthy evidence, never a successful empty result."""
 
@@ -174,9 +179,10 @@ class ReadClient:
             raise CannotAnalyze("The analysis transport refuses write operations")
 
     def request(self, provider, operation, url, *, headers=None, body=None, text=False):
+        """One read, retried at most twice on HTTP 429 (never on anything else)."""
         method = "POST" if body is not None else "GET"
         self._read_only(provider, operation, method, body, url)
-        for attempt in range(2):
+        for attempt in range(3):
             with self.lock:
                 if len(self.calls) >= self.max_calls:
                     raise CannotAnalyze(f"HTTP call budget ({self.max_calls}) reached")
@@ -207,14 +213,18 @@ class ReadClient:
             except urllib.error.HTTPError as exc:
                 item["status"] = exc.code
                 exc.close()
-                if exc.code == 429 and attempt == 0:
+                if exc.code == 429 and attempt < 2:
+                    # Reads only (this transport refuses writes). PriceLabs allows 60 calls a
+                    # minute and a portfolio run makes 7-8 per property, so 8+ properties back to
+                    # back hit it (live 2026-09-26): wait out the minute instead of blocking the card.
                     try:
-                        delay = float(exc.headers.get("Retry-After", "1"))
+                        delay = float(exc.headers.get("Retry-After", ""))
                     except (TypeError, ValueError):
-                        delay = 1
-                    if math.isfinite(delay) and 0 <= delay <= 2:
-                        time.sleep(delay)
-                        continue
+                        delay = None
+                    if delay is None or not math.isfinite(delay) or delay < 0:
+                        delay = RATE_LIMIT_WAITS[attempt]
+                    time.sleep(min(delay, RATE_LIMIT_MAX_WAIT))
+                    continue
                 # Provider bodies/URLs can contain guest data, cookies or credentials.
                 if exc.code == 401:
                     raise CannotAnalyze(f"{provider} {operation}: HTTP 401, the {provider} token expired "
