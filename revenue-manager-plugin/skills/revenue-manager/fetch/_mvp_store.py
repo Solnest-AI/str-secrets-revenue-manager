@@ -193,7 +193,9 @@ class ReadClient:
             req = urllib.request.Request(
                 url,
                 data=encode(body).encode() if body is not None else None,
-                headers=headers or {},
+                # A callable is re-run per physical attempt: a signed request (Smoobu HMAC)
+                # needs a fresh timestamp and nonce on the 429 retry, a reused nonce is a 401.
+                headers=(headers() if callable(headers) else headers) or {},
                 method=method,
             )
             try:

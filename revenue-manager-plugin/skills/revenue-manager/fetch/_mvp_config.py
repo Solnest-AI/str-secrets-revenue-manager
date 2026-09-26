@@ -28,8 +28,14 @@ KEYS = {
     "OWNERREZ_EMAIL",
     "OWNERREZ_TOKEN",
     "INTELLIHOST_MCP_TOKEN",
+    "UPLISTING_API_KEY",
+    "SMOOBU_API_KEY",
+    "SMOOBU_API_SECRET",
+    "HOSTFULLY_API_KEY",
+    "HOSTFULLY_AGENCY_UID",
 }
-PROVIDERS = ("hospitable", "pricelabs", "airroi", "rankbreeze", "guesty", "ownerrez", "intellihost")
+PROVIDERS = ("hospitable", "pricelabs", "airroi", "rankbreeze", "guesty", "ownerrez", "intellihost",
+             "uplisting", "smoobu", "hostfully")
 
 
 def read_text(path) -> str:
@@ -166,6 +172,9 @@ class Connections:
             "guesty": ("GUESTY_CLIENT_ID",),
             "ownerrez": ("OWNERREZ_TOKEN",),
             "intellihost": ("INTELLIHOST_MCP_TOKEN",),
+            "uplisting": ("UPLISTING_API_KEY",),
+            "smoobu": ("SMOOBU_API_KEY",),
+            "hostfully": ("HOSTFULLY_API_KEY",),
         }[provider]
         key = next((self.values[n] for n in names if self.values.get(n)), None)
         if not key:
