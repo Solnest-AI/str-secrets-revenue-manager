@@ -12,8 +12,8 @@ from _mvp_store import CannotAnalyze, identity
 
 # The SUMMIT build reads the connection the STR Secrets connections kit registers on
 # every attendee machine (str-secrets-connections, connectors/db-supabase.md), pointed at
-# their `str-secrets-summit` project. Ryan's own Solnest Stays build reads a different
-# name (`supabase-solnest-stays`) so the two can never overwrite each other. No fallback.
+# their `str-secrets-summit` project. A private build of this engine reads a different
+# connection name so the two can never overwrite each other. No fallback.
 SUPABASE_SERVER = "supabase-revenue-manager"
 
 KEYS = {
