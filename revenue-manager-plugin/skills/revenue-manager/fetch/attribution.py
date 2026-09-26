@@ -434,7 +434,7 @@ def rule_effectiveness(rules: dict, daily: list[dict]) -> list[dict]:
     the same dates is the yardstick. When no market occupancy is available the raw
     comparison is reported and labelled confounded.
 
-    framework.md 5.5: "Compare occupancy inside the window against outside it. If those
+    SKILL.md 6.1c (was framework.md 5.5): "Compare occupancy inside the window against outside it. If those
     dates are booking fine, the rule is working."
 
     Verdicts (SKILL 6.1b):

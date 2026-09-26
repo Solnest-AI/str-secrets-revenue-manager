@@ -20,7 +20,7 @@ Everything else degrades.
 
     Visibility -> Bookings -> Reviews -> Ranking
 
-framework.md 6.1: "Visibility comes BEFORE pricing. You cannot charge premium rates if
+SKILL.md 6.1: "Visibility comes BEFORE pricing. You cannot charge premium rates if
 nobody sees the listing." 6.8: when a property is not booking, "check ranking FIRST ...
 If it's on page 5+, pricing isn't the primary problem."
 
