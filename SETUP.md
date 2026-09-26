@@ -1,8 +1,11 @@
 # Revenue Manager: summit setup
 
-Claude: if someone says "set up the revenue manager", follow this file top to bottom. If
-they say "finish the revenue manager setup", they already installed and restarted: go to step 3.
-Run every command from this folder (the one this file is in). Say what each step found in
+Claude: if someone says "set up the revenue manager" or "set this up", follow this file top
+to bottom. If they say "finish the revenue manager setup", they already installed and
+restarted: go to step 3. Run every command from this folder (the one this file is in), and
+start each one with `cd <this folder> &&`: Claude Code can reset the working folder between
+commands, and step 2 registers `$PWD` as the plugin source. When step 2 tells them to reopen
+Claude Code "in this folder", give them this folder's full path. Say what each step found in
 one plain line. Never ask for keys in the chat.
 
 **Before this file:** the STR Secrets connections kit must be done. That kit is the real

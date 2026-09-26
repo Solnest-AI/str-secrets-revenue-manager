@@ -1,4 +1,4 @@
-# Revenue Manager for STR Secrets Summit 2.0
+# STR Secrets AI Revenue Manager
 
 Your AI revenue manager, running inside Claude Code. It reads your real PMS calendar and
 your pricing tool, checks the whole booking picture first, and tells you exactly what to
@@ -15,18 +15,28 @@ said "Set up my connections" and got a green board, you're good.
 
 ## Setup
 
-Open Claude Code in this folder and say:
+Paste this link into Claude Code and say **Set this up**:
 
-> **Set up the revenue manager.**
+https://github.com/Solnest-AI/str-secrets-revenue-manager
+
+Claude downloads it to a folder called `str-secrets-revenue-manager` in your home folder.
+(Already have the folder? Open Claude Code in it and say **Set up the revenue manager.**)
 
 Claude follows `SETUP.md`, in this order:
 
 1. Checks your connections.
 2. Installs the plugin.
-3. You fully quit and reopen Claude Code (Cmd+Q on Mac, not just closing the window). The
-   skill only loads on a fresh start.
+3. You fully quit and reopen Claude Code in that folder (Cmd+Q on Mac, not just closing the
+   window). The skill only loads on a fresh start.
 4. You say "finish the revenue manager setup". Claude asks you one question (what markup you
    add per channel) and runs your first check.
+
+> **Claude:** if someone pasted this repo's link and said "set this up", clone it to
+> `~/str-secrets-revenue-manager` (if that folder already exists, `git pull` there instead).
+> If Claude Code is already open inside this repo, skip the clone and use this folder. Then
+> follow `SETUP.md`, starting every command with `cd ~/str-secrets-revenue-manager &&` (or
+> this folder), because Claude Code can reset the working folder between commands. When you
+> tell them to quit and reopen, give them the folder's full path to reopen in.
 
 ## Using it
 
