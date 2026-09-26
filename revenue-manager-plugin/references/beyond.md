@@ -124,6 +124,7 @@ input Beyond's API does not supply. Never a crash, never a silent guess.
 |---|---|
 | Market p25-p90 per night | Beyond market insights benchmark AVERAGE posted rate and occupancy (R6 below), only when `meta.currency` is the listing currency (no exchange rate is documented, so nothing is converted; otherwise "market comparison unavailable in Beyond's API"). AirROI trailing-12-month ADR p75 stands in on nights without it. The reference is named on every scenario. |
 | Rule attribution | "Rule check is PriceLabs-only; Beyond rules not graded." |
+| Rules first, then DSOs | Not built for Beyond (named gap, 2026-09-25). The runner reads no Beyond rule families (seasonal prices, day-of-week floors, time-based adjustments), so it cannot tell which one produced a night; every review night stays a date-override scenario, and the card's scenario header says "no rule stack is read, so there is no rules-first step". Building it needs the R3 customizations read in the runner plus a writer path for those families, which the docs do not show a safe read-back for. |
 | Per-night min stay | The PMS sync check runs its price and booking halves; the min-stay half is skipped and said. |
 | Calculation timestamp | Freshness is the calendar READ time, labelled "read at". |
 | A ceiling | A blank Beyond max is "no ceiling", never invented. |

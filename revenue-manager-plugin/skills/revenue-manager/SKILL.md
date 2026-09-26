@@ -129,7 +129,7 @@ Any of the eight PMSs plus PriceLabs or Beyond runs through the runner in `fetch
 | ... Beyond sets the prices | add `--pricing beyond` (the default, `--pricing auto`, picks PriceLabs if connected, else Beyond, else the PMS) |
 | ... the PMS sets the prices itself | add `--min-price "<property>=<amount>"` per property (no PMS API gives the writer a min) |
 | Run one property | `fetch/analyze90.py --property "<exact name>"` (Beyond: add `--pricing beyond`) |
-| Plan a change | `fetch/apply_change.py plan --target <where the price lives> --change <file>` |
+| Plan a change (a rule change goes first; the card prints its change file) | `fetch/apply_change.py plan --target <where the price lives> --change <file>` |
 | Apply it, on a plain yes | `fetch/apply_change.py apply --target <same> --plan <plan id>` |
 | Undo | `fetch/apply_change.py rollback --target <same> --journal <journal file>` |
 | Re-check a PMS that applies late | `fetch/apply_change.py verify --target <pms> --journal <journal file>` (read-only) |
@@ -354,6 +354,18 @@ Needs the PriceLabs official MCP (Step 0). Without it, one line, and move on.
 - **Check every configured rule.** Read `get_customizations` per listing. For each rule that is ON (last-minute, far-out premium, day-of-week, seasonality), compare the listing's occupancy INSIDE the rule's window against OUTSIDE it, each side measured against market occupancy on the same dates so lead time cancels out. At least 7 dates each side, else `unknown`. Within 5 points of the outside gap → `neutral`; better → `working`; worse → `underperforming`. A toggle can arrive as the string `"false"`, which is OFF. OFF hands those dates to PriceLabs' market default; OFF does not mean no effect.
 - Put the verdicts on the card: *"Last-minute rule: working (+18.7 pts vs market inside its window)."*
 
+### 6.1c Rules first, then date overrides (DSOs)
+
+Ryan's rule (2026-09-25): look at every rule on top of the DSOs, and adjust the rules before the DSOs. A price complaint is a layer question before it is a number question: find the layer that produced the price, then change that layer.
+
+- **The runner reads the whole stack every run** (PriceLabs): the listing's six rules, its group's and the account's, all with `toggled_on=false`, plus the existing DSOs and min/base/max. PriceLabs applies a listing rule first, then the group's, then the account's (its documented hierarchy); a listing rule switched OFF is read as not set there. A group or account read that fails prints a `GAP:` line: say it, and never assume there is no rule there.
+- **Every review night is attributed to the layers on it**: last-minute window, far-out window, day-of-week, seasonality or a custom season, demand factor, a DSO.
+- **One rule change when a rule explains the pattern.** A rule that is ON with a readable number (last-minute, far-out premium, day-of-week) explains a pattern when at least 3 of the open nights it can move sit in its window, more than half of them want the same move, and that share beats the nights outside its window by 20 points (the co-incidence test). A booking guard stops a raise where those nights book more than 5 points under the market (cheap and still not booking is visibility, not price) and a cut where they book more than 5 points over it (they are selling). A rule graded underperforming gets a cut only when most of its open nights sit above the comp median and it books under the market. The change is sized from the nights' median gap to the comps, capped at the movement cap, checked against PriceLabs' ranges, and never flips a discount into a premium.
+- **Those nights fold into the rule change.** Only the nights no rule explains stay as DSO suggestions.
+- **Never resized:** a rule that is OFF, market-driven (`recommended`, `conservative`, `aggressive`) or `none`, and seasonality, the custom seasonal profile and the demand factor. They show as layers.
+- **One lever per diagnosis:** one change per rule per run, and a night folds into one rule only.
+- Beyond has no rule stack in the runner: its card says so (a named gap).
+
 ### 6.2 onward: the framework (in `framework.md`)
 
 Pricing stack (base-anchored, with event/weekend/seasonal/last-minute/orphan/far-out factors and min-stay defaults), lead-time table, the **5 ordered decision questions** (comps → pacing → events → lead time → orphans), comp-set discipline, the 30-day daily review, the red-flag detection table, troubleshooting (**not booking → check ranking FIRST**), KPIs and the ranked revenue levers. Apply all of it; each recommendation must be able to name the framework reason behind it.
@@ -373,6 +385,16 @@ Flags:           <large-move / thin-comp / currency / stale-data / out-of-bound,
 ```
 Then ask plainly whether to apply them (2.6). A plain yes applies; no yes, no write.
 
+### 7.1 Reading the rules-first section of the card
+
+The runner's card prints `RULES FIRST, THEN DATE OVERRIDES`, then the rule stack (each rule, the level it comes from, what it does), any `GAP:` lines, and three numbered parts, in this order. Present them to the operator in the same order.
+
+1. **Rule changes.** Each `R1.` line: the rule, before and after, how many open nights it touches in the window, and a reminder that a rule keeps pricing every later date in its window. `Why:` gives the evidence and how it was sized (a `LARGE MOVE` note when the cap cut it down). `Folds` lists the review nights this change covers: they get no DSO. `Change file:` is the exact file to plan. A rule that lives at the group or account level prints `NOT WRITABLE BY THE WRITER: this changes every listing in the group (or account); change it in PriceLabs`. `note:` lines say why a rule was looked at and not changed (the booking guard, conflicting evidence, too few nights).
+2. **DSO suggestions.** Only the nights no rule explains, each with its layers and `Why a DSO`. A night with a fixed DSO says the DSO itself is the lever, because no rule reaches it.
+3. **Existing DSOs.** Counts, then each flagged one: below the min (its fixed price or its own min under the listing min), stale (a price DSO set more than 30 days ago on a night that can still sell), fights the rule stack (a percent DSO pulling against a rule on the same night), past, or a fixed price that blocks a proposed rule change.
+
+A rule change and the nights it folds are ONE decision. Never offer a DSO for a folded night.
+
 ### 7.5 Offer the spreadsheet
 
 After the recommendations, **offer** it, don't auto-generate: *"Want a spreadsheet of this? Summary tab + one tab per property, full breakdown."* Only on a yes, follow `workbook.md`. It is pure output: reads nothing new, pushes nothing, writes nothing to Supabase.
@@ -383,23 +405,23 @@ After the recommendations, **offer** it, don't auto-generate: *"Want a spreadshe
 
 **Change the price where it lives (`--target`).** PriceLabs manages the listing → `pricelabs` (the default: min/base/max and date overrides). Beyond manages it → `beyond` (same flow, see `beyond.md`). The PMS prices it itself → `hospitable`, `guesty`, `ownerrez`, `hostaway`, `lodgify`, `uplisting`, `smoobu` or `hostfully` (per-date nightly price and min stay). The writer refuses a PMS price write on a listing PriceLabs or Beyond manages, because the tool would overwrite it on its next sync: change it in the tool. It also refuses a PMS price cut with no stored min, since no PMS API gives it one: recommend the min (2.1), and on a yes store it by re-running setup with the stored markups plus `--min-price "<property>=<amount>"`, then plan again.
 
-1. **Write one change file per listing** (both shapes, PriceLabs and `calendar_set` for a PMS, are in `uv run --python 3.13 python fetch/apply_change.py --help`).
+1. **Write one change file per listing** (both shapes, PriceLabs and `calendar_set` for a PMS, are in `uv run --python 3.13 python fetch/apply_change.py --help`). **Rules first:** for a rule change, save the card's `Change file:` line as the file; it carries `rules_set` (name only the fields that change; the writer reads the rest fresh and sends the whole rule, all seven days for day-of-week). One file can carry a rule change and DSOs: the rule is listed first and sent first, and if the rule write fails nothing after it is sent. Only the listing's own last-minute, far-out premium and day-of-week rules are writable; a group or account rule is refused with "this changes every listing in the group (or account); change it in PriceLabs", and so is a rule the listing only inherits.
 2. **Plan it** (fresh read; refuses if anything already moved):
    ```bash
    uv run --python 3.13 python fetch/apply_change.py plan --target <TARGET> --change <change file>
    ```
    Show the operator the card(s) it prints, re-checked against the safety layer (bounds, max-delta, currency), and ask whether to apply.
-   **Say the test status out loud.** PriceLabs and Hospitable writes are live-tested (2026-09-25). Every other PMS and Beyond card prints `first live write for <Name>: read the after-values carefully.` Read that line to the operator word for word before asking.
+   **Say the test status out loud.** PriceLabs and Hospitable writes are live-tested (2026-09-25). Every other PMS and Beyond card prints `first live write for <Name>: read the after-values carefully.` A PriceLabs rule change is not live-tested yet: its card prints `first live write for PriceLabs rules: read the after-values carefully.` Read that line to the operator word for word before asking. A rule card also prints `BLAST RADIUS` (how many of the next 90 nights the rule reaches), and flags a sign flip or a move over the cap: read those too.
 3. **On a plain yes, apply:**
    ```bash
    uv run --python 3.13 python fetch/apply_change.py apply --target <TARGET> --plan <PLAN_ID>
    ```
-   It refuses if anything moved since the plan, saves the undo first, applies once (never retries), and re-reads every field after. Only `APPLIED AND VERIFIED` is done. Anything else: say so first, and offer the undo.
+   It refuses if anything moved since the plan (for a rule, if any of the listing's six rules moved), saves the undo first (for a rule, the exact rule it will put back), applies once (never retries), and re-reads every field after, every rule included. Only `APPLIED AND VERIFIED` is done. Anything else: say so first, and offer the undo.
 4. **A PMS that applies late** (Hospitable, OwnerRez, Uplisting): the writer re-reads on that PMS's schedule. If it says the change was accepted but not applied yet, that is not a failure. Wait a minute, then re-check, read-only:
    ```bash
    uv run --python 3.13 python fetch/apply_change.py verify --target <TARGET> --journal <JOURNAL_FILE>
    ```
-5. **To undo** (plans the reverse change; show it and ask again like any other change):
+5. **To undo** (plans the reverse change; show it and ask again like any other change; for a rule it re-sends the rule exactly as the snapshot saved it and re-reads it to prove it):
    ```bash
    uv run --python 3.13 python fetch/apply_change.py rollback --target <TARGET> --journal <JOURNAL_FILE>
    ```
@@ -417,6 +439,7 @@ Follow `audit.md`: one `pricelabs_change_log` row per field/date change (the wri
 
 - **No silent writes, no raw writes.** Every change is shown on a card, applied only on a plain yes, only through `apply_change.py`, and verified by re-reading. A tool the writer can't reach gets exact by-hand steps.
 - **Change the price where it lives**: PriceLabs or Beyond when one manages the listing; a PMS target only when the PMS prices it itself.
+- **Rules first, then DSOs.** Read every rule (listing, group, account) on top of the DSOs. When a rule explains the pattern, change the rule and fold its nights in; DSOs only for the nights no rule explains. Group and account rules are shown, never written.
 - **Say "first live write for <Name>: read the after-values carefully" out loud** whenever a card prints it (every target except PriceLabs and Hospitable).
 - **PMS calendar = ground truth** for what's listed. Per property, measure which PriceLabs field matches it before trusting it.
 - **Track ask (calendar) AND cleared (ADR) separately.** Cleared runs higher.

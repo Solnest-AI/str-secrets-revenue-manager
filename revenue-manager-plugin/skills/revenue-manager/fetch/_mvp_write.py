@@ -106,6 +106,9 @@ RULE_TOGGLE = {r: f[0] for r, f in RULE_FIELDS.items()}
 RULE_VALUE = {"last_minute_prices": "last_min_factor_value", "far_out_premium": "far_out_premium_value"}
 RULE_TYPE = {"last_minute_prices": "last_min_factor_type", "far_out_premium": "far_out_premium_type"}
 CONCRETE_TYPES = {"last_minute_prices": {"linear", "linear_gradual"}, "far_out_premium": {"linear", "fix"}}
+# Flip to True only after a rule write has been applied AND rolled back on a live listing through
+# this writer. Until then every rule card says so (SKILL Step 8: say the test status out loud).
+RULE_WRITE_LIVE_TESTED = False
 LEVEL_REFUSAL = {"group": "this changes every listing in the group; change it in PriceLabs",
                  "account": "this changes every listing in the account; change it in PriceLabs"}
 
@@ -1000,6 +1003,8 @@ def describe(envelope: dict) -> str:
             lines.append(f"  {op['date']}: {_show(op['before'])}  ->  {_show(op['after'])}")
     if envelope["warnings"]:
         lines += ["", "READ BEFORE SAYING YES:"] + [f"  ! {w}" for w in envelope["warnings"]]
+    if not RULE_WRITE_LIVE_TESTED and any(op["kind"] == "rule_set" for op in envelope["operations"]):
+        lines += ["", "first live write for PriceLabs rules: read the after-values carefully."]
     lines += ["", f"Plan {plan_id(envelope)}"]
     return "\n".join(lines)
 

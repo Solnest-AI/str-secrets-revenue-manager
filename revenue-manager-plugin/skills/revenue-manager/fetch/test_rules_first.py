@@ -265,6 +265,32 @@ class RulesFirst(unittest.TestCase):
         self.assertEqual(out["rule_changes"], [])
         self.assertTrue(any("evidence disagrees" in n for n in out["notes"]))
 
+    def test_booking_guard_no_raise_where_cheap_nights_still_do_not_book(self):
+        rows = []
+        for i in range(28):
+            wd = (TODAY + timedelta(days=i)).weekday()
+            rows.append(row(i, airbnb=70.0 if wd in (0, 1, 2) else 90.0, p75=150.0))
+        grade = {"rule": "day_of_week_adjustment", "verdict": "neutral",
+                 "discount_days": {"verdict": "neutral", "why": "x", "gap_to_market_inside": -16.1}}
+        out = run(rows, self.rules(day_of_week_adjustment=DOW), effect=[grade])
+        self.assertEqual(out["rule_changes"], [])
+        self.assertTrue(any("cheap and still not booking" in n for n in out["notes"]), out["notes"])
+        self.assertTrue(out["dso_dates"])  # the nights stay as DSO review scenarios
+        grade["discount_days"]["gap_to_market_inside"] = -2.0
+        out = run(rows, self.rules(day_of_week_adjustment=DOW), effect=[grade])
+        self.assertEqual(len(out["rule_changes"]), 1)
+        self.assertIn("the window books -2.0 pts vs the market", out["rule_changes"][0]["why"])
+
+    def test_booking_guard_no_cut_where_the_window_is_selling(self):
+        grade = {"rule": "last_minute_prices", "verdict": "working", "why": "x", "gap_to_market_inside": 30.3}
+        out = run(lm_rows(), self.rules(last_minute_prices=LM), effect=[grade])
+        self.assertEqual(out["rule_changes"], [])
+        self.assertTrue(any("they are selling" in n for n in out["notes"]), out["notes"])
+
+    def test_without_a_market_yardstick_the_guard_says_it_did_not_run(self):
+        out = run(lm_rows(), self.rules(last_minute_prices=LM))
+        self.assertIn("booking guard not run", out["rule_changes"][0]["why"])
+
     def test_one_lever_per_diagnosis(self):
         # the same near-term nights sit inside the last-minute window AND on discount days
         rows = [row(i) if i < 10 else row(i, p75=150.0) for i in range(30)]

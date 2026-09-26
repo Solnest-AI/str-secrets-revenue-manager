@@ -31,6 +31,13 @@ Thresholds, named so the card can say which one a rule missed:
                             (a window that still out-books the market, only by less than the
                             other days, is not cut). Otherwise the card says price is not the
                             lever there.
+  BOOKING_GUARD_PP    5     the booking check on a pattern, from the same market yardstick the
+                            rule grading uses (gap to the market inside the window): a RAISE is
+                            not proposed where the listing books more than 5 pts UNDER the market
+                            (cheap and still not booking reads as visibility, not price), and a
+                            CUT is not proposed where it books more than 5 pts OVER it (it is
+                            selling). With no market occupancy the guard cannot run; the card
+                            says so.
   CUT_SCOPE_DAYS      14    the runner only reviews cuts inside 14 days (lead-time logic), so a
                             cut pattern is measured on that scope, inside and outside alike.
   DSO_STALE_DAYS      30    an existing DSO last set more than 30 days ago is flagged stale.
@@ -54,13 +61,15 @@ RULE_MIN_NIGHTS = 3
 RULE_PATTERN_SHARE = 0.50
 RULE_CONTRAST_PP = 20.0
 GRADED_PRICE_SHARE = 0.60
+BOOKING_GUARD_PP = 5.0
 CUT_SCOPE_DAYS = 14
 DSO_STALE_DAYS = 30
 
 THRESHOLDS = {
     "RULE_MIN_NIGHTS": RULE_MIN_NIGHTS, "RULE_PATTERN_SHARE": RULE_PATTERN_SHARE,
     "RULE_CONTRAST_PP": RULE_CONTRAST_PP, "GRADED_PRICE_SHARE": GRADED_PRICE_SHARE,
-    "CUT_SCOPE_DAYS": CUT_SCOPE_DAYS, "DSO_STALE_DAYS": DSO_STALE_DAYS,
+    "BOOKING_GUARD_PP": BOOKING_GUARD_PP, "CUT_SCOPE_DAYS": CUT_SCOPE_DAYS,
+    "DSO_STALE_DAYS": DSO_STALE_DAYS,
 }
 
 ALL_RULES = ["seasonality", "last_minute_prices", "far_out_premium",
@@ -399,7 +408,31 @@ def recommend(rows, candidates, rules, levels, effect, bounds, max_delta, overri
                     notes.append(f"{LABEL[rule]} {side}: graded underperforming, but only {len(above)} "
                                  f"of {len(inside_all)} open nights sit above the comp median; price is "
                                  "not the lever there (check visibility and the listing)")
-            if len(found) > 1:  # cannot happen at a 60% share each; refuse to guess if it does
+            # the booking guard: the pattern must not contradict how the window books
+            for direction in list(found):
+                if found[direction].get("graded") and not found[direction]["want"]:
+                    continue  # graded-only already requires booking under the market
+                if gap_in is None:
+                    found[direction]["why"] += ("; booking guard not run (no market occupancy for "
+                                                "this window)")
+                    continue
+                against = ((direction == "raise" and gap_in < -BOOKING_GUARD_PP)
+                           or (direction == "cut" and gap_in > BOOKING_GUARD_PP))
+                if not against:
+                    found[direction]["why"] += f"; the window books {gap_in:+.1f} pts vs the market"
+                    continue
+                why_g = (f"{LABEL[rule]} {side}: {found[direction]['why']}, "
+                         + (f"yet these nights book {gap_in:+.1f} pts vs the market: cheap and still "
+                            "not booking reads as visibility or the listing, not the rule; no raise "
+                            "proposed" if direction == "raise" else
+                            f"yet these nights book {gap_in:+.1f} pts vs the market: they are selling, "
+                            "so no cut is proposed"))
+                notes.append(why_g)
+                evaluations.append({"rule": rule, "side": side, "direction": direction,
+                                    "qualifies": False, "caution": True,
+                                    "dates": [r["date"] for r in found.pop(direction)["want"]],
+                                    "why": why_g})
+            if len(found) > 1:  # cannot happen at a majority each; refuse to guess if it does
                 notes.append(f"{LABEL[rule]} {side}: evidence points both ways; no change proposed")
                 continue
             for direction, ev in found.items():
@@ -439,11 +472,14 @@ def recommend(rows, candidates, rules, levels, effect, bounds, max_delta, overri
         if c["date"] in taken:
             continue
         residual.append(c["date"])
-        reasons = [ev["why"] for ev in evaluations if c["date"] in ev.get("dates", [])]
+        hits = [ev for ev in evaluations if c["date"] in ev.get("dates", [])]
         if c.get("layer") == "fixed_override":
             why_dso[c["date"]] = "a fixed DSO sets this night, so no rule reaches it: the DSO is the lever"
-        elif reasons:
-            why_dso[c["date"]] = "no rule qualifies: " + reasons[0]
+        elif hits and hits[0].get("caution"):
+            why_dso[c["date"]] = (f"no rule change: {hits[0]['why']}. The same caution applies to this "
+                                  "date's scenario")
+        elif hits:
+            why_dso[c["date"]] = "no rule qualifies: " + hits[0]["why"]
         else:
             why_dso[c["date"]] = "no resizable rule covers this night"
     return {

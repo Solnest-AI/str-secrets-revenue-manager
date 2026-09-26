@@ -14,7 +14,8 @@ This file is the canonical reference the `revenue-manager` skill consults whenev
 - **CLEARED / realized rate = ADR** (from `get_listing_prices` ADR field + `list_reservations`), and it runs **materially higher than ask**. Track BOTH ask (calendar / recommended) and cleared (ADR).
 - **Markup is what the operator says, per channel.** Ask once, store it in `property_config.settings.channel_markup_pct` (for example `{"airbnb": 16, "vrbo": 20}`; the runner reads that key). Never infer it from a PMS vs PriceLabs gap: that gap is a sync finding, not a markup.
 - **Floor / ceiling for the safety layer come from THIS tool**: `min` / `max` on `list_listings` / `get_listing` (and `get_neighborhood_data` min/max where present). Store them in `property_config` (`min_price` / `max_price`).
-- **Never call the write tools directly.** `set_overrides`, `update_listings` and `delete_overrides` exist, but every change goes through the safe writer, `fetch/apply_change.py plan` then `apply` on a plain yes (`rollback` to undo). See SKILL.md Step 8. No PriceLabs write has been live-tested through the writer yet: until one has, tell the operator "first live write for PriceLabs: read the after-values carefully" on the card.
+- **Never call the write tools directly.** `set_overrides`, `update_listings`, `delete_overrides` and any customization write exist, but every change, a rule change included, goes through the safe writer, `fetch/apply_change.py plan` then `apply` on a plain yes (`rollback` to undo). See SKILL.md Step 8. PriceLabs min/base/max and DSO writes are live-tested (2026-09-25); a RULE write is not yet, and its card says "first live write for PriceLabs rules: read the after-values carefully".
+- **Rules first, then DSOs.** The runner reads every rule on top of the DSOs (listing, group, account) and proposes a rule change before any DSO when a rule explains the pattern. See "The rule stack" below and SKILL.md 6.1c.
 - **`get_neighborhood_data` returns LARGE payloads** and requires `(listing_id, pms)`. Parse it compactly (python3 into tables) before reporting; don't dump raw JSON into context.
 
 ---
@@ -179,7 +180,8 @@ When you report ADR-vs-comp-median, be explicit which number you're using. Comp-
 
 - **Pricing Stack (Min → Base → Seasonal → Weekend +20-40% → Event +15-40% → Max; Last-Minute -10-20% within 7-14d; Orphan -15-25%; Far-out +5-15% for 90+d):**
   - Min / Base / Max → `update_listings` (`min`/`base`/`max`).
-  - Seasonal / Weekend / Event / Last-Minute / Orphan → `set_overrides` (DSOs).
+  - Weekend / Last-Minute / Far-out → the RULE first (day-of-week, last-minute, far-out premium) through `rules_set`, when the rule explains the nights.
+  - Event / Orphan, and any night no rule explains → `set_overrides` (DSOs).
 - **Lead-Time Pricing Logic** (90+ → +5-15% hold; 60-90 → at/slightly above base; 30-60 → at base, watch; 14-30 → small drops if needed; 7-14 → last-minute -10-20%; 0-7 → aggressive discount, drop minimums): drive off `get_listing_prices` `booking_status` + date distance.
 - **Pricing Decision Framework (5 ordered questions):** (1) comp set → `get_neighborhood_data`; (2) pacing → Future Occ/New/Canc + Market KPI STLY + your `occupancy_next_*`; (3) events → operator/calendar knowledge + DSOs; (4) lead time → date distance on the price curve; (5) orphan days → `booking_status` scan.
 - **30-Day Daily Review:** open the forward curve (`get_listing_prices`) → pacing vs market/LY (neighborhood) → recent bookings (`booking_status` + reservations) → comp set (neighborhood) → adjust (through `apply_change.py`, on a yes) → log (Supabase).
@@ -188,6 +190,32 @@ When you report ADR-vs-comp-median, be explicit which number you're using. Comp-
 - **Visibility-before-pricing / Troubleshooting:** if `market_occupancy_next_*` >> your `occupancy_next_*` (zero forward bookings + strong market) → check ranking FIRST (RankBreeze if present, else manual), it's a listing-quality / visibility problem, not pricing.
 
 ---
+
+## The rule stack: rules first, then DSOs (2026-09-25)
+
+Ryan: "make sure the revenue manager is looking at all the rules on top of the DSOs, and we want to adjust the rules first before the DSOs." The design behind it: a price complaint is a layer question before it is a number question.
+
+### What is read, and how it is marked
+
+| Call | Used by | Status |
+|---|---|---|
+| `GET /v1/customizations/listing?listing_id&pms_name&toggled_on=false` | runner every run (`_mvp_sources.rules`); writer at plan, at apply, and the re-read | VERIFIED-LIVE (read). The default omits OFF rules, so `toggled_on=false` is always sent |
+| `GET /v1/customizations/group?group_id&toggled_on=false` | runner, only when the listing has a `group_id` (from `GET /v1/listings/{id}`) | DOCS-ONLY: no Solnest listing is in a group, so it has never answered live |
+| `GET /v1/customizations/account?pms_name&toggled_on=false` | runner every run | VERIFIED-LIVE (read, 2026-09-25: 200 with an empty map on the Solnest account) |
+| `POST /v1/customizations/listing` | writer `rules_set` only | DOCS-ONLY until the first live rule write (the card says so) |
+| `POST /v1/customizations/group`, `POST /v1/customizations/account` | never | refused by the writer's transport |
+
+Precedence (help.pricelabs.co, "Understanding Customization and Date-Specific Override Hierarchy", read 2026-09-25, DOCS-ONLY): a listing rule applies first, then subgroup, then group, then account. The runner reads a listing rule that is switched OFF as not set there, so an ON group or account rule applies; how PriceLabs treats a present-but-OFF listing rule is not measured. Subgroup rules have no documented read: a listing with a `subgroup_id` gets a `GAP:` line. The same article says a group or account % DSO applies ahead of a listing's own; the runner does not read group or account DSOs, and the card says so.
+
+A group or account read that fails is a named `GAP:` on the card, never a silent skip. An unreadable listing read still blocks the run.
+
+### What the card does with it
+
+Every review night is attributed to the layers on it. A rule that is ON with a readable number (last-minute `linear`/`linear_gradual`, far-out `linear`/`fix`, day-of-week) that explains a pattern gets ONE proposed change, and its nights fold into it. Thresholds, named in `fetch/rules_first.py`: `RULE_MIN_NIGHTS` 3, `RULE_PATTERN_SHARE` more than 0.50 of the open nights in the window, `RULE_CONTRAST_PP` 20 points over the nights outside the window, `BOOKING_GUARD_PP` 5 (no raise where the window books 5+ points under the market, no cut where it books 5+ over), `GRADED_PRICE_SHARE` 0.60 (a rule graded underperforming is a price lever only when 60% of its open nights sit above the comp median and it books under the market), `CUT_SCOPE_DAYS` 14, `DSO_STALE_DAYS` 30. The size is the nights' median gap to the comps (p75 for a cut, p25 for a raise, p50 for a graded cut), capped at the movement cap, rounded to a whole percent, never flipping a discount into a premium, and checked with `customization_write.validate` before it is shown.
+
+### What the writer does with a rule change
+
+`rules_set` in a change file, listing level only. At plan: a fresh read (`toggled_on=false`), the named fields merged onto the live rule (`merge_dow` for day-of-week, so the days you did not name keep their values), `validate`, `destructive_warnings`, a blast radius line, sign-flip and over-the-cap flags. At apply: a fresh read again, refused if any of the listing's six rules moved (the rule block hash), `customization_write.write_snapshot` on disk before the send, ONE POST sent before any min/base/max or DSO call, then a field-by-field re-read of every rule (a sign stored the wrong way reads `SIGN INVERTED`; an empty or unreadable re-read is not success). Undo re-POSTs the snapshot and re-reads it. No retries; an error names only PriceLabs' `ERR-...` code, never the body.
 
 ## Operational notes
 

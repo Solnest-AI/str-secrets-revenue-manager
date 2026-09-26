@@ -170,6 +170,7 @@ class PlanRules(Base):
         self.assertIn("-18%", card)
         self.assertIn("BLAST RADIUS", card)
         self.assertNotIn("APPROVE", card)
+        self.assertIn("first live write for PriceLabs rules: read the after-values carefully", card)
 
     def test_day_of_week_write_carries_all_seven_days(self):
         env = self.plan(FakeRules(), change(rules_set={"day_of_week_adjustment": {
@@ -496,7 +497,8 @@ class CLIFlow(unittest.TestCase):
             self.assertIn("APPLIED AND VERIFIED", out)
             self.assertEqual(fake.rules, original)
             reposted = fake.rule_writes()[-1][2]["customizations"]["last_minute_prices"]
-            snap = json.loads(next(Path(tmp, "writes", "snapshots").glob("snapshot_*.json")).read_text())
+            # the FIRST rule snapshot (the one the change took); names carry a timestamp and sort
+            snap = json.loads(sorted(Path(tmp, "writes", "snapshots").glob("snapshot_*.json"))[0].read_text())
             self.assertEqual(reposted, {k: (int(v) if isinstance(v, float) and v.is_integer() else v)
                                         for k, v in snap["customizations"]["last_minute_prices"].items()})
 

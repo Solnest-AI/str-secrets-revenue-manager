@@ -835,10 +835,11 @@ def render_rules_first(pack, beyond):
             lines.append(f"      NOT WRITABLE BY THE WRITER: {ch['refusal']}.")
     if not changes:
         lines.append("  No rule change." + ("" if not pack["blockers"] else " Withheld because a required gate failed.")
-                     + " No rule that is ON with a readable number explains a pattern "
-                     f"(needs {rf['thresholds']['RULE_MIN_NIGHTS']}+ open nights, more than "
-                     f"{rf['thresholds']['RULE_PATTERN_SHARE']:.0%} of the window, and "
-                     f"{rf['thresholds']['RULE_CONTRAST_PP']:g} points more than outside it).")
+                     + " No rule qualified: a rule that is ON with a readable number needs "
+                     f"{rf['thresholds']['RULE_MIN_NIGHTS']}+ open nights in its window, more than "
+                     f"{rf['thresholds']['RULE_PATTERN_SHARE']:.0%} of them wanting the same move, "
+                     f"{rf['thresholds']['RULE_CONTRAST_PP']:g} points more than outside it, and to pass "
+                     "the booking guard" + ("; the notes say what was checked." if rf["notes"] else "."))
     for n in rf["notes"]:
         lines.append(f"  note: {n}")
     lines.append(f"2) DSO suggestions: the nights no rule explains ({len(residual)}):")
