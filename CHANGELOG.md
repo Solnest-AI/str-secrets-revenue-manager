@@ -10,6 +10,41 @@
   `claude plugin update revenue-manager@str-secrets-revenue-manager` (or just ask Claude to
   "update the revenue manager plugin"). New copy in a different folder? Run step 2 of
   `SETUP.md` from there instead. Then fully quit and reopen Claude Code.
+- **All 8 PMSs read and write.** Hostaway, Lodgify, Uplisting, Smoobu and Hostfully join
+  Hospitable, Guesty and OwnerRez in the runner and in setup (`--pms <name>`). With two PMSs
+  connected, `--pms` is required and the run says so. Hospitable, Guesty and OwnerRez reads
+  are live-tested; the other five are built from each vendor's API docs, and each
+  `references/<pms>.md` says which is which, endpoint by endpoint.
+- **PMS price changes through the safe writer.** `apply_change.py --target <pms>` writes the
+  nightly price and min stay straight to the PMS calendar, with the same plan, yes, re-read
+  and one-step undo as PriceLabs. It refuses a PMS price change on a listing PriceLabs or
+  Beyond manages (the tool would overwrite it on its next sync). A PMS that applies changes
+  late (Hospitable, OwnerRez, Uplisting) gets a read-only `verify` to check again later. No
+  write has been live-tested yet, so every card says "first live write for" plus the tool's
+  name, "read the after-values carefully".
+- **Beyond.** Setup and the runner take `--pricing beyond`, and the writer takes
+  `--target beyond`. The Beyond card prices and names everything Beyond's API doesn't give
+  (market percentiles, the PriceLabs rule check, per-date min stay). Built from Beyond's
+  docs. <!-- verify after feat/beyond merge -->
+- **Writer fixes.** A PriceLabs override is checked against the live min and max; min, base
+  and max are re-checked at apply; an undo is built from what's live now, skipping dates
+  already back and dates in the past; the journal is always written; plans expire after 24
+  hours and refuse past dates; any error is a plain "CANNOT WRITE", never a traceback.
+  The bundled connectors in `mcp-servers/` match: PriceLabs overrides never spill onto child
+  listings, and Hospitable's calendar tool sends the documented shape with a 20x sanity
+  check.
+- **Currency guard.** A Hospitable property in a currency without two decimals (JPY, KRW,
+  VND, KWD, BHD and the like) is refused with a plain reason instead of reading 100x off.
+- **Check-in/check-out day rules.** Lodgify and Smoobu don't share them, so that's now a
+  named gap on the card ("nights are read as having none") instead of a calendar the run
+  refuses.
+- **Sync mismatches stay on their own date.** When the PMS and PriceLabs disagree on a
+  night, only that night's pricing opinion is held back and listed at the top. The whole run
+  stops only when more than 20% of open nights disagree.
+- **Every run says what your min price should be.** Lower, raise or keep, with the number
+  and the plain reason, capped at the 15% move and flagged if bigger. It never asks for a
+  breakeven. For a property the PMS prices itself, setup saves the min with
+  `--min-price "<property>=<amount>"`, and the writer won't cut a price there without one.
 - **The zip and the GitHub copy are now the same files.** Both are built from the same
   commit, and a check refuses to ship a zip that differs by a single byte.
 - **Markup is what you tell it.** The skill asks what markup you add per channel and stores
@@ -18,8 +53,7 @@
   rollback). A tool the writer can't reach yet gets the change as exact steps to do by hand,
   never a raw write.
 - **RankBreeze uses its hosted MCP tool names**, and IntelliHost has its own short guide.
-- **Setup works for Guesty and OwnerRez** as well as Hospitable (`--pms guesty|ownerrez`),
-  and the commands use `uv run --python 3.13 python`, same as the connections kit.
+- **Setup and the runner use `uv run --python 3.13 python`**, same as the connections kit.
 - **A shorter skill.** PMS notes and the long framework moved into `references/`. Every rule
   is still there.
 - **Cleaner docs.** Setup order is install, fully quit and reopen, then first run. Example

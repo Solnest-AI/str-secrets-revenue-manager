@@ -74,7 +74,7 @@ Nothing is ever retried.
 | Gap | What the code does |
 |---|---|
 | **Reviews**: no reviews endpoint exists anywhere in the API index | `LodgifySource.reviews()` raises a named error; the runner marks the reviews spoke unreadable (a named gap, not zero reviews). |
-| **Closed-to-arrival / closed-to-departure per night** | Left unknown (None). Consequence: the analysis engine flags every Lodgify night `calendar_price_currency_or_restrictions_unknown` and will not call the calendar analysable until the engine treats restrictions as optional for a PMS that does not expose them (the same carve-out it already has for OwnerRez rates). Not changed on this branch. |
+| **Closed-to-arrival / closed-to-departure per night** | Left unknown (None). Because NO Lodgify night carries the flags, the engine treats them as not exposed (`pms_arrival_rules_exposed: false`) and the card says: "Your PMS does not expose check-in or check-out day rules, so nights are read as having none. If you block arrivals on certain days, check those nights yourself." A named gap, not an unanalysable calendar. |
 | Money in bookings (`Money1` is an object with no documented fields) | Only a plain number in `subtotals.stay` is read; any other shape, or a non-zero `promotions` subtotal (sign undocumented), leaves room revenue unknown. |
 | Property timezone | None; the engine falls back to UTC and says so (`missing_property_timezone_using_utc`). |
 | A listing floor | `floor()` returns None. `min_price` in the property and room schemas is a display summary ("always given in euros"), not a minimum-price setting. The core uses `property_config.settings.min_price`. |

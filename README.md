@@ -46,19 +46,44 @@ far-out, day-of-week, seasonality) is actually helping, against the market.
 
 ## What's tested, straight up
 
-- **Hospitable, Guesty or OwnerRez, plus PriceLabs:** the full tested runner. Setup maps
-  every property for you and tells you about any it can't map.
-- **Hostaway, Lodgify, Uplisting, Smoobu, Hostfully:** no tested runner yet. Claude pulls
-  the data through the tools the connections kit connected and applies the same safety
-  layer and the same card layout itself. It works, but it leans on Claude doing more by
-  hand, so check the numbers on your first run.
-- **Price changes:** every PMS and both pricing tools (PriceLabs, Beyond) can take changes.
-  Every change goes through one safe writer: it checks nothing moved since the card, applies
-  on your yes, reads it back, and can undo it. If the writer can't reach your tool yet, you
-  get the exact change to make by hand instead. It never pushes a change any other way.
-- **Beyond:** reads work. Writes go through the same safe writer. Reading each Beyond change
-  back is coming with the writer's Beyond support; until then you get the exact change to
-  make in Beyond yourself.
+All 8 PMSs and both pricing tools run through the same runner and the same safe writer.
+"Live-tested" means we ran it against a real account. "Built from docs" means it was built
+from that company's own API docs and tested against fakes, but hasn't touched a real account
+yet, so check the numbers on your first run.
+
+| Tool | Reading your data | Changing a price |
+|---|---|---|
+| Hospitable | Live-tested | Built from docs (being live-tested before the summit) |
+| Guesty | Live-tested | Built from docs |
+| OwnerRez | Live-tested | Built from docs |
+| Hostaway | Built from docs | Built from docs |
+| Lodgify | Built from docs | Built from docs |
+| Uplisting | Built from docs | Built from docs |
+| Smoobu | Built from docs | Built from docs |
+| Hostfully | Built from docs | Built from docs |
+| PriceLabs | Live-tested | Not live-tested yet (being tested before the summit) |
+| Beyond | Built from docs | Built from docs |
+| RankBreeze | Live-tested | Never. Read-only |
+| IntelliHost | Live-tested | Never. Read-only |
+
+<!-- verify after feat/beyond merge: Beyond row (setup --pricing beyond, analyze90 --pricing beyond, apply_change --target beyond) -->
+
+- **No price change has been live-tested yet.** Until one has, every change card says
+  "first live write for PriceLabs: read the after-values carefully" (with your tool's name),
+  and Claude says it out loud. Do that. We'll update this table as each tool gets its first
+  real write.
+- **Every change goes through one safe writer.** It checks nothing moved since the card,
+  applies on your yes, reads it back, and can undo it in one step. It never pushes a change
+  any other way. If it can't reach your tool, you get the exact change to make by hand.
+- **The change goes where your prices live.** If PriceLabs or Beyond sets your prices, the
+  change goes there. Your PMS only gets a price change when it sets the prices itself; the
+  writer refuses otherwise, because your pricing tool would overwrite it on the next sync.
+- **Gaps get named, not guessed.** Lodgify, Uplisting and Smoobu don't share reviews through
+  their API. Lodgify and Smoobu don't share check-in or check-out day rules. No PMS shares
+  its min price, so if your PMS sets your prices itself, Claude recommends a min and saves it
+  before it will cut a price. Each gap is said at the top of the card, and it still prices.
+- **Beyond** gets a real card too, with everything Beyond's API doesn't give (like market
+  percentiles and the PriceLabs rule check) named up top.
 - **RankBreeze, IntelliHost, AirROI, Turno, Breezeway:** optional and read-only. If you have
   them, they make the cards sharper. If not, it tells you what's missing and keeps going.
 
