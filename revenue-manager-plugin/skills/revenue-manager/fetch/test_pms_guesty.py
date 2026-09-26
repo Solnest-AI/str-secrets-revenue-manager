@@ -185,9 +185,6 @@ class EndToEnd(unittest.TestCase):
         self.assertIsInstance(facts, dict)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class GuestyDetection(unittest.TestCase):
     """Live 2026-09-25: any guesty.token FILE made Guesty 'connected', expired or not."""
@@ -210,3 +207,7 @@ class GuestyDetection(unittest.TestCase):
             self.assertFalse(_has_guesty(self.conns(d)))
             os.utime(p, None)
             self.assertTrue(_has_guesty(self.conns(d)))
+
+
+if __name__ == "__main__":
+    unittest.main()

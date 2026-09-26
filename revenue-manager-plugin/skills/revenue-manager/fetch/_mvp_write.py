@@ -47,6 +47,7 @@ from pathlib import Path
 from urllib.parse import quote, urlencode, urlsplit
 
 from reduce_prices import payload_matches, split_payload
+from _calendar import pricelabs_status
 
 PL_HOST = "api.pricelabs.co"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
@@ -203,24 +204,31 @@ class Live:
             out[r["date"]] = {k: v for k, v in r.items() if k not in OVERRIDE_META and v is not None}
         return out
 
-    def prices(self, start: date, days: int, currency) -> dict:
+    def prices(self, start: date, days: int, currency, status: dict | None = None) -> dict:
+        """Nightly prices by date. Pass a dict as `status` to also get PriceLabs' reading of
+        each night (RESERVED / BLOCKED / AVAILABLE / UNKNOWN) from the same response."""
         end = start + timedelta(days=days - 1)
         raw = self.client.request("POST", "/v1/listing_prices", body={"listings": [
             {"id": self.lid, "pms": self.pms, "dateFrom": start.isoformat(), "dateTo": end.isoformat()}]})
         if not payload_matches(raw, [(self.lid, self.pms)]):
             raise CannotWrite("PriceLabs price response belongs to another listing")
         env = raw[0] if isinstance(raw, list) else raw
-        if currency and env.get("currency") != currency:
-            raise CannotWrite("PriceLabs price currency does not match the listing")
         by_id, errors = split_payload(raw)
         if errors or self.lid not in by_id:
-            raise CannotWrite("PriceLabs did not return a price calendar")
+            # checked BEFORE the currency: an error envelope carries no currency, and "currency
+            # does not match" hid PriceLabs' own reason (listing not found, sync off)
+            why = "; ".join(e for _, e in errors) or "no rows for this listing"
+            raise CannotWrite(f"PriceLabs did not return a price calendar ({why})")
+        if currency and env.get("currency") != currency:
+            raise CannotWrite("PriceLabs price currency does not match the listing")
         out = {}
         for r in by_id[self.lid]:
             try:
                 out[str(r["date"])] = _num(r.get("price"), "calendar price")
             except (CannotWrite, KeyError):
                 continue
+            if status is not None:
+                status[str(r["date"])] = pricelabs_status(r)
         return out
 
 
@@ -499,7 +507,27 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
                                 "deleted and written fresh in the same step.")
 
     priced = [op for op in ops if op["kind"] == "override" and op["after"] and _price_changes(op)]
-    calendar = live.prices(today, HORIZON_DAYS, currency) if (min_raised or max_cut or priced) else {}
+    night_status = {}
+    calendar = (live.prices(today, HORIZON_DAYS, currency, status=night_status)
+                if (min_raised or max_cut or priced) else {})
+
+    # A listing min/max never moves a booked or blocked night, and a date override that sets its
+    # own fixed min_price / max_price outranks the listing bound. Live 2026-09-25 (Olde Town
+    # Ambler, min 180 -> 189): 21 overrides with min_price 160 and 5 booked nights were counted
+    # as "31 of the next 90 nights ... will be lifted to it", and a 160 -> 189 night the raise
+    # never reaches raised a false OVER 15% flag.
+    dso = {}
+    if min_raised or max_cut:
+        try:
+            dso = existing if (o_set or o_del or o_res) else live.overrides()
+        except CannotWrite as exc:
+            warnings.append(f"Date overrides could not be read ({exc}), so a night whose override "
+                            "sets its own min or max is counted below as if the new bound reaches it.")
+
+    def own_bound(d, key):
+        o = dso.get(d) or {}
+        return (o.get(key) not in (None, "")
+                and not str(o.get(key + "_type") or "fixed").lower().startswith("percent"))
 
     # a min raise / max cut moves real nights; flag the biggest single-night move (D8)
     for moved, below, bound, word, pick in (
@@ -507,11 +535,24 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
             (max_cut, False, merged["max"], "above the new max", "cut to")):
         if not moved:
             continue
-        hit = {d: p for d, p in calendar.items() if (p < bound if below else p > bound)}
+        key = "min_price" if below else "max_price"
+        beyond_bound = {d: p for d, p in calendar.items() if (p < bound if below else p > bound)}
+        pinned = sorted(d for d in beyond_bound
+                        if own_bound(d, key) and night_status.get(d) not in ("RESERVED", "BLOCKED"))
+        if pinned:
+            warnings.append(f"{len(pinned)} unbooked night(s) are priced {word} {_money(bound)} but carry a "
+                            f"date override with its own {key.replace('_', ' ')}, which outranks the "
+                            f"listing's, so they are NOT {pick} it: {', '.join(pinned[:8])}"
+                            f"{' ...' if len(pinned) > 8 else ''}.")
+        hit = {d: p for d, p in beyond_bound.items()
+               if night_status.get(d) not in ("RESERVED", "BLOCKED") and not own_bound(d, key)}
         if not hit:
             continue
+        booked = sum(1 for d in beyond_bound if night_status.get(d) in ("RESERVED", "BLOCKED"))
         line = (f"{len(hit)} of the next {HORIZON_DAYS} nights are priced {word} "
-                f"{_money(bound)} today and will be {pick} it.")
+                f"{_money(bound)} today and will be {pick} it."
+                + (f" {booked} booked or blocked night(s) are left out: a listing bound never "
+                   "moves them." if booked else ""))
         zero = sorted(d for d, p in hit.items() if p <= 0)
         moves = sorted(((bound - p) / p, d, p) for d, p in hit.items() if p > 0)
         if moves:

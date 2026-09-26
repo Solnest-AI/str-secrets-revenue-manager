@@ -88,7 +88,13 @@ def min_price_recommendation(bounds, rows, multiplier, max_delta, comp_p25=None,
     base; no ceiling (max None) is never read here.
     """
     current = bounds["min"]
-    near = [r for r in rows if 0 <= r["days_out"] < NEAR_TERM_DAYS]
+    # "Next 30 nights" is the table's 30-night window: the first NEAR_TERM_DAYS rows of the
+    # window. After the evening UTC rollover the window starts tomorrow and days_out starts at
+    # 1 (it counts from the property-local today), so `0 <= days_out < 30` kept only 29 nights
+    # and printed a second occupancy under the table's (live 2026-09-25: Boho 31% vs 30.0,
+    # Sunburst 46% vs 44.44, Olde Town 56% vs 53.85). Anchor on the window's first night.
+    first = min((r["days_out"] for r in rows), default=0)
+    near = [r for r in rows if 0 <= r["days_out"] - first < NEAR_TERM_DAYS]
     # ONE occupancy definition on the card: the table's (paid nights over non-blocked nights,
     # _mvp_pms.forward). Live 2026-09-25 (The Apres Arcade) this function counted four $0
     # nights as demand, printed "13% booked vs the market's 13%" under a table saying 0%, and
@@ -735,6 +741,11 @@ def render(pack, run_id, metrics):
         f"{pack['window']['end_date_exclusive']} (checkout boundary) | "
         f"{pack['currency']} | {pack['status']}",
     ]
+    # SKILL: a degraded card names its gaps at the top. Beyond has its GAPS block; on the
+    # PriceLabs path the flywheel's "PRICED WITHOUT ..." sat ~50 lines down (live 2026-09-25).
+    top_gaps = ([n for n in pack.get("notes", []) if str(n).startswith("PRICED WITHOUT")]
+                if not beyond and pack.get("status") == "degraded" else [])
+    lines.extend(top_gaps)
     mism = pack.get("reconciliation", {}).get("mismatches") or []
     if mism:
         dates = ", ".join(m["date"] for m in mism[:8]) + (" ..." if len(mism) > 8 else "")
@@ -922,7 +933,7 @@ def render(pack, run_id, metrics):
         lines.append(
             f"{len(pending)} date(s) where the PMS shows PriceLabs' previous price, not its newer "
             "one: withheld date by date, not counted as a broken sync.")
-    lines.extend(pack["blockers"] + pack["notes"])
+    lines.extend(pack["blockers"] + [n for n in pack["notes"] if n not in top_gaps])
     comps = pack.get("named_comps", {})
     if comps.get("status") == "ok":
         summary, capacity = comps["summary"], comps["capacity_subset"]

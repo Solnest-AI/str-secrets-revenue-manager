@@ -171,6 +171,13 @@ def visibility_jobs(settings, sources, client, connections, start, prop):
         jobs["funnel"] = lambda: ih.funnel(ih_id, start)
         jobs["rankings"] = lambda: ih.rankings(ih_id, start, prop["capacity"]["max"])
     else:
+        if (connections.values.get("INTELLIHOST_MCP_TOKEN")
+                or "intellihost" in (getattr(connections, "servers", None) or {})):
+            # Live 2026-09-25: RankBreeze removed, IntelliHost connected; the card named only
+            # RankBreeze and never said why IntelliHost did not take over.
+            gap += ("; IntelliHost is connected but this property has no IntelliHost mapping, so there "
+                    "is no fallback (setup maps IntelliHost only when its API can be read, which needs "
+                    "IntelliHost Premium; run setup_properties.py again after that)")
         if not errors:
             errors.append("No verified RankBreeze or IntelliHost listing mapping")
 
@@ -194,7 +201,23 @@ def run_live(args, client, connections, as_of):
                 "Live analysis starts on the property local current date; use replay for prior runs"
             )
     pid = prop["id"]
-    context = read_context(client, connections, pid, args.settings)
+    try:
+        context = read_context(client, connections, pid, args.settings)
+    except CannotAnalyze as exc:
+        # Live 2026-09-25 (OwnerRez, Guesty): a property PriceLabs does not have gets no row
+        # (setup lists it as NOT IN PRICELABS), and this card then said only "run setup first",
+        # which sends the operator back to a setup that refuses. Name the real reason, and keep
+        # the time-zone fallback on the card even when it blocks.
+        why = str(exc)
+        if "No property_config row" in why:
+            try:
+                if pid not in sources.pricelabs_inventory():
+                    why = (f"NOT IN PRICELABS: no PriceLabs listing has this {sources.pms} id ({pid}), so "
+                           "setup_properties.py could not set it up and the runner cannot price it. Add "
+                           "or sync it in PriceLabs, then run setup_properties.py again.")
+            except CannotAnalyze:
+                pass
+        raise CannotAnalyze(why + (f"\n{tz_note}" if tz_note else "")) from None
     settings = context["settings"]
     if settings.get("pms_source") and settings["pms_source"] != sources.pms:
         raise CannotAnalyze(f"This property was set up from {settings['pms_source']}, but this run reads "

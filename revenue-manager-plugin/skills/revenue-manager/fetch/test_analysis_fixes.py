@@ -108,6 +108,15 @@ class MinPriceRecommendation(unittest.TestCase):
         self.assertTrue(rec["reason"])
         self.assertNotIn("breakeven", rec["reason"].lower())
 
+    def test_after_rollover_next_30_nights_is_the_tables_30_nights(self):
+        # Live 2026-09-25: the window started tomorrow (days_out 1..90) and the min line read
+        # 9 of 29 nights (31%) under a table saying 9 of 30 (30.0%).
+        rows = (_rows(9, "confirmed_paid", False, start=1) + _rows(21, "open", False, start=10)
+                + _rows(60, "open", False, start=31))
+        rec = min_price_recommendation(self.bounds, rows, 1.2, 0.15)
+        self.assertIn("next 30 nights are 30% booked", rec["reason"])
+        self.assertEqual(rec["open_near"], 21)
+
     def test_floor_pinned_and_lagging_pace_lowers_capped_at_15pct(self):
         rows = _rows(28, "open", True, p25=60.0) + _rows(2, "confirmed_paid", True, start=28)
         rec = min_price_recommendation(self.bounds, rows, 1.2, 0.15)

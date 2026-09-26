@@ -982,6 +982,38 @@ class NightMove(Base):
         return plan_change(spec, live_for(FakePriceLabs()), today=TODAY, now=NOW, max_delta=md)
 
 
+class MinRaiseReach(Base):
+    """Live 2026-09-25: a min raise counted booked nights and nights whose date override sets its
+    own min_price as 'will be lifted', and flagged OVER 15% on a night the raise never reaches."""
+
+    def fake(self):
+        fake = FakePriceLabs()
+        fake.prices["2026-10-02"] = 100.0            # the biggest gap, but its override owns the min
+        fake.overrides["2026-10-02"] = {"date": "2026-10-02", "min_price": 100.0, "min_stay": 2}
+        booked = {"2026-10-03"}                      # priced 160, booked
+        base_open = fake.open
+
+        def open_(req, timeout):
+            resp = base_open(req, timeout)
+            if req.get_method() == "POST" and urlsplit(req.full_url).path == "/v1/listing_prices":
+                body = json.loads(resp.body)
+                for r in body[0]["data"]:
+                    if r["date"] in booked:
+                        r["booking_status"] = "Booked (Check-In)"
+                resp.body = json.dumps(body).encode()
+            return resp
+        fake.open = open_
+        return fake
+
+    def test_override_min_and_booked_nights_are_not_counted_as_lifted(self):
+        env = self.plan(self.fake(), change(listing_prices={"min": 170}))
+        joined = " ".join(env["warnings"])
+        self.assertIn("NOT lifted to it: 2026-10-02", joined)
+        self.assertIn("25 of the next 90 nights", joined)   # 27 below 170, minus the override and the booked night
+        self.assertIn("1 booked or blocked night(s)", joined)
+        self.assertFalse(any("OVER" in w for w in env["warnings"]), env["warnings"])
+
+
 class ZeroNight(Base):
     def test_zero_priced_night_is_a_clear_refusal(self):  # bug 12
         fake = FakePriceLabs()
@@ -990,9 +1022,6 @@ class ZeroNight(Base):
             self.plan(fake, change(overrides_set=[
                 {"date": "2026-10-05", "price": 240, "price_type": "fixed"}]))
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 # live 2026-09-25 ---------------------------------------------- the PriceLabs PMS name, said plainly
@@ -1004,3 +1033,7 @@ class PriceLabsPmsName(Base):
         fake.listing["pms"] = "smartbnb"
         with self.assertRaisesRegex(CannotWrite, "under pms 'smartbnb'.*set \"pms\": \"smartbnb\""):
             self.plan(fake, change(listing_prices={"min": 160}))
+
+
+if __name__ == "__main__":
+    unittest.main()

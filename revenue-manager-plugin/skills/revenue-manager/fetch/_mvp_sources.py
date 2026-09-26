@@ -194,6 +194,11 @@ class Sources:
         def load():
             raw = self.pl_get("/v1/listings/" + quote(lid), {"pms": pms})
             rows = raw.get("listings") if isinstance(raw, dict) else None
+            if isinstance(rows, list) and not rows:
+                # Live 2026-09-25 (Guesty, OwnerRez): an id PriceLabs does not have answers 200
+                # with an empty list. Say that, not "identity is not verified".
+                raise CannotAnalyze(f"NOT IN PRICELABS: PriceLabs has no listing {lid} under pms "
+                                    f"{pms!r}; add or sync it in PriceLabs, then run setup_properties.py")
             if not isinstance(rows, list) or len(rows) != 1 or str(rows[0].get("id")) != lid:
                 raise CannotAnalyze("PriceLabs listing identity is not verified")
             item = rows[0]
@@ -240,11 +245,15 @@ class Sources:
             if not payload_matches(raw, [(lid, pms)]):
                 raise CannotAnalyze("PriceLabs price response belongs to another listing")
             envelope = raw[0] if isinstance(raw, list) else raw
-            if envelope.get("currency") != currency:
-                raise CannotAnalyze("PriceLabs price currency does not match PMS")
             by_id, errors = split_payload(raw)
             if errors or lid not in by_id:
-                raise CannotAnalyze("PriceLabs did not return a complete price calendar")
+                # Checked BEFORE the currency: an error envelope has no currency, and live
+                # 2026-09-25 a listing PriceLabs does not have read "currency does not match PMS".
+                why = "; ".join(e for _, e in errors)
+                raise CannotAnalyze("PriceLabs did not return a complete price calendar"
+                                    + (f" ({why})" if why else ""))
+            if envelope.get("currency") != currency:
+                raise CannotAnalyze("PriceLabs price currency does not match PMS")
             rows = by_id[lid]
             validate_calendar(
                 rows, "PriceLabs", pricelabs_status, start.isoformat(), end.isoformat()
