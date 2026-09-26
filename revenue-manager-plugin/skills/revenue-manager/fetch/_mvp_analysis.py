@@ -652,6 +652,11 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         if beyond:
             rollups[-1]["open_reference_mean"] = average(
                 r["reference"] for r in open_rows if r.get("direction") != "raise")
+    # A funnel dip against similar listings is only a break when bookings trail the market too
+    # (flywheel.apply_pace; Ryan 2026-09-26). The 30-night window is the card's lead window.
+    lead = next((w for w in rollups if w["days"] == 30), None)
+    if lead:
+        wheel = flywheel.apply_pace(wheel, lead["occupancy_pct"], lead["market_occupancy_pct"], 30)
     months = []
     for month in pms["forward_months"]:
         group = [r for r in rows if r["date"].startswith(month["month"])]

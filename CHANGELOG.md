@@ -28,6 +28,13 @@
 - **Big portfolios no longer block on PriceLabs' 60-calls-a-minute limit.** A property run
   makes 7-8 PriceLabs calls, so 8 or more back to back hit it and the card was blocked. A
   rate-limited read now waits out the minute (at most two retries); writes never retry.
+- **"They look but don't book" only when they really don't.** RankBreeze's similar-listings
+  booking and conversion rates are Airbnb's per-day averages by stay date (RankBreeze and
+  Airbnb help centres), so they run 20 to 34% in long-stay markets and ~3% elsewhere. A
+  funnel stage below similar listings now counts as a break only when the property's next
+  30 days also trail the market; selling with or ahead of it says "not a funnel problem".
+  Live on Solnest: Sunburst, Olde Town and Azure Palms cleared; Urban Nest, Apres Arcade
+  and Boho still flagged, now with the bookings evidence.
 - **Already set up? Nothing breaks.** Stored markups keep working exactly as before; run
   setup again to add the other booking sites.
 

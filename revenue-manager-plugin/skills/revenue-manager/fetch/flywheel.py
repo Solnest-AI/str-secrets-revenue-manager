@@ -273,6 +273,42 @@ def gate(listing_label: str, visibility: dict, bookings: dict, reviews: dict,
     return result
 
 
+# How far a listing's occupancy may trail the market's and still count as selling with it. The
+# same 5-point band the rule checks use.
+PACE_BAND = 5.0
+
+
+def apply_pace(result: dict, listing_pct, market_pct, window_days: int = 30) -> dict:
+    """Check a funnel break against the listing's own bookings (Ryan, 2026-09-26).
+
+    RankBreeze's similar-listings rates come from Airbnb's per-day averages by stay date
+    (support.rankbreeze.com 16994745: "the average daily value for comparable listings";
+    airbnb.com/help/article/2714: "the average daily number of unique visitors ... then
+    booked"). They swing with traffic and stay length, not listing quality: live 2026-09-26
+    the similar booking rate was 34% near the Prince George hospital, 3% in Azure Palms'
+    market, and Apres Arcade read 51.75% itself with nothing booked in 30 days. So a stage
+    below similar listings only stands as a break when bookings also trail the market over
+    the same window. A listing selling with or ahead of the market keeps the numbers on the
+    card, marked as not a problem. Unknown occupancy leaves the verdict as it was."""
+    vis = (result.get("spokes") or {}).get("visibility") or {}
+    diag = vis.get("diagnosis") or {}
+    if diag.get("verdict") != "break" or listing_pct is None or market_pct is None:
+        return result
+    pace = {"listing_pct": listing_pct, "market_pct": market_pct, "window_days": window_days}
+    booked = f"{listing_pct:g}% booked vs the market's {market_pct:g}%, next {window_days} days"
+    if listing_pct >= market_pct - PACE_BAND:
+        new = dict(diag, verdict="selling", pace=pace,
+                   why=f"{diag['why']}, but it is selling with or ahead of the market ({booked}), "
+                       "so this reads as traffic arithmetic, not a problem")
+        result["headline"] = (f"{diag['stage']} reads below similar listings, but bookings run with or "
+                              f"ahead of the market ({booked}): not a funnel problem")
+    else:
+        new = dict(diag, pace=pace, why=f"{diag['why']}; bookings trail the market too ({booked})")
+        result["headline"] = f"{result.get('headline', '')} Bookings trail the market too ({booked}).".strip()
+    result["spokes"] = dict(result["spokes"], visibility=dict(vis, diagnosis=new, detail=new["why"]))
+    return result
+
+
 def render(result: dict) -> str:
     """The flywheel chain, printed for every listing (PRD FW4)."""
     lines = [f"## flywheel {result['listing']}  [{result['verdict']}]"]
