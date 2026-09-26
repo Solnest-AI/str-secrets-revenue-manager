@@ -728,7 +728,7 @@ def render(pack, run_id, metrics):
             f"Recommended min price: {verb} {mp['recommended']:g} net "
             f"(currently {mp['current']:g})"
             + (", LARGE MOVE, confirm" if mp["large_move"] else "")
-            + f". {mp['reason']}."
+            + f". {str(mp['reason']).rstrip('. ')}."
         )
     lines += [
         "",

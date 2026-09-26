@@ -142,6 +142,14 @@ class MinPriceRecommendation(unittest.TestCase):
         self.assertEqual(result["min_price"]["recommended"], 80)
         self.assertIn("Recommended min price:", render(result, "run", METRICS))
 
+    def test_a_reason_that_ends_in_a_period_is_not_doubled_on_the_card(self):
+        result = compute(synthetic_bundle())
+        result["min_price"]["reason"] = "Look at visibility and the listing before the floor."
+        card = render(result, "run", METRICS)
+        self.assertIn("before the floor.", card)
+        self.assertNotIn("floor..", card)
+        self.assertNotIn(". .", card)
+
     def test_runner_proposes_raises_on_underpriced_nights(self):
         bundle = synthetic_bundle()
         bundle["inputs"]["market"]["data"][40].update(p25=150, p50=160, p75=170, p90=180)
