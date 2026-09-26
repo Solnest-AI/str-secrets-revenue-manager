@@ -1,6 +1,6 @@
 # RankBreeze vs IntelliHost: who has the better data
 
-Measured 2026-09-24, read-only: RankBreeze on the Solnest Stays account (15 tools, all
+Measured 2026-09-24, read-only: RankBreeze on a live operator account (15 tools, all
 measured earlier), IntelliHost on a Premium account (40 tools, all 33 reads called). They are
 different accounts and properties, so this compares what each tool CAN tell you, not the same
 listing side by side.
@@ -15,7 +15,7 @@ listing side by side.
 | What changed and did it work | `get_ab_tests_listing_history`: change journal + A/B tests with impact | `get-change-tracker`: each change with funnel-rate deltas and **estimated revenue impact** | Close; IntelliHost adds dollars |
 | Reviews | own **and competitor** reviews | own reviews with ratings | **RankBreeze** |
 | Bookings, revenue, pace, live prices, overrides, rules | none (host price calendar only) | reservations, revenue YoY, pickup, live channel prices, overrides, sync status, rules, alerts, market studies | **IntelliHost** (though the revenue manager already reads these from the PMS and pricing tool) |
-| Can it change prices | no, read-only | yes, 7 write tools | IntelliHost (behind the plain-yes card only) |
+| Can it change prices | no, read-only | has 7 write tools, but the revenue manager treats it as read-only | Neither: changes go through the PMS or pricing tool |
 | Access and cost | free on all listing plans; funnel needs the Airbnb integration active | per-property **Premium** for every per-property read; free accounts look connected but read nothing | **RankBreeze** |
 
 ## Verdict

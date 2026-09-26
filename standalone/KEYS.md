@@ -1,3 +1,5 @@
+> **LEGACY, NOT FOR THE SUMMIT.** This is the old all-in-one setup, kept for reference. At STR Secrets Summit 2.0, use the STR Secrets connections kit plus `../SETUP.md` instead. Paths below are relative to the bundle root (the folder above this one).
+
 # Your keys — where they go
 
 ## The rule: **never paste a key into the chat.**
@@ -39,7 +41,7 @@ Anything you type into the chat is saved in the conversation forever. Put your k
 | `TURNO_API_TOKEN` | Turno — the long JWT (starts with eyJ) | Yes | Turno partner dashboard |
 | `TURNO_PARTNER_ID` | Turno — the partner UUID | Yes | Turno partner dashboard |
 | `AIRROI_API_KEY` | AirROI (free key) | Yes | https://www.airroi.com/api/developer/activate |
-| `RANKBREEZE_SESSION` | RankBreeze session cookie (_godzilla_session) | Optional | app.rankbreeze.com -> DevTools -> Cookies |
+| `RANKBREEZE_MCP_URL` | RankBreeze hosted MCP URL (the URL is the secret) | Optional | app.rankbreeze.com -> Settings -> MCP Access -> Remote MCP -> Copy URL |
 
 ---
 

@@ -44,7 +44,4 @@ echo
 for s in pricelabs hospitable turno airroi rankbreeze; do
   [ -d "mcp-servers/$s" ] && cp .env "mcp-servers/$s/.env" 2>/dev/null && echo "  ✅ $s configured"
 done
-if [ -n "${RANKBREEZE_SESSION:-}" ] && [ -d mcp-servers/rankbreeze ]; then
-  printf '%s' "$RANKBREEZE_SESSION" > mcp-servers/rankbreeze/session.txt
-fi
 echo; echo "Done. Now FULLY QUIT AND REOPEN Claude Code so it picks up your keys."

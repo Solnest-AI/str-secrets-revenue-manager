@@ -12,14 +12,16 @@ This file is the canonical reference the `revenue-manager` skill consults whenev
 - **The PriceLabs forward curve = ASK price (listed nightly), NOT cleared.** Confirmed: the PMS calendar nightly price == PriceLabs `recommended` price exactly, because PriceLabs pushes that number to the PMS.
 - **GROUND TRUTH for "what's actually listed" = the PMS calendar** (e.g. Hospitable `get_property_calendar`), NOT PriceLabs `user_price`. The `user_price` field is **STALE** — verified divergent from the live calendar. Never quote `user_price` as PMS truth.
 - **CLEARED / realized rate = ADR** (from `get_listing_prices` ADR field + `list_reservations`), and it runs **materially higher than ask**. Track BOTH ask (calendar / recommended) and cleared (ADR).
-- **Markup is empirical, per property.** Compute the PMS÷PriceLabs ratio from paired dates; do not assume. For some properties it is 1.0 (no markup) — cleaning + channel fees are added at the channel, not on the nightly calendar number.
+- **Markup is what the operator says, per channel.** Ask once, store it in `property_config.settings.channel_markup_pct` (for example `{"airbnb": 16, "vrbo": 20}`; the runner reads that key). Never infer it from a PMS vs PriceLabs gap: that gap is a sync finding, not a markup.
 - **Floor / ceiling for the safety layer come from THIS tool** — `min` / `max` on `list_listings` / `get_listing` (and `get_neighborhood_data` min/max where present). Store them in `property_config` (`min_price` / `max_price`).
-- **Writes are gated.** `set_overrides` (and `update_listings` / `delete_overrides`) push real changes — fire them **ONLY after the operator says yes to the card, never silently.**
+- **Never call the write tools directly.** `set_overrides`, `update_listings` and `delete_overrides` exist, but every change goes through the safe writer, `fetch/apply_change.py plan` then `apply` on a plain yes (`rollback` to undo). See SKILL.md Step 8.
 - **`get_neighborhood_data` returns LARGE payloads** and requires `(listing_id, pms)`. Parse it compactly (python3 into tables) before reporting; don't dump raw JSON into context.
 
 ---
 
 ## The 10 PriceLabs MCP tools
+
+> Tools 7, 8 and 10 are writes. The skill never calls them directly: they are listed so you know what the safe writer (`fetch/apply_change.py`) does on the operator's yes.
 
 Each entry: what it returns, the verified fields, and the revenue-management use.
 
@@ -59,7 +61,7 @@ Each entry: what it returns, the verified fields, and the revenue-management use
 **Revenue-management use:**
 - **Ask curve = `recommended`** → this is your forward calendar price; build the monthly price trajectory from it.
 - **Cleared = `ADR`** → track ask vs cleared per property; cleared higher than ask is normal and healthy.
-- **Markup normalization (empirical):** pair `recommended` against the PMS calendar price per date and compute the ratio. Often 1.0. Never "fix" a difference that matches the configured/empirical markup.
+- **Markup:** use the operator-stated `channel_markup_pct`. A ratio between `recommended` and the PMS calendar is a sync finding, not a markup. Never "fix" a difference that matches the stated markup.
 - **Pacing & red flags:** `booking_status` + STLY → 5+ consecutive unbooked within 14d, orphan days, booked-too-fast, pacing-behind-LY.
 - **Orphan / last-minute logic:** scan `booking_status` for isolated open single nights and near-in gaps; apply the lead-time table.
 - **Never read `user_price` for "what's live."** PMS calendar is ground truth.
@@ -155,12 +157,11 @@ data['data']['Market KPI']['Category']                 # monthly booking window,
 | **Comp count (for confidence)** | count from neighborhood payload (use same-BR slice) | Drives thin-comp flag |
 | **Native currency** | per-listing currency; neighborhood payload native | Hard gate on mixing |
 
-### Markup — empirical, per property
-- Compute `median( PMS_calendar_price ÷ recommended )` across paired forward dates.
-- Often **1.0** (no nightly markup) — cleaning + channel fees are added at the channel, not on the calendar number.
-- If the inferred markup is inconsistent across dates (high stdev) → flag misconfigured markup or broken sync.
-- Persist to `property_config.settings.markup_pct`. **Never recommend a change to "fix" a difference that matches the configured/empirical markup** — that's the markup working.
-- **Do NOT use `user_price` in any markup math** — it's stale. Pair `recommended` (PriceLabs) against the live PMS calendar.
+### Markup: operator-stated, per channel
+- Ask the operator what markup they add per channel. Store exactly that in `property_config.settings.channel_markup_pct` (e.g. `{"airbnb": 16, "vrbo": 20}`; "no markup" is 0).
+- Never infer it from the PMS calendar vs `recommended`. If those two disagree by more than the stated markup, that is a sync or configuration finding: report it, don't turn it into a markup.
+- **Never recommend a change to "fix" a difference that matches the stated markup.** That's the markup working.
+- **Do NOT use `user_price` for any comparison** against the live calendar; it's stale. Pair `recommended` against the live PMS calendar.
 
 ---
 
@@ -181,7 +182,7 @@ When you report ADR-vs-comp-median, be explicit which number you're using. Comp-
   - Seasonal / Weekend / Event / Last-Minute / Orphan → `set_overrides` (DSOs).
 - **Lead-Time Pricing Logic** (90+ → +5-15% hold; 60-90 → at/slightly above base; 30-60 → at base, watch; 14-30 → small drops if needed; 7-14 → last-minute -10-20%; 0-7 → aggressive discount, drop minimums): drive off `get_listing_prices` `booking_status` + date distance.
 - **Pricing Decision Framework (5 ordered questions):** (1) comp set → `get_neighborhood_data`; (2) pacing → Future Occ/New/Canc + Market KPI STLY + your `occupancy_next_*`; (3) events → operator/calendar knowledge + DSOs; (4) lead time → date distance on the price curve; (5) orphan days → `booking_status` scan.
-- **30-Day Daily Review:** open the forward curve (`get_listing_prices`) → pacing vs market/LY (neighborhood) → recent bookings (`booking_status` + reservations) → comp set (neighborhood) → adjust (`set_overrides`/`update_listings`, on approval) → log (Supabase).
+- **30-Day Daily Review:** open the forward curve (`get_listing_prices`) → pacing vs market/LY (neighborhood) → recent bookings (`booking_status` + reservations) → comp set (neighborhood) → adjust (through `apply_change.py`, on a yes) → log (Supabase).
 - **Red-Flags detection** (computed from PriceLabs + PMS): 5+ consecutive unbooked within 14d; date booked within hours (too low); orphan day open 7+ days; all weekends booked / weekdays empty; comp set fully booked while you're open (overpriced or visibility); comp set empty while you're booked (underpriced — hold longer next time).
 - **KPIs & benchmarks:** ADR vs comp median (neighborhood percentiles); Occupancy 70-85% peak / 40-60% off (`occupancy_next_*`); RevPAR = ADR × occ; pace vs STLY (Market KPI `Bookings STLY`); Review 4.8+ / below 4.6 = ranking problem; Response <1hr. Page-view/CTR/ranking KPIs (500-600 avg vs 2000-3500+ top) map to **RankBreeze when present, else flag as a manual check** — PriceLabs does not expose ranking.
 - **Visibility-before-pricing / Troubleshooting:** if `market_occupancy_next_*` >> your `occupancy_next_*` (zero forward bookings + strong market) → check ranking FIRST (RankBreeze if present, else manual), it's a listing-quality / visibility problem, not pricing.
@@ -194,7 +195,7 @@ When you report ADR-vs-comp-median, be explicit which number you're using. Comp-
 - **Parse heavy JSON compactly.** `get_listing_prices` (365 dates) and especially `get_neighborhood_data` (~85 comps × categories) → run through python3 into compact tables before putting anything in context. Never dump raw.
 - **PMS-name mapping:** when a call needs `pms`, Hospitable = `smartbnb` inside PriceLabs.
 - **Writes are append-only to the audit trail.** On any approved change: one `pricelabs_change_log` row per field/date, one `pricing_decisions` row per property-decision (now also seeding the nullable outcome columns `booked_at`, `lead_time_days`, `price_delta_from_rec` for the future learning loop — do not build the loop in v1), and a `market_snapshots` upsert. Writes fire ONLY on a real change.
-- **Never auto-pushes.** `set_overrides` / `update_listings` / `delete_overrides` run only after the operator says yes to the card (a plain yes, no codes), then get verified by re-reading.
+- **Never auto-pushes.** Changes run only through `apply_change.py` after the operator says yes to the card (a plain yes, no codes), and the writer verifies them by re-reading.
 
 ---
 
