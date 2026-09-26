@@ -39,6 +39,7 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _calendar import local_today  # noqa: E402
 from _cache import cache_dir, cache_name, listing_matches, read_json, write_json  # noqa: E402
 from factcheck import (  # noqa: E402
     LEAD_BUCKETS, LOS_BUCKETS, RES_MONTHLY_COLUMNS, RES_RECENT_COLUMNS,
@@ -66,7 +67,7 @@ def resolve_key() -> str:
     for path in ENV_CANDIDATES:
         p = os.path.expanduser(path)
         if os.path.isfile(p):
-            for line in open(p):
+            for line in open(p, encoding="utf-8-sig"):
                 m = re.match(r"\s*(PRICELABS_API_KEY|PRICELABS_KEY)\s*=\s*(.+?)\s*$", line)
                 if m:
                     return m.group(2).strip('"').strip("'")
@@ -191,10 +192,17 @@ def main() -> int:
     ap.add_argument("--back", type=int, default=730, help="days of history (default 730)")
     ap.add_argument("--forward", type=int, default=365, help="days ahead (default 365)")
     ap.add_argument("--currency", help="expected ISO code; every booking must match")
-    ap.add_argument("--today", default=date.today().isoformat(), help=argparse.SUPPRESS)
+    ap.add_argument("--today", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--tz", help="property timezone (IANA name or +HH:MM); 'today' is the "
+                                 "property's date, not this computer's. Default: local clock")
     ap.add_argument("--ttl-days", type=float, default=1)
     ap.add_argument("--no-cache", action="store_true")
     a = ap.parse_args()
+    try:
+        a.today = a.today or local_today(a.tz).isoformat()
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     today = date.fromisoformat(a.today)
     d_from, d_to = (today - timedelta(days=a.back)).isoformat(), (today + timedelta(days=a.forward)).isoformat()

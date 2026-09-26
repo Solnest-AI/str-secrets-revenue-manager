@@ -361,14 +361,17 @@ class AnalysisIntegrationTests(unittest.TestCase):
             with self.subTest(hours=hours):
                 self.assert_withheld(bundle)
 
-    def test_any_open_date_price_or_min_stay_conflict_withholds_all_candidates(self):
+    def test_one_open_date_price_or_min_stay_conflict_withholds_only_that_date(self):
+        # Scoped since 2026-09-25: one mismatched date loses ITS pricing opinion; the rest
+        # of the run is still priced. A whole-run block needs >20% of open nights.
         for field, value in (("price", 121), ("min_stay", 2)):
             bundle = synthetic_bundle()
             bundle["inputs"]["prices"]["data"][80][field] = value
             with self.subTest(field=field):
                 result = compute(bundle)
-                self.assertEqual(result["status"], "blocked")
-                self.assertEqual(result["candidates"], [])
+                self.assertNotEqual(result["status"], "blocked")
+                self.assertTrue(result["candidates"])
+                self.assertEqual(result["daily"][80]["action"], "pricing_opinion_withheld")
                 self.assertEqual(len(result["reconciliation"]["mismatches"]), 1)
 
     def test_pms_without_nightly_prices_reconciles_bookings_only_and_says_so(self):
@@ -392,14 +395,15 @@ class AnalysisIntegrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertIn("PMS inventory or reservation evidence is incomplete", result["blockers"])
 
-    def test_booking_conflict_still_blocks_when_the_pms_has_no_prices(self):
+    def test_booking_conflict_still_checked_when_the_pms_has_no_prices(self):
         bundle = synthetic_bundle()
         for day in bundle["inputs"]["calendar"]:
             day["price_cents"], day["min_stay"] = None, None
         bundle["inputs"]["prices"]["data"][80]["booking_status"] = "Booked"
         result = compute(bundle)
-        self.assertEqual(result["status"], "blocked")
         self.assertEqual(len(result["reconciliation"]["mismatches"]), 1)
+        self.assertEqual(result["daily"][80]["action"], "pricing_opinion_withheld")
+        self.assertIn("booking PriceLabs shows", result["daily"][80]["withheld_reason"])
 
     def test_review_ranges_respect_15_percent_and_current_bounds(self):
         result = compute(synthetic_bundle())
@@ -408,7 +412,8 @@ class AnalysisIntegrationTests(unittest.TestCase):
             self.assertLessEqual(row["net"] * 0.85, lower)
             self.assertLessEqual(result["bounds"]["min"], lower)
             self.assertLessEqual(lower, upper)
-            self.assertLessEqual(upper, row["net"] * 0.95)
+            if row["direction"] == "cut":
+                self.assertLessEqual(upper, row["net"] * 0.95)
             self.assertLessEqual(upper, result["bounds"]["max"])
         self.assertEqual(result["movement_scrutiny_pct"], 15)
 

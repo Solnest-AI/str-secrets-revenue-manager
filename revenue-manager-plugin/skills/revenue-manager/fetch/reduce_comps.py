@@ -74,7 +74,7 @@ def _read_env(path):
     out = {}
     p = os.path.expanduser(path)
     if os.path.isfile(p):
-        for line in open(p):
+        for line in open(p, encoding="utf-8-sig"):
             if "=" in line and not line.lstrip().startswith("#"):
                 k, v = line.split("=", 1)
                 out[k.strip()] = v.strip().strip('"').strip("'")

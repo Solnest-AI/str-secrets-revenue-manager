@@ -34,6 +34,7 @@ import urllib.request
 from datetime import date, datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _calendar import local_today  # noqa: E402
 from _cache import cache_dir, cache_name, listing_matches, read_json, write_json  # noqa: E402
 from factcheck import OVERRIDE_COLUMNS, override_facts_from_runs, override_runs  # noqa: E402
 
@@ -57,7 +58,7 @@ def resolve_key() -> str:
     for path in ENV_CANDIDATES:
         p = os.path.expanduser(path)
         if os.path.isfile(p):
-            for line in open(p):
+            for line in open(p, encoding="utf-8-sig"):
                 m = re.match(r"\s*(PRICELABS_API_KEY|PRICELABS_KEY)\s*=\s*(.+?)\s*$", line)
                 if m:
                     return m.group(2).strip('"').strip("'")
@@ -103,10 +104,17 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--listing", required=True)
     ap.add_argument("--pms", default="smartbnb")
-    ap.add_argument("--today", default=date.today().isoformat(), help=argparse.SUPPRESS)
+    ap.add_argument("--today", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--tz", help="property timezone (IANA name or +HH:MM); 'today' is the "
+                                 "property's date, not this computer's. Default: local clock")
     ap.add_argument("--ttl-days", type=float, default=1)
     ap.add_argument("--no-cache", action="store_true")
     a = ap.parse_args()
+    try:
+        a.today = a.today or local_today(a.tz).isoformat()
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     blob, how = load_or_fetch(a.listing, a.pms, a.ttl_days, not a.no_cache)
     data = blob["data"]
