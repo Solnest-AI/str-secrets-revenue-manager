@@ -1034,6 +1034,37 @@ class PriceLabsPmsName(Base):
         with self.assertRaisesRegex(CannotWrite, "under pms 'smartbnb'.*set \"pms\": \"smartbnb\""):
             self.plan(fake, change(listing_prices={"min": 160}))
 
+# Live 2026-09-25 (The Urban Nest, the first real PriceLabs write): PriceLabs stores an override
+# written without a note as reason "", and the re-read flagged "differs on reason" on a write that
+# took exactly. And the confirmation printed one "ok" line per override on the listing (90+).
+class LiveFirstWrite(unittest.TestCase):
+    def test_an_empty_note_is_the_same_as_no_note(self):
+        from _mvp_write import _same_override
+        sent = {"date": "2026-12-03", "price": "105", "price_type": "fixed", "currency": "CAD", "min_stay": 1}
+        live = dict(sent, reason="")
+        self.assertEqual(_same_override(sent, live), [])
+        self.assertEqual(_same_override(dict(sent, reason="event"), live), ["reason"])
+        self.assertEqual(_same_override(sent, dict(live, price="106")), ["price"])
+
+    def test_confirmation_lists_what_changed_and_summarises_the_rest(self):
+        from apply_change import verification_lines
+        journal = {"envelope": {"operations": [{"kind": "override", "date": "2026-12-03"}]},
+                   "verification": ([{"field": f, "ok": True, "live": 1, "want": 1} for f in ("min", "base", "max")]
+                                    + [{"date": f"2025-11-{d:02d}", "ok": True, "differs_on": []} for d in range(1, 29)]
+                                    + [{"date": "2026-12-03", "ok": True, "differs_on": []}])}
+        lines = verification_lines(journal)
+        self.assertIn("  ok  2026-12-03", lines)
+        self.assertTrue(any("31 other fields and dates re-read, unchanged" in l for l in lines), lines)
+        self.assertFalse(any("2025-11-05" in l for l in lines))
+
+    def test_a_bad_row_is_always_named(self):
+        from apply_change import verification_lines
+        journal = {"envelope": {"operations": [{"kind": "override", "date": "2026-12-03"}]},
+                   "verification": [{"date": "2026-12-03", "ok": True, "differs_on": []},
+                                    {"date": "2026-11-01", "ok": False, "differs_on": ["price"]}]}
+        lines = verification_lines(journal)
+        self.assertTrue(any("BAD" in l and "2026-11-01" in l for l in lines), lines)
+
 
 if __name__ == "__main__":
     unittest.main()

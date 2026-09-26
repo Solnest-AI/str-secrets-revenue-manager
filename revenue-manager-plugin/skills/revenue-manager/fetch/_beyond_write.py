@@ -206,12 +206,24 @@ def _same(a, b) -> bool:
     return abs(float(a) - float(b)) < 0.005
 
 
+def _field_same(k, x, y) -> bool:
+    """One field of an override: equal, both blank (None and "" are the same: PriceLabs stores a
+    missing note as "", live 2026-09-25), or the same number. Text that is not a number compares
+    as text instead of raising, because this runs AFTER a write was sent."""
+    if x == y or (x in (None, "") and y in (None, "")):
+        return True
+    if k == "date" or x is None or y is None:
+        return False
+    try:
+        return _same(x, y)
+    except (TypeError, ValueError):
+        return str(x) == str(y)
+
+
 def _same_override(a, b) -> list:
     if a is None or b is None:
         return [] if a is b else ["<presence>"]
-    return sorted(k for k in set(a) | set(b)
-                  if not (a.get(k) == b.get(k) or (k != "date" and a.get(k) is not None
-                                                   and b.get(k) is not None and _same(a[k], b[k]))))
+    return sorted(k for k in set(a) | set(b) if not _field_same(k, a.get(k), b.get(k)))
 
 
 def _bounds_ok(mn, base, mx) -> bool:

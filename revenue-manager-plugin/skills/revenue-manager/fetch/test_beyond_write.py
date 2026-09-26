@@ -912,6 +912,17 @@ class UnitsAndRefusals(Base):
         env = self.plan(FakeBeyond(), change(listing_prices={"min": 170}))
         self.assertEqual(plan_id(env), content_hash(env)[:12])
 
+class OverrideComparisonAfterSend(unittest.TestCase):
+    """This comparison runs after a write was sent: it must never raise, and blank == blank."""
+    def test_blank_note_and_text_fields(self):
+        from _beyond_write import _same_override
+        a = {"date": "2026-12-03", "price": 105}
+        self.assertEqual(_same_override(a, dict(a, note="")), [])
+        self.assertEqual(_same_override(dict(a, note="event"), dict(a, note="Event!")), ["note"])
+        self.assertEqual(_same_override(dict(a, note="event"), dict(a, note="event")), [])
+        self.assertEqual(_same_override(a, dict(a, price="105.00")), [])
+        self.assertEqual(_same_override(a, dict(a, price=106)), ["price"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -91,6 +91,27 @@ def undo_source(arg: str, state: Path) -> Path:
 AUDIT_TABLE = "public.pricelabs_change_log"
 
 
+
+def verification_lines(journal: dict) -> list:
+    """The re-read, said briefly: every field or date the plan changed, any row that does NOT
+    match (always named), then one line for everything else that was re-read unchanged. A live
+    listing carries dozens of past overrides; one line each buried the change (live 2026-09-25)."""
+    ops = (journal.get("envelope") or {}).get("operations") or []
+    touched = {op.get("field") or op.get("date") or op.get("kind") for op in ops}
+    lines, quiet = [], 0
+    for v in journal.get("verification") or []:
+        key = v.get("field") or v.get("date") or v.get("kind")
+        if not v.get("ok"):
+            differs = v.get("differs_on") or []
+            lines.append(f"  BAD {key}" + (f"  differs on {', '.join(differs)}" if differs else ""))
+        elif key in touched:
+            lines.append(f"  ok  {key}")
+        else:
+            quiet += 1
+    if quiet:
+        lines.append(f"  ok  {quiet} other fields and dates re-read, unchanged")
+    return lines
+
 def audit_statement(journal: dict) -> str:
     """One INSERT per operation into the existing change log. Values are literals only."""
     env = journal["envelope"]
@@ -434,8 +455,7 @@ def run_beyond(args, connections: Connections, state: Path, specs) -> int:
         env = journal["envelope"]
         print(f"APPLIED AND VERIFIED: plan {W.plan_id(env)} on Beyond listing "
               f"{env.get('listing_name') or env['target']['listing_id']}")
-        for v in journal["verification"]:
-            print(f"  {'ok ' if v.get('ok') else 'BAD'} {v.get('field') or v.get('date') or v.get('kind')}")
+        print("\n".join(verification_lines(journal)))
         print(f"  undo: apply_change.py rollback --target beyond --journal {Path(journal['journal_path']).name}")
         if not args.no_audit:
             try:
@@ -508,8 +528,7 @@ def main(argv=None) -> int:
             env = journal["envelope"]
             print(f"APPLIED AND VERIFIED: plan {plan_id(env)} on "
                   f"{env.get('listing_name') or env['target']['listing_id']}")
-            for v in journal["verification"]:
-                print(f"  {'ok ' if v['ok'] else 'BAD'} {v.get('field') or v.get('date')}")
+            print("\n".join(verification_lines(journal)))
             print(f"  undo: apply_change.py rollback --journal {Path(journal['journal_path']).name}")
             if not args.no_audit:
                 try:

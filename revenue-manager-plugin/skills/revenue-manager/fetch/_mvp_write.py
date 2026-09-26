@@ -275,6 +275,10 @@ def _price_str(value) -> str:
 
 
 def _same(field: str, a, b) -> bool:
+    # PriceLabs stores an override written without a note as reason "" (live 2026-09-25, the
+    # first real write); "no value" and "empty" are the same thing on a text field.
+    if a in (None, "") and b in (None, ""):
+        return True
     if field in NUMERIC or field in LISTING_FIELDS:
         try:
             return abs(float(a) - float(b)) < 0.005
