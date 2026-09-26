@@ -333,3 +333,39 @@ def direct_build_today(bundle, today):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ArrivalRulesNotExposed(unittest.TestCase):
+    """A PMS that sends the arrival/departure flags on NO night is a named gap, not an unknown
+    calendar; one that sends them on some nights and drops them on others is still refused."""
+
+    def _facts(self, flag_for):
+        from datetime import date, datetime, timezone
+        from _mvp_pms import analyze
+        from _pms_lodgify import day_row, property_row, reservation_row
+        from test_pms_lodgify import BOOK, PROP, ROOM, item
+        days = {f"2026-10-{d:02d}": ("RESERVED" if d in (5, 6, 7) else "AVAILABLE") for d in range(4, 14)}
+        cal = []
+        for i, (k, v) in enumerate(days.items()):
+            row = day_row(item(k), v, "USD")
+            row["closed_for_checkin"] = row["closed_for_checkout"] = flag_for(i)
+            cal.append(row)
+        return analyze(property_row(PROP, ROOM), cal, [reservation_row(BOOK)], [], date(2026, 10, 4), 10,
+                       datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+    def test_no_night_exposes_the_flags_is_a_named_gap(self):
+        facts = self._facts(lambda i: None)
+        codes = {w["code"] for w in facts["warnings"]}
+        self.assertIn("pms_does_not_expose_arrival_rules", codes)
+        self.assertTrue(facts["coverage"]["analysable"])
+
+    def test_flags_on_some_nights_only_are_still_refused_per_night(self):
+        facts = self._facts(lambda i: False if i % 2 == 0 else None)
+        codes = {w["code"] for w in facts["warnings"]}
+        self.assertNotIn("pms_does_not_expose_arrival_rules", codes)
+        self.assertTrue(facts["coverage"]["pms_arrival_rules_exposed"])
+        self.assertFalse(facts["coverage"]["analysable"])
+
+    def test_smoobu_no_longer_assumes_false(self):
+        import _pms_smoobu
+        self.assertIsNone(_pms_smoobu.NO_ARRIVAL_RULES_EXPOSED)

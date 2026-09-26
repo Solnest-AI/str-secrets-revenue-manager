@@ -57,11 +57,11 @@ UA = "RevenueManager/1.0"
 HISTORY_DAYS = 730
 PAGE_SIZE = 100  # documented maximum
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
-# ASSUMPTION, flagged: Smoobu's rates object documents price, min_length_of_stay and available
-# only. No closed-to-arrival/departure field exists in its API, so a night reads as "no arrival or
-# departure restriction exposed" (False). Left as None, the analysis would mark every Smoobu night
-# unknown. If Smoobu hosts use check-in/out-day rules, those nights can read as open when they are not.
-NO_ARRIVAL_RULES_EXPOSED = False
+# Smoobu's rates object documents price, min_length_of_stay and available only. No closed-to-
+# arrival/departure field exists in its API, so the flags are unknown (None), never assumed False.
+# _mvp_pms treats a PMS that exposes the flags on NO night as "rules not exposed" and names that
+# gap on the card instead of marking every night unknown.
+NO_ARRIVAL_RULES_EXPOSED = None
 STATUS = {"reservation": "accepted", "modification of booking": "accepted", "cancellation": "cancelled"}
 CHANNELS = {"airbnb": "airbnb", "booking.com": "booking", "vrbo": "vrbo", "homeaway": "vrbo"}
 

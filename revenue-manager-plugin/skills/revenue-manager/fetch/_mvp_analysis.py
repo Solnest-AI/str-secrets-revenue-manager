@@ -245,6 +245,9 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
     if pms["coverage"].get("pms_rates_exposed") is False:
         notes.append("Your PMS does not expose nightly prices or min-stay, so reconciliation checked "
                      "bookings and availability only; the prices shown are PriceLabs'.")
+    if pms["coverage"].get("pms_arrival_rules_exposed") is False:
+        notes.append("Your PMS does not expose check-in or check-out day rules, so nights are read as "
+                     "having none. If you block arrivals on certain days, check those nights yourself.")
     max_delta, delta_note = movement_cap(context.get("settings", {}))
     if delta_note:
         notes.append(delta_note)

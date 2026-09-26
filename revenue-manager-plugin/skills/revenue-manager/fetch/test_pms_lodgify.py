@@ -192,7 +192,7 @@ class SourceReads(unittest.TestCase):
 
 
 class EndToEnd(unittest.TestCase):
-    def test_runs_through_the_real_analysis_cancelled_excluded_but_restrictions_unknown(self):
+    def test_runs_through_the_real_analysis_cancelled_excluded_restrictions_named_as_a_gap(self):
         start = date(2026, 10, 4)
         st = {f"2026-10-{d:02d}": ("RESERVED" if d in (5, 6, 7) else "AVAILABLE") for d in range(4, 14)}
         cal = [day_row(item(k), v, "USD") for k, v in st.items()]
@@ -200,10 +200,12 @@ class EndToEnd(unittest.TestCase):
         facts = analyze(property_row(PROP, ROOM), cal, [reservation_row(BOOK), reservation_row(cancelled)], [], start, 10,
                         datetime(2026, 10, 1, tzinfo=timezone.utc))
         codes = {w["code"] for w in facts["warnings"]}
-        # The documented gap, stated rather than papered over: Lodgify exposes no closed-to-arrival
-        # or closed-to-departure per night, so the engine cannot call the calendar analysable.
-        self.assertIn("calendar_price_currency_or_restrictions_unknown", codes)
-        self.assertFalse(facts["coverage"]["analysable"])
+        # Lodgify exposes no closed-to-arrival or closed-to-departure per night. That is a named gap
+        # (pms_does_not_expose_arrival_rules), not an unanalysable calendar.
+        self.assertIn("pms_does_not_expose_arrival_rules", codes)
+        self.assertNotIn("calendar_price_currency_or_restrictions_unknown", codes)
+        self.assertFalse(facts["coverage"]["pms_arrival_rules_exposed"])
+        self.assertTrue(facts["coverage"]["analysable"])
         self.assertTrue(facts["coverage"]["reservation_source_trusted"])
         self.assertEqual(facts["coverage"]["scoped_unique_records"], 2)
 

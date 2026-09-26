@@ -583,6 +583,13 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
     rates_exposed = any(row["price_cents"] is not None or row["min_stay"] is not None for row in rows)
     if not rates_exposed:
         warnings["pms_does_not_expose_nightly_rates"] += 1
+    # Same rule for check-in / check-out day restrictions (Lodgify and Smoobu document none per
+    # night): only when NO night carries either flag do they become optional, and the card says so.
+    # A PMS that sends the flags on some nights and drops them on others is still refused per night.
+    restrictions_exposed = any(isinstance(row["closed_for_checkin"], bool)
+                               or isinstance(row["closed_for_checkout"], bool) for row in rows)
+    if not restrictions_exposed:
+        warnings["pms_does_not_expose_arrival_rules"] += 1
     for calendar in rows:
         day = calendar["date"]
         group = inventory.get(day, [])
@@ -595,8 +602,13 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
                 and calendar["price_cents"] >= 0
                 and calendar["min_stay"] is not None
                 and calendar["min_stay"] >= 1
-                and isinstance(calendar["closed_for_checkin"], bool)
-                and isinstance(calendar["closed_for_checkout"], bool)
+                and (
+                    not restrictions_exposed
+                    or (
+                        isinstance(calendar["closed_for_checkin"], bool)
+                        and isinstance(calendar["closed_for_checkout"], bool)
+                    )
+                )
             )
         )
         if not calendar_ok:
@@ -1004,6 +1016,7 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
         "coverage": {
             "calendar_complete": True,
             "pms_rates_exposed": rates_exposed,
+            "pms_arrival_rules_exposed": restrictions_exposed,
             "calendar_days": len(rows),
             "calendar_rows_outside_horizon": len(normalized_days) - len(rows),
             "reservation_source_records": len(reservations),
