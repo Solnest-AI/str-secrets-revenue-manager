@@ -57,7 +57,7 @@ export function registerReviewTools(server: McpServer): void {
         meta: { total: reviews.length, properties: properties.length },
       };
       return { content: [{ type: "text", text: formatResponse(payload) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 
   server.registerTool("hospitable_respond_to_review", {
@@ -72,6 +72,6 @@ export function registerReviewTools(server: McpServer): void {
     try {
       const res = await getHospitable().post(`/reviews/${reviewId}/response`, { body });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 }

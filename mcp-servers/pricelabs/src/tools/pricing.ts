@@ -10,7 +10,7 @@ export function registerPricingTools(server: McpServer): void {
     inputSchema: {
       listings: z.array(z.object({
         id: z.string().describe("Listing ID"),
-        pms: z.string().describe("PMS name (e.g. 'airbnb', 'hospitable')"),
+        pms: z.string().describe("PMS name from list_listings (e.g. 'airbnb'; Hospitable uses 'smartbnb')"),
         dateFrom: z.string().describe("Start date (YYYY-MM-DD) — current or future dates only"),
         dateTo: z.string().describe("End date (YYYY-MM-DD)"),
         reason: z.boolean().optional().describe("Include pricing reason/explanation (default false)"),
@@ -21,7 +21,7 @@ export function registerPricingTools(server: McpServer): void {
     try {
       const res = await getPriceLabs().post("/v1/listing_prices", { listings });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 
   server.registerTool("pricelabs_get_rate_plans", {
@@ -39,6 +39,6 @@ export function registerPricingTools(server: McpServer): void {
       if (pms_name) params.pms_name = pms_name;
       const res = await getPriceLabs().get("/v1/fetch_rate_plans", { params });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 }

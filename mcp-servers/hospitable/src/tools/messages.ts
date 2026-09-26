@@ -20,7 +20,7 @@ export function registerMessageTools(server: McpServer): void {
       if (per_page) params.per_page = per_page;
       const res = await getHospitable().get(`/reservations/${reservationId}/messages`, { params });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 
   server.registerTool("hospitable_send_message", {
@@ -35,6 +35,6 @@ export function registerMessageTools(server: McpServer): void {
     try {
       const res = await getHospitable().post(`/reservations/${reservationId}/messages`, { body });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 }
