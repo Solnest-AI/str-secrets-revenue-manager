@@ -3,6 +3,8 @@
 
     python3 fetch/setup_properties.py --markup airbnb=16 --markup vrbo=20 --dry-run
     python3 fetch/setup_properties.py --markup airbnb=16 --markup vrbo=20
+    python3 fetch/setup_properties.py --markup airbnb=16 --min-price "Lake House=140"
+    python3 fetch/setup_properties.py --markup airbnb=16 --pricing-tool beyond   (Beyond users)
 
 The 90-day runner will not price a property without one `property_config` row that maps it
 to PriceLabs (and RankBreeze, if connected) and carries the operator's channel markups. A
@@ -20,6 +22,14 @@ ratio is NOT a markup, so never infer it. Airbnb is required; other channels are
 
 Nothing here changes a price. Reads use the runner's read-only transport. The only writes are
 the migration files and the property_config upsert, both to the attendee's own Supabase.
+
+Each row also records who owns the nightly prices, `pricing_tool`: "pricelabs" when the
+property maps to a PriceLabs listing, "beyond" when the operator says Beyond sets them
+(--pricing-tool beyond; Beyond is not detected from an API here), else null (the PMS owns them).
+The PMS calendar writer refuses a PMS price write while a pricing tool owns the listing. An
+optional operator floor, `min_price` (--min-price "<property id or exact name>=<amount>", repeat
+per property), is the floor the calendar writer uses when the PMS reports none; without any
+floor it refuses price cuts. A property not named keeps whatever min_price it already has.
 
 Exit 0: rows written (or, with --dry-run, shown). Unmapped properties are listed loudly.
 Exit 2: cannot set up (no Supabase connection, no key for the chosen PMS, nothing mapped).
@@ -84,6 +94,51 @@ def parse_markups(items) -> dict:
     return out
 
 
+def parse_min_prices(items) -> dict:
+    """{property id or exact name: floor in the property's own currency}, from
+    --min-price "<property>=<amount>". Never a portfolio-wide number: floors are per property."""
+    out = {}
+    for item in items or []:
+        if "=" not in str(item):
+            raise SetupError(f'--min-price takes "<property id or exact name>=<amount>" (got {item!r})')
+        who, value = str(item).rsplit("=", 1)
+        who = who.strip()
+        if not who:
+            raise SetupError(f"--min-price {item!r} names no property")
+        if who.casefold() in {k.casefold() for k in out}:
+            raise SetupError(f"--min-price given twice for {who}")
+        try:
+            amount = float(value)
+        except ValueError:
+            raise SetupError(f"--min-price for {who}: {value!r} is not a number") from None
+        if not math.isfinite(amount) or amount <= 0:
+            raise SetupError(f"--min-price for {who} must be above zero")
+        out[who] = amount
+    return out
+
+
+def match_min_prices(min_prices: dict, props: list) -> dict:
+    """{property id: floor}. Every name given must match exactly one property: a floor that
+    silently lands nowhere is a floor the operator thinks they have and do not."""
+    out = {}
+    for who, amount in min_prices.items():
+        hits = [p for p in props if str(p.get("id")) == who
+                or str(p.get("name") or "").casefold() == who.casefold()]
+        if len(hits) != 1:
+            raise SetupError(f"--min-price {who!r} matches {len(hits)} listed properties; use the exact "
+                             "property id or name")
+        out[str(hits[0]["id"])] = amount
+    return out
+
+
+def pricing_tool_for(mapped_to_pricelabs: bool, stated: str = "auto"):
+    """PriceLabs when the property maps to a PriceLabs listing; Beyond when the operator says so;
+    otherwise None (the PMS owns the prices)."""
+    if mapped_to_pricelabs:
+        return "pricelabs"
+    return "beyond" if stated == "beyond" else None
+
+
 def airbnb_id(prop: dict):
     ids = [str(x.get("platform_id")) for x in prop.get("listings") or []
            if str(x.get("platform", "")).lower() == "airbnb" and x.get("platform_id")]
@@ -103,12 +158,15 @@ PRICELABS_GAP = ("PriceLabs is not connected, so this property has no pricing-to
 
 
 def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_NAME, pms_source="hospitable",
-                   intellihost=None, pricelabs=True) -> dict:
+                   intellihost=None, pricelabs=True, pricing_tool="auto", min_price=None) -> dict:
     settings = {
         "pms_source": pms_source,
         # Always written (null when mapped) so a re-run after connecting PriceLabs clears it:
         # the upsert MERGES settings, it never drops a key.
         "pricing_gap": None if pricelabs else PRICELABS_GAP,
+        # Always written for the same reason: the calendar writer reads it to refuse PMS price
+        # writes that the pricing tool would overwrite on its next sync.
+        "pricing_tool": pricing_tool_for(pricelabs, pricing_tool),
         "max_delta_pct": MAX_DELTA,
         "channel_markup_pct": dict(markups),
         "channel_markup_source": {
@@ -126,6 +184,8 @@ def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_N
         settings["rankbreeze_listing_id"] = rankbreeze
     if intellihost:
         settings["intellihost_property_id"] = intellihost
+    if min_price is not None:
+        settings["min_price"] = float(min_price)
     return settings
 
 
@@ -214,6 +274,7 @@ def rankbreeze_listings(client: ReadClient, url: str) -> list:
 
 
 PMS_LABEL = {"hospitable": "Hospitable", "guesty": "Guesty", "ownerrez": "OwnerRez"}
+PRICE_OWNER = {"pricelabs": "PriceLabs", "beyond": "Beyond"}
 
 
 def main(argv=None) -> int:
@@ -221,6 +282,10 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--markup", action="append", default=[], help="channel=percent, e.g. airbnb=16 (repeat)")
     ap.add_argument("--dry-run", action="store_true", help="show the rows; write nothing")
+    ap.add_argument("--min-price", action="append", default=[],
+                    help='operator floor per property: "<property id or exact name>=<amount>" (repeat)')
+    ap.add_argument("--pricing-tool", choices=("auto", "beyond"), default="auto",
+                    help="auto: PriceLabs when mapped, else the PMS owns prices; beyond: Beyond sets them")
     ap.add_argument("--pms", default="auto", help="auto (the one connected), hospitable, guesty or ownerrez")
     ap.add_argument("--env-file", action="append", default=[])
     default_cache = Path(os.environ.get("RC_CACHE_DIR", str(Path.home() / ".cache/revenue-manager")))
@@ -228,6 +293,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     try:
         markups = parse_markups(args.markup)
+        min_prices = parse_min_prices(args.min_price)
         connections = Connections(env_files=args.env_file)
         supabase = connections.supabase()
         if not supabase:
@@ -252,6 +318,7 @@ def main(argv=None) -> int:
                      sources.pages("/properties", {"include": "listings"}, normalize_property))["data"]
         pl_names = sources.pricelabs_inventory() if has_pricelabs else {}
         props = [p for p in inventory if p.get("listed") is not False]
+        floors = match_min_prices(min_prices, props)
         rb, rb_note = [], "RankBreeze not connected (ranking will show as a gap on each card)"
         url = connections.rankbreeze_url()
         if url:
@@ -289,7 +356,8 @@ def main(argv=None) -> int:
             rows.append({"property_id": p["id"], "display_name": p.get("name"),
                          "settings": build_settings(p["id"], ab, match_rankbreeze(ab, rb) if rb else None, markups, now,
                                                     pms_name=pl_pms, pms_source=pms, intellihost=ih_map.get(ab or ""),
-                                                    pricelabs=has_pricelabs)})
+                                                    pricelabs=has_pricelabs, pricing_tool=args.pricing_tool,
+                                                    min_price=floors.get(str(p["id"])))})
         print(f"{label}: {len(props)} listed propert{'y' if len(props) == 1 else 'ies'}. {rb_note}."
               + (f" {ih_note}." if ih_note else ""))
         if not has_pricelabs:
@@ -300,7 +368,9 @@ def main(argv=None) -> int:
             s = r["settings"]
             print(f"  ✅ {r['display_name']}: PriceLabs {pl_mark}  RankBreeze {'✅' if 'rankbreeze_listing_id' in s else '—'}  "
                   f"IntelliHost {'✅' if 'intellihost_property_id' in s else '—'}  "
-                  f"Airbnb id {'✅' if 'airbnb_listing_id' in s else '—'}")
+                  f"Airbnb id {'✅' if 'airbnb_listing_id' in s else '—'}  "
+                  f"Prices set by {PRICE_OWNER.get(s['pricing_tool'], label)}"
+                  + (f"  Min {s['min_price']:g}" if "min_price" in s else ""))
         for name, why in missing:
             print(f"  ❌ {name}: NOT IN PRICELABS under the same {label} id ({why}). The runner cannot price it.")
         if not rows:
