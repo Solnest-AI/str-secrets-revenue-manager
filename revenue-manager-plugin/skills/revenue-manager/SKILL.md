@@ -389,7 +389,7 @@ After the recommendations, **offer** it, don't auto-generate: *"Want a spreadshe
    uv run --python 3.13 python fetch/apply_change.py plan --target <TARGET> --change <change file>
    ```
    Show the operator the card(s) it prints, re-checked against the safety layer (bounds, max-delta, currency), and ask whether to apply.
-   **Say the test status out loud.** No target has had a live-tested write yet (PriceLabs and Hospitable are being tested before the summit). A PMS or Beyond card prints `first live write for <Name>: read the after-values carefully.` Read that line to the operator word for word before asking, and say the same for PriceLabs until this paragraph changes.
+   **Say the test status out loud.** PriceLabs and Hospitable writes are live-tested (2026-09-25). Every other PMS and Beyond card prints `first live write for <Name>: read the after-values carefully.` Read that line to the operator word for word before asking.
 3. **On a plain yes, apply:**
    ```bash
    uv run --python 3.13 python fetch/apply_change.py apply --target <TARGET> --plan <PLAN_ID>
@@ -417,7 +417,7 @@ Follow `audit.md`: one `pricelabs_change_log` row per field/date change (the wri
 
 - **No silent writes, no raw writes.** Every change is shown on a card, applied only on a plain yes, only through `apply_change.py`, and verified by re-reading. A tool the writer can't reach gets exact by-hand steps.
 - **Change the price where it lives**: PriceLabs or Beyond when one manages the listing; a PMS target only when the PMS prices it itself.
-- **Say "first live write for <Name>: read the after-values carefully" out loud** on every card until that target has a live-tested write.
+- **Say "first live write for <Name>: read the after-values carefully" out loud** whenever a card prints it (every target except PriceLabs and Hospitable).
 - **PMS calendar = ground truth** for what's listed. Per property, measure which PriceLabs field matches it before trusting it.
 - **Track ask (calendar) AND cleared (ADR) separately.** Cleared runs higher.
 - **Markup is operator-stated, per channel** (`channel_markup_pct`). Never inferred from a price gap.

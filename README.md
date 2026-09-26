@@ -53,7 +53,7 @@ yet, so check the numbers on your first run.
 
 | Tool | Reading your data | Changing a price |
 |---|---|---|
-| Hospitable | Live-tested | Built from docs (being live-tested before the summit) |
+| Hospitable | Live-tested | Live-tested (write, verify, undo) |
 | Guesty | Live-tested | Built from docs |
 | OwnerRez | Live-tested | Built from docs |
 | Hostaway | Built from docs | Built from docs |
@@ -61,16 +61,16 @@ yet, so check the numbers on your first run.
 | Uplisting | Built from docs | Built from docs |
 | Smoobu | Built from docs | Built from docs |
 | Hostfully | Built from docs | Built from docs |
-| PriceLabs | Live-tested | Not live-tested yet (being tested before the summit) |
+| PriceLabs | Live-tested | Live-tested (write, verify, undo) |
 | Beyond | Built from docs | Built from docs |
 | RankBreeze | Live-tested | Never. Read-only |
 | IntelliHost | Live-tested | Never. Read-only |
 
 
-- **No price change has been live-tested yet.** Until one has, every change card says
-  "first live write for PriceLabs: read the after-values carefully" (with your tool's name),
-  and Claude says it out loud. Do that. We'll update this table as each tool gets its first
-  real write.
+- **PriceLabs and Hospitable writes are live-tested** (2026-09-25: one night written, read back,
+  undone and read back again). Every other tool's change card says "first live write for <Name>:
+  read the after-values carefully", and Claude says it out loud. Do that. We'll update this table
+  as each tool gets its first real write.
 - **Every change goes through one safe writer.** It checks nothing moved since the card,
   applies on your yes, reads it back, and can undo it in one step. It never pushes a change
   any other way. If it can't reach your tool, you get the exact change to make by hand.
