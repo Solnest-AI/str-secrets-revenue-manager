@@ -86,7 +86,9 @@ def script_of(cmd: str) -> str | None:
 
 def long_flags(cmd: str) -> list[str]:
     # strip anything after a shell comment or a redirect before reading flags
-    body = cmd.split("#")[0].split(">")[0]
+    # Placeholders like <file> or <where the price lives> are not redirects: drop them before
+    # cutting at a real `>` redirect, or every flag after a placeholder goes unchecked.
+    body = re.sub(r"<[^<>]*>", "X", cmd.split("#")[0]).split(">")[0]
     # Only the script's own flags: a launcher prefix like `uv run --python 3.13 python x.py`
     # carries flags that belong to uv, not to the script.
     m = re.search(r"(?:python3|python)\s+\S+\.py", body)

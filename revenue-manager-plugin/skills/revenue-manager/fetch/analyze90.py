@@ -333,7 +333,10 @@ def parser():
     ap.add_argument("--days", type=int, default=90, help="Forward calendar days, default 90 (7-90)")
     ap.add_argument("--pricing", default="auto", choices=("auto", "pricelabs", "beyond"),
                     help="auto (the property's setup), pricelabs or beyond")
-    ap.add_argument("--pms", default="auto", help="auto (the one connected), hospitable, guesty or ownerrez")
+    from _pms_registry import SUPPORTED as PMS_SUPPORTED
+    ap.add_argument("--pms", default="auto",
+                    help="auto (the one connected; required when two PMSs are connected), or one of: "
+                         + ", ".join(PMS_SUPPORTED))
     ap.add_argument("--start", help="Assert property local current date, YYYY-MM-DD")
     default_cache = Path(
         os.environ.get("RC_CACHE_DIR", str(Path.home() / ".cache/revenue-manager"))

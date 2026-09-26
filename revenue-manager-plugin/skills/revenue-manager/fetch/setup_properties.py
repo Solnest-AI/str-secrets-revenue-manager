@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""First-run setup for the summit Revenue Manager (Hospitable + PriceLabs attendees).
+"""First-run setup for the summit Revenue Manager (any of the 8 PMSs, with PriceLabs, Beyond or PMS pricing).
 
     python3 fetch/setup_properties.py --markup airbnb=16 --markup vrbo=20 --dry-run
     python3 fetch/setup_properties.py --markup airbnb=16 --markup vrbo=20
@@ -329,7 +329,10 @@ def main(argv=None) -> int:
     ap.add_argument("--pricing", "--pricing-tool", dest="pricing", choices=("auto", "pricelabs", "beyond"),
                     default="auto", help="who sets the prices: auto (PriceLabs if connected, else Beyond if "
                     "connected, else the PMS), pricelabs, or beyond (maps each property to its Beyond listing)")
-    ap.add_argument("--pms", default="auto", help="auto (the one connected), hospitable, guesty or ownerrez")
+    from _pms_registry import SUPPORTED as PMS_SUPPORTED
+    ap.add_argument("--pms", default="auto",
+                    help="auto (the one connected; required when two PMSs are connected), or one of: "
+                         + ", ".join(PMS_SUPPORTED))
     ap.add_argument("--env-file", action="append", default=[])
     default_cache = Path(os.environ.get("RC_CACHE_DIR", str(Path.home() / ".cache/revenue-manager")))
     ap.add_argument("--db", type=Path, default=default_cache / "workbench.sqlite3")
