@@ -191,9 +191,6 @@ class BookingFunnelTests(unittest.TestCase):
         self.assertNotIn("2025-12", result["months"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class OfficialMcpFunnelTests(unittest.TestCase):
     """RankBreeze's official hosted MCP (get_listing_metrics_summary, interval=daily), measured
@@ -238,3 +235,6 @@ class OfficialMcpFunnelTests(unittest.TestCase):
         ReadClient._read_only("rankbreeze", "rpc", "POST",
                               {"method": "tools/call", "params": {"name": "get_listing_metrics_summary"}},
                               "https://app.rankbreeze.com/api/mcp/x")
+
+if __name__ == "__main__":
+    unittest.main()

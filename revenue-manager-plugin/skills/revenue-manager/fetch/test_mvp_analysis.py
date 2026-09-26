@@ -523,9 +523,6 @@ class OfflineCliTests(unittest.TestCase):
             socket.assert_not_called()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class MarketRollover(unittest.TestCase):
     """After UTC midnight PriceLabs' market data starts at tomorrow while the property is
@@ -562,3 +559,6 @@ class MarketRollover(unittest.TestCase):
         def probe(start):
             raise CannotAnalyze("Neighborhood data is missing")
         self.assertEqual(market_start(probe, date(2026, 9, 23)), (date(2026, 9, 23), None))
+
+if __name__ == "__main__":
+    unittest.main()

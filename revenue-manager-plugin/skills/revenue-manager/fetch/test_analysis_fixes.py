@@ -339,9 +339,6 @@ def direct_build_today(bundle, today):
                  s["funnel"], s["rankings"], s["context"], AS_OF, today=today)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ArrivalRulesNotExposed(unittest.TestCase):
     """A PMS that sends the arrival/departure flags on NO night is a named gap, not an unknown
@@ -405,3 +402,6 @@ class HospitableMinorUnits(unittest.TestCase):
         row = {"date": "2026-10-04", "price_cents": 1500000, "currency": "JPY", "min_stay": 2,
                "available": True, "status_reason": "AVAILABLE"}
         self.assertEqual(normalize_calendar([row])[0]["price_cents"], 1500000)
+
+if __name__ == "__main__":
+    unittest.main()
