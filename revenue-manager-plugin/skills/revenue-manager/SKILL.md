@@ -372,12 +372,25 @@ Pricing stack (base-anchored, with event/weekend/seasonal/last-minute/orphan/far
 
 ## Step 7: Present recommendations (every one clears the safety layer + the framework)
 
+### 7.0 One block per property (required, every run)
+
+Read `framework.md` once per session before you write the recommendations. Then give every property the runner analysed its own block, in this order, taken from its card. A portfolio summary may come first, but it never replaces the blocks, and nothing in a block is dropped to save space.
+
+1. **Header:** name, currency and the card's status (`analysable` / `degraded` / `blocked`). A degraded or blocked card's gaps go right under it, first.
+2. **Flywheel:** one line with all four spokes as the card prints them, in order: Visibility, Bookings, Reviews, Ranking (ok or BREAK and the number that shows it), then the card's diagnosis.
+3. **Data:** how old the PriceLabs numbers are (a `STALE PRICELABS DATA` warning goes first), the comp count N, and the markups line with the channel the market comparison used.
+4. **Min price:** the card's `Recommended min price` line with its number, even when it says keep.
+5. **Next 30 days:** occupancy vs the market, and the open Airbnb price vs the matched p50/p90, from the card's table. That is the ask side. The runner does not print a realized (cleared) ADR yet: say so if asked, and never work one out by hand.
+6. **Changes:** rule changes first, then DSO suggestions, then flagged existing DSOs (7.1), each with its comp count and % move; or "none".
+
+**Before you send, check:** every analysed property has a block with all six parts; every change shows N comps, its % move and a `⚠️ large move, confirm` label when it passes the cap; a delete is asked separately; the message ends with the plain question (2.6) and the spreadsheet offer (7.5). Anything missing: fix the message first.
+
 ```
 Property:        <name>  (<currency>)
 Change:          <field> from <old (PMS calendar = ground truth)> to <new>   (<+/- % move>)
 Nearest bound:   min <min> / max <max>   <flag if outside or within 5%>
 Comp count:      <N>  (<same-bedroom subset>)
-Ask vs cleared:  ask <calendar> / ADR <cleared>
+Ask vs market:   open Airbnb <ask> vs matched p50/p90 <market> (the runner has no cleared ADR yet)
 Reasoning:       <plain-language inputs: comps, pacing/STLY, events, lead time, orphan>
 Prior attempts:  <from pricelabs_change_log, if any>
 Expected impact: <occupancy % / RevPAR direction>

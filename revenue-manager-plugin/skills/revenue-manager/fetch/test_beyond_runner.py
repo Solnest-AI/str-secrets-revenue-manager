@@ -216,7 +216,7 @@ class Card(unittest.TestCase):
         # read-only, and only Beyond + AirROI were called
         self.assertEqual([r for r in fake.requests if r[0] != "GET"], [])
         self.assertEqual(set(run["metrics"]["by_provider"]), {"beyond", "airroi"})
-        self.assertIn("external writes 0", brief)
+        self.assertIn("writes to PriceLabs or the PMS 0", brief)
         self.assertEqual(facts["rule_effectiveness"], [])
         self.assertIsNone(facts["pile"])
 

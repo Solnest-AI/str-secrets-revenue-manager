@@ -1144,7 +1144,7 @@ def render(pack, run_id, metrics):
             *pack["limitations"],
             f"HTTP calls: {metrics['http_calls']} {metrics['by_provider']}; "
             f"cache hits {metrics['cache_hits']}; "
-            f"received bytes {metrics['response_bytes']}; external writes 0.",
+            f"received bytes {metrics['response_bytes']}; writes to PriceLabs or the PMS 0 (the PriceLabs suggestions list is saved to your Supabase).",
             "Daily rows and source timestamps are saved in the workbench; "
             "--show RUN_ID --details reads them offline.",
         ]
