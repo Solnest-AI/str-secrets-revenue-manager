@@ -1,14 +1,18 @@
 # PMS, pricing-tool and enrichment field reference
 
 Part of the revenue-manager skill. SKILL.md says when to read this file. Every rule here is
-still binding. Deeper, measured references sit next to this file: `hospitable.md`,
-`pricelabs.md`, `intellihost.md`, `ranking-rankbreeze-vs-intellihost.md`.
+still binding. Deeper references sit next to this file, one per PMS and pricing tool
+(`hospitable.md`, `guesty.md`, `ownerrez.md`, `hostaway.md`, `lodgify.md`, `uplisting.md`,
+`smoobu.md`, `hostfully.md`, `pricelabs.md`, `beyond.md`),
+each citing every endpoint the code calls as VERIFIED-LIVE or DOCS-ONLY, plus
+`intellihost.md` and `ranking-rankbreeze-vs-intellihost.md`.
 
 **Writes are not in this file on purpose.** Every price change, for every PMS and pricing
-tool, goes through the safe writer (`fetch/apply_change.py plan`, then `apply` on a plain
-yes, `rollback` to undo). Never call a PMS or pricing-tool write tool directly. If the
-writer cannot reach a tool yet, give the operator the exact change to make by hand
-(where, which field, old value, new value), never a raw MCP write. See SKILL.md Step 8.
+tool, goes through the safe writer (`fetch/apply_change.py plan --target <where the price
+lives>`, then `apply` on a plain yes, `rollback` to undo, `verify` to re-check a PMS that
+applies late). Never call a PMS or pricing-tool write tool directly. If the writer cannot
+reach a tool, give the operator the exact change to make by hand (where, which field, old
+value, new value), never a raw MCP write. See SKILL.md Step 8.
 
 ## PMS field reference (platform-specific parsing)
 
@@ -23,8 +27,23 @@ writer cannot reach a tool yet, give the operator the exact change to make by ha
 | Uplisting | reservations | calendar endpoint |
 | Smoobu | reservations (apartments) | rates endpoint |
 
-Hospitable, Guesty and OwnerRez have tested read adapters in the runner (`fetch/_pms_*.py`,
-`fetch/_mvp_pms.py`). For the others, read through the connected tools directly.
+All eight have read adapters in the runner and a calendar write target (`fetch/_pms_*.py`,
+`fetch/_mvp_pms.py`). Hospitable, Guesty and OwnerRez reads are live-tested; Hostaway,
+Lodgify, Uplisting, Smoobu and Hostfully are built from each vendor's docs (DOCS-ONLY until a
+live account runs them). No write target has a live-tested write yet.
+
+**Named gaps, by PMS (the runner says each one on the card and keeps going):**
+
+| Gap | PMS | What the runner does |
+|---|---|---|
+| No reviews API | Lodgify, Uplisting, Smoobu | Reviews spoke is `PRICED WITHOUT reviews (...)`, never "zero reviews" |
+| No check-in / check-out day rules | Lodgify, Smoobu | Nights read as having none; the card says so. Check blocked arrival days by hand |
+| No listing min in the API | all eight | The writer's floor is `property_config.settings.min_price` (`setup_properties.py --min-price`); without one, a PMS price cut is refused |
+| No "which pricing tool owns this" flag | all eight | `property_config.settings.pricing_tool` decides; a PMS price write on a PriceLabs or Beyond listing is refused |
+| Writes apply late | Hospitable, OwnerRez, Uplisting | The writer re-reads on the PMS's schedule; `apply_change.py verify` re-checks later, read-only |
+| Currency without two decimals | Hospitable | Blocked (JPY, KRW, VND read 100x low; KWD, BHD 10x high) until converted end to end |
+
+Two PMS keys in `.env` → `--pms` is required on setup and on every run.
 
 ### Hostaway
 - Properties → `listings` · Bookings → `reservations`
@@ -41,12 +60,14 @@ Hospitable, Guesty and OwnerRez have tested read adapters in the runner (`fetch/
 
 ### Hostfully
 - Bookings called "leads" (Hostfully terminology)
-- Requires `agencyUid` on every call
+- `agencyUid` goes on the agency-wide property list only; every other call is scoped by
+  `propertyUid` (`hostfully.md`)
 
 ### Hospitable
 - Calendar **read** (GROUND TRUTH for listed price): `hospitable_get_property_calendar` →
   `data.days[]` with `date`, `min_stay`, `status.reason` (`RESERVED`/`AVAILABLE`),
-  `price.amount`. **`price.amount` is in cents: divide by 100.**
+  `price.amount`. **`price.amount` is in the currency's minor unit: divide by 100 for
+  two-decimal currencies.** The runner blocks a Hospitable property in any other currency.
 - **History:** `hospitable_list_reservations` returns ONLY upcoming/active reservations. Past
   and completed bookings are NOT there. Route all historical and cleared-rate pulls (booked
   nights by month, realized ADR by month, YoY/STLY, channel-mix history) to
@@ -65,18 +86,27 @@ Hospitable, Guesty and OwnerRez have tested read adapters in the runner (`fetch/
 - The Airbnb id lives only on the property detail (`listing_numbers.Airbnb`).
 
 ### Lodgify
-- Bookings → `reservations/bookings` · fields: `id`, `arrival`, `departure`, `total_amount`, `source`, `status`
+- Bookings → `reservations/bookings` (v2, no property filter: paged account-wide, filtered
+  locally) · `status`, `canceled_at`, `source`, `subtotals.stay` (`lodgify.md`)
+- One room type, one unit per property; anything else is refused. No reviews, no
+  check-in/out day rules.
 
 ### Uplisting
-- Auth: `Authorization: Basic <base64(api_key)>`
+- Auth: `Authorization: Basic <base64(api_key)>` (the key alone, no colon)
+- Writes are asynchronous (202, applied within about a minute). No reviews endpoint.
 
 ### Smoobu
-- Properties called "apartments" · Auth header is `Api-Key` (exact case)
+- Properties called "apartments" · Every request is HMAC-signed (`X-API-Key`, `X-Timestamp`,
+  `X-Nonce`, `X-Signature`), so both `SMOOBU_API_KEY` and `SMOOBU_API_SECRET` are required.
+  The legacy single `Api-Key` header is switched off on 2026-10-31 and is never sent
+  (`smoobu.md`). No reviews, no check-in/out day rules.
 
-### No-rates mode
+### No-rates mode (and no day rules)
 If a PMS returns NO nightly price or min-stay on any night, the runner switches to no-rates
 mode: reconciliation checks bookings and availability only, and the card says it priced
 without the PMS rate. A PMS that drops SOME prices is refused, not treated as no-rates.
+Check-in / check-out day rules follow the same rule: on NO night → a named gap on the card,
+on some nights only → those nights are refused.
 
 ## Pricing-tool field reference
 
@@ -117,8 +147,10 @@ call them directly.
   `build/build-pricing-ops-mcp.md`. It exposes listings, the price + availability calendar,
   compsets, Beyond's recommendations, and per-listing customizations (base/min/max price,
   min/max stay, fees, time-based adjustments).
-- Changes go through the safe writer like every other tool. Until the writer supports Beyond,
-  give the operator the exact change to make in Beyond's dashboard.
+- Changes go through the safe writer like every other tool: `apply_change.py plan --target
+  beyond` (min/base/max and one-date overrides; per-date min stay is refused, see
+  `beyond.md`). The runner reads it with `analyze90.py --pricing beyond`, a degraded card
+  with every missing input named.
 - Often the PMS calendar already contains Beyond's pushed prices, so you can also read from the
   PMS side.
 

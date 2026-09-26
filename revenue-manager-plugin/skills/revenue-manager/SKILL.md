@@ -40,34 +40,35 @@ Your job, in order:
 **Where the detail lives.** This file is the core. The plugin's `references/` folder (from this skill's folder: `../../references/`) holds the rest, and every rule in it is binding:
 - `framework.md`: pricing stack, lead-time table, 5-question decision framework, comp-set discipline, 30-day daily review, red-flag table, troubleshooting, KPIs, revenue levers, owner reports
 - `pms-and-tools.md`: per-PMS parsing notes, PriceLabs/Beyond/Wheelhouse fields, RankBreeze, IntelliHost, Turno/Breezeway, AirROI
-- `hospitable.md`, `pricelabs.md`, `intellihost.md`, `ranking-rankbreeze-vs-intellihost.md`: measured deep references
+- One file per PMS and pricing tool (`hospitable.md`, `guesty.md`, `ownerrez.md`, `hostaway.md`, `lodgify.md`, `uplisting.md`, `smoobu.md`, `hostfully.md`, `pricelabs.md`, `beyond.md`): every endpoint the code calls, marked VERIFIED-LIVE or DOCS-ONLY, units, and the named gaps
+- `intellihost.md`, `ranking-rankbreeze-vs-intellihost.md`: the ranking tools, measured
 - `workbook.md`: the spreadsheet deliverable · `audit.md`: the Supabase audit writes
 
-## Step 0 — Detect the user's stack (do this FIRST, every time)
+## Step 0: Detect the user's stack (do this FIRST, every time)
 
 Scan the available MCP tools in the current session and identify what's connected, by tool-name prefix.
 
-### PMS detection (REQUIRED — one of these)
+### PMS detection (REQUIRED, one of these)
 
-| PMS | Tool prefix |
-|---|---|
-| Hostaway | `hostaway_` or `mcp__hostaway__` |
-| Guesty (Pro) | `guesty_` or `mcp__guesty__` |
-| Hostfully | `hostfully_` or `mcp__hostfully__` |
-| Hospitable | `hospitable_` or `mcp__hospitable__` |
-| OwnerRez | `ownerrez_` or `mcp__ownerrez__` |
-| Lodgify | `lodgify_` or `mcp__lodgify__` |
-| Uplisting | `uplisting_` or `mcp__uplisting__` |
-| Smoobu | `smoobu_` or `mcp__smoobu__` |
+| PMS | Tool prefix | Runner reads |
+|---|---|---|
+| Hospitable | `hospitable_` or `mcp__hospitable__` | live-tested |
+| Guesty (Pro) | `guesty_` or `mcp__guesty__` | live-tested |
+| OwnerRez | `ownerrez_` or `mcp__ownerrez__` | live-tested |
+| Hostaway | `hostaway_` or `mcp__hostaway__` | built from vendor docs |
+| Lodgify | `lodgify_` or `mcp__lodgify__` | built from vendor docs |
+| Uplisting | `uplisting_` or `mcp__uplisting__` | built from vendor docs |
+| Smoobu | `smoobu_` or `mcp__smoobu__` | built from vendor docs |
+| Hostfully | `hostfully_` or `mcp__hostfully__` | built from vendor docs |
 
-Guesty For Hosts is sunset (2026-01-15): route those operators to Guesty Pro.
+Guesty For Hosts is sunset (2026-01-15): route those operators to Guesty Pro. No write target has a live-tested write yet (see Step 8).
 
-### Pricing-tool detection (REQUIRED — one of these)
+### Pricing-tool detection (REQUIRED, one of these)
 
 | Tool | Tool prefix | Status |
 |---|---|---|
-| PriceLabs | `pricelabs_` or `mcp__pricelabs__` | **Primary: tested, full comp engine** |
-| Beyond | `beyond_` or `mcp__beyond__` | Supported: reads through the connected server; changes through the safe writer or exact by-hand steps |
+| PriceLabs | `pricelabs_` or `mcp__pricelabs__` | **Primary: reads live-tested, full comp engine**; changes through the safe writer (`--target pricelabs`) |
+| Beyond | `beyond_` or `mcp__beyond__` | Supported, built from Beyond's docs: runner `--pricing beyond` (a degraded card, every gap named) and writer `--target beyond` |
 | Wheelhouse | `wheelhouse_` or `mcp__wheelhouse__` | Not in the summit kit: detect-and-use for reads, by-hand steps for changes |
 
 ### Supabase detection (audit trail)
@@ -98,8 +99,8 @@ Never hard dependencies and never in a critical path. Missing → you still prod
 Open your first response with:
 ```
 🔍 Stack detected:
-  PMS:        <name | ❌ none — REQUIRED>
-  Pricing:    <PriceLabs | Beyond | Wheelhouse | ❌ none — REQUIRED>
+  PMS:        <name | ❌ none (REQUIRED)>
+  Pricing:    <PriceLabs | Beyond | Wheelhouse | ❌ none (REQUIRED)>
   Supabase:   <MCP | REST-env | ❌ none (audit logging disabled)>
   Ranking:    <RankBreeze | IntelliHost | ⚠️ none (ranking = manual check)>
   PL extras:  <official MCP: pile + rule check [+ Market Research] | none>
@@ -118,22 +119,36 @@ Open your first response with:
 
 Do not continue past Step 0 until at least PMS + pricing are detected.
 
-### Fast path: Hospitable, Guesty or OwnerRez plus PriceLabs has a tested runner
+### Which command for which stack
 
-When the PMS is Hospitable, Guesty or OwnerRez and the pricing tool is PriceLabs, do NOT pull the data by hand. Use the runner in `fetch/`: it walks the flywheel, prices, checks every rule and stores the PriceLabs pile in one command, and every guard in it is tested. Run from this skill's folder. Use `uv run --python 3.13 python` (what the connections kit installed), never bare `python`/`python3` (on Windows that opens the Microsoft Store).
+Any of the eight PMSs plus PriceLabs or Beyond runs through the runner in `fetch/`. Do NOT pull that data by hand: the runner walks the flywheel, prices, checks every rule and names every gap in one command. Run from this skill's folder with `uv run --python 3.13 python` (what the connections kit installed) in front of every command below, never bare `python`/`python3` (on Windows that opens the Microsoft Store). Anything in `<>` is a template: fill it with the operator's own names and numbers, never run it as written.
 
-First time on this Supabase project (no rows in `property_config`): ask the markup question (Step 5), then set the properties up, dry run first. This is a template: put `hospitable`, `guesty`, `ownerrez` or `auto` for `<PMS>`, one `--markup <channel>=<percent>` per channel with the operator's own numbers. Never run the placeholders as written:
+| Job | Command |
+|---|---|
+| Setup, once (dry run first, then the same line without `--dry-run`) | `fetch/setup_properties.py --pms <pms> --markup airbnb=<percent> --dry-run` |
+| ... Beyond sets the prices | add `--pricing beyond` (the default, `--pricing auto`, picks PriceLabs if connected, else Beyond, else the PMS) |
+| ... the PMS sets the prices itself | add `--min-price "<property>=<amount>"` per property (no PMS API gives the writer a min) |
+| Run one property | `fetch/analyze90.py --property "<exact name>"` (Beyond: add `--pricing beyond`) |
+| Plan a change | `fetch/apply_change.py plan --target <where the price lives> --change <file>` |
+| Apply it, on a plain yes | `fetch/apply_change.py apply --target <same> --plan <plan id>` |
+| Undo | `fetch/apply_change.py rollback --target <same> --journal <journal file>` |
+| Re-check a PMS that applies late | `fetch/apply_change.py verify --target <pms> --journal <journal file>` (read-only) |
+| Ranking and visibility | RankBreeze or IntelliHost, read-only. Setup maps them, the run reads them, nothing writes to them. |
+
+`<pms>` is `hospitable`, `guesty`, `ownerrez`, `hostaway`, `lodgify`, `uplisting`, `smoobu`, `hostfully`, or `auto` (the one connected). **Two PMS keys connected → `--pms` is required** on setup and on every run; `auto` refuses and says so. A run whose `--pms` differs from setup's is refused too.
+
+**Where the price lives** decides `--target`: PriceLabs manages the listing → `pricelabs` (the default); Beyond manages it → `beyond`; the PMS prices it itself → the PMS name. A PMS target on a listing PriceLabs or Beyond manages is refused, because the tool would overwrite the change on its next sync.
+
+First time on this Supabase project (no rows in `property_config`): ask the markup question (Step 5), then run setup, dry run first. One `--markup <channel>=<percent>` per channel, Airbnb required:
 
 ```bash
 uv run --python 3.13 python fetch/setup_properties.py --pms <PMS> --markup airbnb=<AIRBNB_PERCENT> --dry-run
 ```
 
-then the same line without `--dry-run`. It lists every property ✅ or ❌ with the reason.
-
-Per property:
+then the same line without `--dry-run`. It lists every property ✅ or ❌ with the reason. Per property:
 
 ```bash
-uv run --python 3.13 python fetch/analyze90.py --property "Exact Property Name"
+uv run --python 3.13 python fetch/analyze90.py --property "Exact Property Name" --pms <PMS>
 ```
 
 Exit 0 is `analysable` or `degraded` (the gaps are named at the top: say them first). Exit 2 is `blocked`: say why, and do not invent a price. Changes follow Step 8.
@@ -147,9 +162,12 @@ those gaps first. It prints the same "Recommended min price" line as PriceLabs. 
 through `apply_change.py --target beyond` (a change file with `"pms": "beyond"` routes there on
 its own; see `references/beyond.md`); no live Beyond account has tested them yet.
 
-Every other stack follows Steps 1 to 9 below with the connected tools.
 
-## Step 1 — Autonomy rules
+**A named gap is not an error.** The card says it at the top and still prices. The ones the code names today: no reviews API (Lodgify, Uplisting, Smoobu: `PRICED WITHOUT reviews`); no check-in or check-out day rules (Lodgify, Smoobu: nights read as having none, check blocked arrival days by hand); no nightly prices at all (no-rates mode); a PMS/PriceLabs sync mismatch withholds only that date (the whole run blocks above 20% of open nights). One real refusal to know: Hospitable in a currency without two decimals (JPY, KRW, VND, KWD, BHD and the like) is blocked rather than shown 100x off. Details: `pms-and-tools.md` and the PMS's own file.
+
+Stacks the runner does not cover (Wheelhouse, or no PriceLabs/Beyond mapping) follow Steps 1 to 9 below with the connected tools.
+
+## Step 1: Autonomy rules
 
 This skill runs **FULLY AUTONOMOUSLY for reads and analysis.** Pre-authorized (no need to ask):
 - Pull any data from detected MCPs
@@ -161,45 +179,45 @@ This skill runs **FULLY AUTONOMOUSLY for reads and analysis.** Pre-authorized (n
 
 **The ONE hard exception: any price/calendar change.** It only happens after the operator says yes to that card (2.6), and only through the safe writer (Step 8). Analysis = autonomous. Price changes = a plain yes first. There is no silent auto-push.
 
-## Step 2 — The Safety Layer (the guardrail around EVERY recommendation)
+## Step 2: The Safety Layer (the guardrail around EVERY recommendation)
 
 Every number you surface and every change you propose passes through these eight guards. All required. Lead with them.
 
-### 2.1 — Floor / Ceiling per listing (min/max bounds)
+### 2.1 Floor / Ceiling per listing (min/max bounds)
 
-- The pricing tool's min and max are the floor and ceiling. Read them live (`pricelabs_get_listing` / `pricelabs_list_listings`: `min`, `max`, `base`).
+- The pricing tool's min and max are the floor and ceiling. Read them live (`pricelabs_get_listing` / `pricelabs_list_listings`: `min`, `max`, `base`). A listing the PMS prices itself has no floor in any PMS API: its floor is the stored `property_config.settings.min_price` (Step 8).
 - Store them in `property_config` as `min_price` / `max_price`. If already there, reconcile and keep the live values as source of truth (note any drift).
 - **Never silently recommend a price outside the floor/ceiling.** Don't clamp quietly; surface it: *"This date wants $X, which is above your ceiling of $Y. Want to raise the ceiling, or hold at the cap?"*
 - The operator can **override a bound in plain English** ("raise the max on the lake house to $600"). Persist it to `property_config.min_price` / `max_price` and note it in the audit.
 - **The min price is an OUTPUT, not an input.** Every run states what each listing's min SHOULD be, from the comp set, market position and how often dates sit pinned at the floor, with the reasoning in plain language. **Never ask for a breakeven, a cost floor or "what does a night cost you".**
 
-### 2.2 — Max-delta per change (default 15%)
+### 2.2 Max-delta per change (default 15%)
 
 - Limit from `property_config.settings.max_delta_pct` (default `0.15`).
-- A bigger move is **never hidden**: label it **`⚠️ large move — confirm`** with current, recommended and % move. The operator decides. It forces a conscious confirmation; it is not a refusal.
+- A bigger move is **never hidden**: label it **`⚠️ large move, confirm`** with current, recommended and % move. The operator decides. It forces a conscious confirmation; it is not a refusal.
 
-### 2.3 — Thin-comp transparency (ALWAYS produce a number)
+### 2.3 Thin-comp transparency (ALWAYS produce a number)
 
 - No hard refusal for thin comps. Read the comp count (and same-bedroom subset) from PriceLabs neighborhood data.
-- Below ~20 usable comps, still give a number, and say so in plain language: *"Heads up — only 12 comps here (4 same-bedroom), so this is a rougher estimate than usual."*
+- Below ~20 usable comps, still give a number, and say so in plain language: *"Heads up: only 12 comps here (4 same-bedroom), so this is a rougher estimate than usual."*
 - Show N every time, thin or not.
 
-### 2.4 — Currency (auto-detect + hard gate)
+### 2.4 Currency (auto-detect + hard gate)
 
 - Detect each property's native currency from the PMS and confirm against PriceLabs (neighborhood data is native).
 - **Hard gate:** no figure in another currency enters a recommendation or card without explicit conversion. Check what each source reports (AirROI echoes a `currency` field).
 - Convert only with a **live FX rate from a named provider**, stating provider + timestamp (*"converted at 1 USD = 1.37 CAD, exchangerate.host, 2026-06-15 14:02 UTC"*). **No live FX source → don't convert:** flag the figure with its currency and exclude it from the numeric recommendation (qualitative color only).
 - **Never silently mix.** A recommendation that mixes currencies is invalid; do not present it.
 
-### 2.5 — Explanatory confidence (state your inputs, don't slap on a badge)
+### 2.5 Explanatory confidence (state your inputs, don't slap on a badge)
 
 State the inputs that produced every recommendation. **No bare "LOW CONFIDENCE" labels** (they make operators override good recs):
 
-> *"Based on 23 comps (8 same-bedroom). Market median for your size is $245. Your forward 30-day occupancy is 41% — running behind. PriceLabs last refreshed 6 hours ago."*
+> *"Based on 23 comps (8 same-bedroom). Market median for your size is $245. Your forward 30-day occupancy is 41%, running behind. PriceLabs last refreshed 6 hours ago."*
 
 That sentence IS the confidence signal.
 
-### 2.6 — The yes (every change is shown before it is applied)
+### 2.6 The yes (every change is shown before it is applied)
 
 Every proposed change is shown on a card with at least:
 
@@ -216,18 +234,18 @@ Flags:           <large-move / thin-comp / currency / stale-data / out-of-bound,
 
 Then ask plainly: *"Apply these?"* A plain yes applies them; one yes can cover every card shown together, and "just the first two" means just those. **No approval codes, no hash lines, no "type this exact line", ever.** Flag anomalies loudly on the card, before the question. No yes → no write.
 
-### 2.7 — Freshness
+### 2.7 Freshness
 
 - Always state the age of the data you reason from (PriceLabs `last_refreshed_at`, PMS calendar recency): *"PriceLabs last refreshed 6 hours ago."*
-- **> 24 hours old, or unknown** → the recommendation is **directional**, and say so before recommending: *"PriceLabs last refreshed 3 days ago — treat these as directional until it re-syncs."*
+- **> 24 hours old, or unknown** → the recommendation is **directional**, and say so before recommending: *"PriceLabs last refreshed 3 days ago, so treat these as directional until it re-syncs."*
 
-### 2.8 — Audit columns
+### 2.8 Audit columns
 
 The four Supabase tables ship with migration 001; migration 002 adds three nullable outcome columns on `pricing_decisions` (`booked_at`, `lead_time_days`, `price_delta_from_rec`) that seed a future learning loop (do NOT build the loop). They stay null. Writes fire only on real, approved changes, never on read-only analysis.
 
-## Step 3 — Schema bootstrap + historical read (runs every time)
+## Step 3: Schema bootstrap + historical read (runs every time)
 
-### 3.0 — Bootstrap the schema FIRST (idempotent, before any read)
+### 3.0 Bootstrap the schema FIRST (idempotent, before any read)
 
 **Never assume the audit tables exist.** A brand-new Supabase project is empty, and `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` still throws `relation "pricing_decisions" does not exist` there.
 
@@ -246,7 +264,7 @@ The four Supabase tables ship with migration 001; migration 002 adds three nulla
 
 **A first run returns four empty tables. That is correct, not an error.** Say *"First run, so there's no history yet. This run becomes your baseline."* and go to Step 4.
 
-### 3.1 — Historical read
+### 3.1 Historical read
 
 Run in parallel:
 
@@ -269,27 +287,27 @@ FROM property_config;
 
 Extract: prior-year prices for the same week/month (YoY); stored bounds (feed 2.1); change velocity (what moved, what worked); decision consistency with the last strategy; and the **stated markup** from `property_config.settings.channel_markup_pct`. An empty `property_config` for a property → flag it and recommend a setup pass after the analysis.
 
-## Step 4 — Parallel pull (spawn in one message with two Agent calls)
+## Step 4: Parallel pull (spawn in one message with two Agent calls)
 
-Per-PMS parsing notes (field names, auth quirks, Guesty and OwnerRez traps, **Hospitable history routing and cents**) are in `pms-and-tools.md`. Read the section for the detected PMS before pulling.
+Per-PMS parsing notes (field names, auth quirks, Guesty and OwnerRez traps, **Hospitable history routing and minor units**) are in `pms-and-tools.md`, and each PMS's own file (`<pms>.md`) has its endpoints, units and named gaps. Read both for the detected PMS before pulling.
 
-### Agent 1 — PMS Agent (ground truth for what's actually listed)
+### Agent 1: PMS Agent (ground truth for what's actually listed)
 Pull: all properties (IDs, bedrooms, city, **currency**); **calendar for the next 365 days** (availability, **nightly price = GROUND TRUTH**, min-stay); **all reservations as far back as the PMS exposes** (aim for 2+ years; on Hospitable history comes from transactions); **recent reviews** (last 100); **transactions / payouts** for at least 12 months.
 
 Compute per property: booked nights by month (this year, last year, two back); **average realized ADR by month** (CLEARED); occupancy by rolling window (7/30/60/90 forward); LOS distribution (1, 2, 3, 4+) and orphan-day candidates; lead-time distribution (same-day, 1–7d, 8–30d, 30–90d, 90+d); channel mix; **average calendar (ASK) price per month**, forward 12 months.
 
-### Agent 2 — Pricing-Tool Agent (PriceLabs is the comp engine)
+### Agent 2: Pricing-Tool Agent (PriceLabs is the comp engine)
 Pull: listings with **min / base / max / tags**; **per-date recommended prices** for 365 days with reason factors (the forward **ASK** curve); **neighborhood data** (the comp engine, 4a); ADR field + reservations (CLEARED); active overrides / DSOs; `last_refreshed_at` (feeds 2.7).
 
 Compute: recommended ASK trajectory by month; distance from comp-set median (percentile) by bedroom count; dates pinned to the min (algorithm wants lower) or max (capped, may be underpriced); **ask-vs-cleared spread**.
 
 Parse heavy JSON with Python into compact tables before reporting.
 
-### Step 4a — PriceLabs neighborhood data = the comp engine
+### Step 4a: PriceLabs neighborhood data = the comp engine
 
 `pricelabs_get_neighborhood_data`: **~85-comp set**, percentiles by bedroom (**25/50/75/90**), **365-day forward ASK curve** (listed, NOT cleared), **market occupancy + STLY + 7-day pickup**, **native currency**. Key structures are in `pms-and-tools.md` and `pricelabs.md`. Feed the comp count to 2.3 and always report N.
 
-## Step 5 — Ask vs cleared, ground truth, and the STATED markup
+## Step 5: Ask vs cleared, ground truth, and the STATED markup
 
 The PMS calendar price, the PriceLabs recommended price, and realized ADR are three different things.
 
@@ -306,11 +324,11 @@ The PMS calendar price, the PriceLabs recommended price, and realized ADR are th
 - **Never infer a markup from a gap between the PMS and PriceLabs** (or any other pair of prices). A gap that does not match the stated markup is a **sync or configuration finding**: report it as that. If the gap is wildly inconsistent across dates (stdev > 5%), flag broken sync.
 - **Never recommend a change to "fix" a difference that matches the stated markup.** That's the markup working.
 
-## Step 6 — Apply the STR revenue framework
+## Step 6: Apply the STR revenue framework
 
 The framework is the *how* of a good recommendation; the safety layer is the guardrail around it. The full framework is in `framework.md`: read it on the first recommendation of a session. The flywheel and the rule check below run on every call.
 
-### 6.1 — The Revenue Flywheel (the mission)
+### 6.1 The Revenue Flywheel (the mission)
 
 **Visibility → Bookings → Reviews → Ranking → back to Visibility.** Better pricing → more bookings → more reviews → better ranking → more visibility → more bookings at higher rates.
 
@@ -327,7 +345,7 @@ Flywheel:  Visibility ✅ RankBreeze | Bookings ✅ PMS calendar | Reviews ✅ P
 - **No ranking tool** → ranking is a flagged MANUAL CHECK: search the market on Airbnb for the same guest count/dates and note where the listing appears. Never block on it.
 - Reviews spoke = recent PMS reviews (score, trend). Below 4.6 is a ranking problem.
 
-### 6.1b — PriceLabs' own recommendations and whether your rules are working
+### 6.1b PriceLabs' own recommendations and whether your rules are working
 
 Needs the PriceLabs official MCP (Step 0). Without it, one line, and move on.
 
@@ -335,11 +353,11 @@ Needs the PriceLabs official MCP (Step 0). Without it, one line, and move on.
 - **Check every configured rule.** Read `get_customizations` per listing. For each rule that is ON (last-minute, far-out premium, day-of-week, seasonality), compare the listing's occupancy INSIDE the rule's window against OUTSIDE it, each side measured against market occupancy on the same dates so lead time cancels out. At least 7 dates each side, else `unknown`. Within 5 points of the outside gap → `neutral`; better → `working`; worse → `underperforming`. A toggle can arrive as the string `"false"`, which is OFF. OFF hands those dates to PriceLabs' market default; OFF does not mean no effect.
 - Put the verdicts on the card: *"Last-minute rule: working (+18.7 pts vs market inside its window)."*
 
-### 6.2 onward — the framework (in `framework.md`)
+### 6.2 onward: the framework (in `framework.md`)
 
 Pricing stack (base-anchored, with event/weekend/seasonal/last-minute/orphan/far-out factors and min-stay defaults), lead-time table, the **5 ordered decision questions** (comps → pacing → events → lead time → orphans), comp-set discipline, the 30-day daily review, the red-flag detection table, troubleshooting (**not booking → check ranking FIRST**), KPIs and the ranked revenue levers. Apply all of it; each recommendation must be able to name the framework reason behind it.
 
-## Step 7 — Present recommendations (every one clears the safety layer + the framework)
+## Step 7: Present recommendations (every one clears the safety layer + the framework)
 
 ```
 Property:        <name>  (<currency>)
@@ -347,50 +365,62 @@ Change:          <field> from <old (PMS calendar = ground truth)> to <new>   (<+
 Nearest bound:   min <min> / max <max>   <flag if outside or within 5%>
 Comp count:      <N>  (<same-bedroom subset>)
 Ask vs cleared:  ask <calendar> / ADR <cleared>
-Reasoning:       <plain-language inputs — comps, pacing/STLY, events, lead time, orphan>
+Reasoning:       <plain-language inputs: comps, pacing/STLY, events, lead time, orphan>
 Prior attempts:  <from pricelabs_change_log, if any>
 Expected impact: <occupancy % / RevPAR direction>
 Flags:           <large-move / thin-comp / currency / stale-data / out-of-bound, if any>
 ```
 Then ask plainly whether to apply them (2.6). A plain yes applies; no yes, no write.
 
-### 7.5 — Offer the spreadsheet
+### 7.5 Offer the spreadsheet
 
 After the recommendations, **offer** it, don't auto-generate: *"Want a spreadsheet of this? Summary tab + one tab per property, full breakdown."* Only on a yes, follow `workbook.md`. It is pure output: reads nothing new, pushes nothing, writes nothing to Supabase.
 
-## Step 8 — Execute changes (only after a plain yes, only through the safe writer)
+## Step 8: Execute changes (only after a plain yes, only through the safe writer)
 
 **Never call a PMS or pricing-tool write tool directly** (no `pricelabs_update_listings`, `pricelabs_set_overrides`, `hospitable_update_property_calendar`, `guesty_*`/`hostaway_*` calendar updates, Beyond customization writes, or any other raw MCP write). Every change goes through `fetch/apply_change.py`, which does the fresh read, the drift check, the undo snapshot and the re-read for you.
 
-1. **Write one change file per listing** (the shape is in `uv run --python 3.13 python fetch/apply_change.py --help`).
+**Change the price where it lives (`--target`).** PriceLabs manages the listing → `pricelabs` (the default: min/base/max and date overrides). Beyond manages it → `beyond` (same flow, see `beyond.md`). The PMS prices it itself → `hospitable`, `guesty`, `ownerrez`, `hostaway`, `lodgify`, `uplisting`, `smoobu` or `hostfully` (per-date nightly price and min stay). The writer refuses a PMS price write on a listing PriceLabs or Beyond manages, because the tool would overwrite it on its next sync: change it in the tool. It also refuses a PMS price cut with no stored min, since no PMS API gives it one: recommend the min (2.1), and on a yes store it by re-running setup with the stored markups plus `--min-price "<property>=<amount>"`, then plan again.
+
+1. **Write one change file per listing** (both shapes, PriceLabs and `calendar_set` for a PMS, are in `uv run --python 3.13 python fetch/apply_change.py --help`).
 2. **Plan it** (fresh read; refuses if anything already moved):
    ```bash
-   uv run --python 3.13 python fetch/apply_change.py plan --change <change file>
+   uv run --python 3.13 python fetch/apply_change.py plan --target <TARGET> --change <change file>
    ```
    Show the operator the card(s) it prints, re-checked against the safety layer (bounds, max-delta, currency), and ask whether to apply.
+   **Say the test status out loud.** No target has had a live-tested write yet (PriceLabs and Hospitable are being tested before the summit). A PMS or Beyond card prints `first live write for <Name>: read the after-values carefully.` Read that line to the operator word for word before asking, and say the same for PriceLabs until this paragraph changes.
 3. **On a plain yes, apply:**
    ```bash
-   uv run --python 3.13 python fetch/apply_change.py apply --plan <PLAN_ID>
+   uv run --python 3.13 python fetch/apply_change.py apply --target <TARGET> --plan <PLAN_ID>
    ```
-   It refuses if anything moved since the plan, saves the undo first, applies, and re-reads every field after. Only `APPLIED AND VERIFIED` is done. Anything else: say so first, and offer the undo.
-4. **To undo:** `uv run --python 3.13 python fetch/apply_change.py rollback --journal <JOURNAL_FILE>` plans the reverse change; show it and ask again like any other change.
-5. **A PMS or pricing tool the writer cannot reach yet** (it refuses the change, or the tool isn't one it supports): do NOT fall back to a raw MCP write. Give the operator the change as exact steps to do by hand: where to click, which listing and dates, which field, the old value and the new value. Ask them to say when it's done, then re-read the field yourself and confirm it matches before calling it done.
-6. **Audit:** follow `audit.md` (the writer already logs its own change rows).
-7. Present a before → after summary.
+   It refuses if anything moved since the plan, saves the undo first, applies once (never retries), and re-reads every field after. Only `APPLIED AND VERIFIED` is done. Anything else: say so first, and offer the undo.
+4. **A PMS that applies late** (Hospitable, OwnerRez, Uplisting): the writer re-reads on that PMS's schedule. If it says the change was accepted but not applied yet, that is not a failure. Wait a minute, then re-check, read-only:
+   ```bash
+   uv run --python 3.13 python fetch/apply_change.py verify --target <TARGET> --journal <JOURNAL_FILE>
+   ```
+5. **To undo** (plans the reverse change; show it and ask again like any other change):
+   ```bash
+   uv run --python 3.13 python fetch/apply_change.py rollback --target <TARGET> --journal <JOURNAL_FILE>
+   ```
+6. **A tool the writer cannot reach** (it refuses, says "not installed in this version", or the tool isn't a target, like Wheelhouse): do NOT fall back to a raw MCP write. Give the operator the change as exact steps to do by hand: where to click, which listing and dates, which field, the old value and the new value. Ask them to say when it's done, then re-read the field yourself and confirm it matches before calling it done.
+7. **Audit:** follow `audit.md` (the writer already logs its own change rows).
+8. Present a before → after summary.
 
 Destructive operations (deleting overrides/DSOs, overriding the PMS calendar) always confirm first, separately.
 
-## Step 9 — Audit write (only when changes happen — never on read-only analysis)
+## Step 9: Audit write (only when changes happen, never on read-only analysis)
 
 Follow `audit.md`: one `pricelabs_change_log` row per field/date change (the writer does this for what it applies), one `pricing_decisions` row per property decision with the outcome columns seeded NULL, a `market_snapshots` upsert per property per day, and `property_config` upserts when the operator sets markup, bounds, targets or seasons. No Supabase → skip the writes and print the "audit logging skipped" note from `audit.md` at the end.
 
 ## Key Rules
 
 - **No silent writes, no raw writes.** Every change is shown on a card, applied only on a plain yes, only through `apply_change.py`, and verified by re-reading. A tool the writer can't reach gets exact by-hand steps.
+- **Change the price where it lives**: PriceLabs or Beyond when one manages the listing; a PMS target only when the PMS prices it itself.
+- **Say "first live write for <Name>: read the after-values carefully" out loud** on every card until that target has a live-tested write.
 - **PMS calendar = ground truth** for what's listed. Per property, measure which PriceLabs field matches it before trusting it.
 - **Track ask (calendar) AND cleared (ADR) separately.** Cleared runs higher.
 - **Markup is operator-stated, per channel** (`channel_markup_pct`). Never inferred from a price gap.
-- **Hospitable history → `hospitable_list_transactions`**; its calendar reads are in cents.
+- **Hospitable history → `hospitable_list_transactions`**; its calendar reads are in the currency's minor unit (cents for two-decimal currencies).
 - **Enrichment tools are read-only**: RankBreeze, IntelliHost, AirROI, Turno, Breezeway.
 - **Never recommend outside floor/ceiling silently**: surface it and offer to change the bound.
 - **Default max-delta 15%**: bigger moves are flagged loudly, never hidden.
@@ -404,7 +434,7 @@ Follow `audit.md`: one `pricelabs_change_log` row per field/date change (the wri
 - **Never write to Supabase on read-only analysis.** Outcome columns seed null.
 - Read all 4 audit tables at the start of every run: history is the feature.
 
-## Fallback — partial failures
+## Fallback: partial failures
 
 If a detected MCP returns an error:
 1. Log the status + message for the user.
@@ -413,4 +443,4 @@ If a detected MCP returns an error:
 
 ---
 
-Run the daily review, keep the flywheel spinning, and price every date with intent — that's the whole game.
+Run the daily review, keep the flywheel spinning, and price every date with intent. That's the whole game.

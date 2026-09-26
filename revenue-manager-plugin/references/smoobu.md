@@ -71,12 +71,14 @@ refuses everything else (bookings, messages, availability, cancellations).
 - Whether `end_date` is inclusive is not documented: reads ask one extra night and trim.
 - Limit: 700 requests per minute (changelog 2026-09-17, down from 1000).
 
-## Assumption, flagged
+## Check-in / check-out day rules: a named gap
 
-The rates object documents no closed-to-arrival/departure field. The runner's analysis marks a night
-"unknown" unless both are booleans, so Smoobu nights read as **no arrival/departure restriction exposed**
-(`NO_ARRIVAL_RULES_EXPOSED = False`). If a Smoobu host uses check-in/check-out-day rules, those nights can
-read as open when they are not.
+The rates object documents no closed-to-arrival/departure field, so the flags stay unknown
+(`NO_ARRIVAL_RULES_EXPOSED = None`), never assumed False. Because NO Smoobu night carries them, the
+engine treats them as not exposed (`pms_arrival_rules_exposed: false`) and the card says: "Your PMS does
+not expose check-in or check-out day rules, so nights are read as having none. If you block arrivals on
+certain days, check those nights yourself." If a Smoobu host uses check-in/check-out-day rules, those
+nights can read as open when they are not, and the card has told them so.
 
 ## Undocumented, so refused or left empty
 

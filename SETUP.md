@@ -14,7 +14,7 @@ every key where it belongs. If the attendee has not run it, stop here and send t
 
 In the connections kit folder, say "Check my connections". These rows must be green:
 
-- a PMS (Hospitable, Hostaway, Guesty, ...)
+- a PMS (Hospitable, Guesty, OwnerRez, Hostaway, Lodgify, Uplisting, Smoobu or Hostfully)
 - a pricing tool (PriceLabs or Beyond)
 - Supabase (`supabase-revenue-manager`)
 
@@ -49,31 +49,62 @@ Airbnb 16%, VRBO 20%. "No markup" is a real answer: that is 0.) Store exactly wh
 say. Never work it out from the calendar; a difference between the PMS and PriceLabs is not
 a markup.
 
-**Hospitable, Guesty or OwnerRez, plus PriceLabs:** the skill has a tested runner, and it
-needs one setup pass that maps each property to PriceLabs (and RankBreeze or IntelliHost,
-if connected) and stores the markups. The commands below are templates. Replace
-`<PMS>` with `hospitable`, `guesty` or `ownerrez` (or `auto` to use the one that is
-connected), and put one `--markup <channel>=<percent>` per channel the operator named, with
-the numbers they gave you. Never run the placeholders as written. From this folder, dry run
-first, then for real:
+**Every PMS gets the same setup pass.** It maps each property to its pricing tool (and
+RankBreeze or IntelliHost, if connected) and stores the markups. Run it from this folder,
+dry run first. Pick the line for the attendee's PMS, put their Airbnb markup in place of
+`<AIRBNB_PERCENT>`, and never run a placeholder as written:
 
-```bash
-uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms <PMS> --markup airbnb=<AIRBNB_PERCENT> --markup vrbo=<VRBO_PERCENT> --dry-run
-uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms <PMS> --markup airbnb=<AIRBNB_PERCENT> --markup vrbo=<VRBO_PERCENT>
+| PMS | Setup line (dry run) |
+|---|---|
+| Hospitable | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hospitable --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
+| Guesty | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms guesty --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
+| OwnerRez | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms ownerrez --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
+| Hostaway | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hostaway --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
+| Lodgify | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms lodgify --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
+| Uplisting | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms uplisting --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
+| Smoobu | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms smoobu --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
+| Hostfully | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hostfully --markup airbnb=<AIRBNB_PERCENT> --dry-run` |
+
+If the dry run looks right, run the same line without `--dry-run`. Add one more
+`--markup <channel>=<percent>` per other channel they named (for example
+`--markup vrbo=<VRBO_PERCENT>`); Airbnb is required. It lists every property: ✅ mapped, or
+❌ with the reason (a property that is not in the pricing tool cannot be priced, and it says
+so instead of skipping it quietly). Running it again is safe.
+
+- **More than one PMS connected?** Then `--pms` is required, as above (`auto` stops and
+  names the ones it found). Use the same `--pms` on every run after this, too.
+- **Beyond instead of PriceLabs:** add `--pricing beyond` to the setup line. It maps each
+  property to its Beyond listing by PMS id, then Airbnb id, then exact name, and never
+  guesses between two.
+- **The PMS sets the prices itself** (no PriceLabs or Beyond on that property): no PMS
+  shares its min price through its API, so the writer won't cut a price there until a min is
+  saved. Don't ask the operator for one. On the first run Claude recommends a min for each
+  property, and on a yes saves it by running the setup line again (without `--dry-run`) with
+  `--min-price "<exact property name>=<amount>"` added, once per property.
+
+**A named gap is not an error.** Some PMSs don't share everything through their API:
+Lodgify, Uplisting and Smoobu have no reviews, and Lodgify and Smoobu have no check-in or
+check-out day rules. The card still prices. Its first line says `degraded` instead of
+`analysable`, and the gap is spelled out, like this:
+
+```
+PRICED WITHOUT reviews (Review sample is unreadable or absent, not empty)
+reviews: Smoobu's API documents no reviews endpoint; reviews are not read from Smoobu
+Your PMS does not expose check-in or check-out day rules, so nights are read as having none. If you block arrivals on certain days, check those nights yourself.
 ```
 
-Airbnb is required; drop the `vrbo` part if they don't list on VRBO, add more channels the
-same way. It lists every property: ✅ mapped, or ❌ with the reason (a property that is not
-in PriceLabs cannot be priced, and it says so instead of skipping it quietly). Running it
-again is safe.
+Say it to the operator in one plain line and keep going. A real stop looks different: the
+first line says `blocked` and gives the reason (for example no PMS calendar, so there are no
+nights to price).
 
 `uv` is what the connections kit installed and uses for every Python step, so nothing else
 needs installing. **Windows:** run these exactly as written (Claude's Bash tool is Git
 Bash). Don't swap in `python` or `python3`: on a fresh Windows machine that opens the
 Microsoft Store instead of Python, and `uv run` never touches it.
 
-**Any other PMS or pricing tool:** no setup pass. The skill asks for the markup on its
-first run and works from the connected tools directly.
+**Wheelhouse, or no pricing tool at all:** setup still maps the properties, and marks the
+pricing tool as a named gap. The skill asks for the markup on its first run and works from
+the connected tools directly.
 
 ## 4. Test
 

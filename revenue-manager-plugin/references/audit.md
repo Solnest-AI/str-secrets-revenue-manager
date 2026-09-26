@@ -24,7 +24,7 @@ INSERT INTO pricing_decisions
 VALUES ($1, CURRENT_DATE, $2, $3, $4, $5::jsonb, $6, 'executed',
         NULL, NULL, NULL);
 ```
-`signals` is a jsonb array of the data points that drove the decision (comp percentile, comp count N, occupancy, STLY delta, ask-vs-cleared spread, etc). Leave `booked_at` / `lead_time_days` / `price_delta_from_rec` NULL — they seed the v2 learning loop and are populated later, not now.
+`signals` is a jsonb array of the data points that drove the decision (comp percentile, comp count N, occupancy, STLY delta, ask-vs-cleared spread, etc). Leave `booked_at` / `lead_time_days` / `price_delta_from_rec` NULL: they seed the v2 learning loop and are populated later, not now.
 
 ### Per property per day → upsert to `market_snapshots`
 ```sql
@@ -74,9 +74,9 @@ ON CONFLICT (property_id) DO UPDATE SET
 ### If Supabase isn't connected
 Skip the writes. At the end of the report, print:
 ```
-⚠️ Audit logging skipped — Supabase not connected.
+⚠️ Audit logging skipped: Supabase not connected.
    To enable: run the STR Secrets connections kit ("Set up my connections"); its Supabase row
    (connectors/db-supabase.md) registers supabase-revenue-manager. Then fully restart Claude Code.
-   You do NOT need to run any SQL by hand — connect a writable Supabase MCP and
+   You do NOT need to run any SQL by hand. Connect a writable Supabase MCP and
    the skill creates all 4 tables itself on the next run (Step 3.0).
 ```
