@@ -30,6 +30,11 @@ cp .env.example .env     # then fill in your credentials
 
 > The server **defaults to sandbox**. Set `TURNO_ENV=production` only when you intend to touch live data.
 
+Project date windows (`start`/`end` or `date_range_start`/`date_range_end`) require
+`fetch_all=true`. The connector fetches every page for the selected properties and
+filters project `start` dates locally, with inclusive boundaries, because Turno can
+ignore the upstream date parameters. An undated project causes an explicit error.
+
 > **Credential mapping (Turno's labels are confusing):** `TURNO_API_TOKEN` must hold the long **JWT access token** — Turno's UI may present this as your *"secret key"* (it starts with `eyJ`). The short ~80-char hex value Turno calls the *"API token"* is the OAuth client key and is **not** used for request auth. `TURNO_PARTNER_ID` is the partner UUID, sent as the `TBNB-Partner-ID` header.
 
 ## Run
@@ -63,6 +68,8 @@ uv run turno-mcp        # serves over stdio
 - **Destructive tools** (delete project/property-checklist/booking/blocked-date/webhook, remove/disconnect contractor, force-assign / cancel assignment) require an explicit `confirm=true` argument and are labelled `DESTRUCTIVE`.
 - Server is **sandbox-by-default**.
 - These sit on top of Claude's own per-tool permission prompts.
+- Automatic retries apply only to read requests. A failed write is surfaced for
+  reconciliation because a timeout or server error may follow a committed change.
 
 ## Tools (~47, one per endpoint)
 

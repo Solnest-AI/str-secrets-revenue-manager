@@ -91,18 +91,21 @@ class TurnoClient:
     ) -> Any:
         url = self._url(path)
         clean = _clean_params(params)
-        for attempt in range(MAX_RETRIES + 1):
+        # A timeout or 5xx can arrive after a write was committed. Only replay
+        # read requests; mutations need caller reconciliation before another try.
+        retries = MAX_RETRIES if method.upper() in {"GET", "HEAD", "OPTIONS"} else 0
+        for attempt in range(retries + 1):
             try:
                 resp = await self._client.request(
                     method, url, params=clean, json=json, headers=self.headers
                 )
             except httpx.TransportError as exc:
-                if attempt < MAX_RETRIES:
+                if attempt < retries:
                     await asyncio.sleep(BACKOFF_BASE * (2**attempt))
                     continue
                 raise TurnoAPIError(0, f"Network error calling Turno: {exc}") from exc
 
-            if resp.status_code in RETRY_STATUSES and attempt < MAX_RETRIES:
+            if resp.status_code in RETRY_STATUSES and attempt < retries:
                 await asyncio.sleep(BACKOFF_BASE * (2**attempt))
                 continue
 

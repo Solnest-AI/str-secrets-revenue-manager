@@ -101,3 +101,60 @@ async def test_error_maps_to_turnoapierror_with_hint(client):
 async def test_delete_204_returns_none(client):
     respx.delete(f"{ROOT}/projects/1").mock(return_value=httpx.Response(204))
     assert await client.delete("/projects/1") is None
+
+
+@pytest.mark.parametrize("method", ["POST", "PATCH", "DELETE"])
+@pytest.mark.parametrize("failure", ["timeout", "server_error"])
+async def test_write_is_not_replayed_after_ambiguous_failure(method, failure, monkeypatch):
+    """A server may commit the write before its response is lost or fails."""
+    import turno_mcp.client as module
+
+    committed = []
+
+    async def no_sleep(*_args):
+        return None
+
+    async def handler(request):
+        committed.append(request.content)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("response lost after commit", request=request)
+        return httpx.Response(503, json={"message": "response unavailable"})
+
+    monkeypatch.setattr(module.asyncio, "sleep", no_sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as transport:
+        client = TurnoClient(make_config(), client=transport)
+        with pytest.raises(TurnoAPIError):
+            await client.request(method, "/projects", json={"property_id": 1})
+    assert len(committed) == 1
+
+
+async def test_read_still_retries_a_lost_response(monkeypatch):
+    import turno_mcp.client as module
+
+    attempts = 0
+
+    async def no_sleep(*_args):
+        return None
+
+    async def handler(request):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ReadTimeout("temporary timeout", request=request)
+        return httpx.Response(200, json={"data": {"id": 1}})
+
+    monkeypatch.setattr(module.asyncio, "sleep", no_sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as transport:
+        client = TurnoClient(make_config(), client=transport)
+        assert await client.get("/projects/1") == {"id": 1}
+
+
+@respx.mock
+async def test_requests_send_a_browser_user_agent(client):
+    """Turno's Cloudflare challenge 403s library User-Agents before auth runs."""
+    route = respx.get(f"{ROOT}/projects/1").mock(
+        return_value=httpx.Response(200, json={"data": {"id": 1}})
+    )
+    await client.get("/projects/1")
+    ua = route.calls.last.request.headers["User-Agent"]
+    assert ua.startswith("Mozilla/5.0") and "python-httpx" not in ua
