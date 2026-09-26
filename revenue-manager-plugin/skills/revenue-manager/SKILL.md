@@ -237,7 +237,8 @@ Then ask plainly: *"Apply these?"* A plain yes applies them; one yes can cover e
 ### 2.7 Freshness
 
 - Always state the age of the data you reason from (PriceLabs `last_refreshed_at`, PMS calendar recency): *"PriceLabs last refreshed 6 hours ago."*
-- **> 24 hours old, or unknown** → the recommendation is **directional**, and say so before recommending: *"PriceLabs last refreshed 3 days ago, so treat these as directional until it re-syncs."*
+- **24 to 48 hours old** → the runner still prices it and puts `STALE PRICELABS DATA` at the top of the card. Say it first: *"PriceLabs last recalculated 30 hours ago; hit Sync Now in PriceLabs for the freshest numbers."*
+- **> 48 hours old, future-dated, or unknown** → the runner blocks the card. Tell the operator to hit Sync Now in PriceLabs and run again.
 
 ### 2.8 Audit columns
 

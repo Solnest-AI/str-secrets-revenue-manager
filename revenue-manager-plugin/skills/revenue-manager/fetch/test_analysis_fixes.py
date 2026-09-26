@@ -522,6 +522,36 @@ class BookingAfterPriceLabsRefresh(unittest.TestCase):
                          [START.isoformat(), (START + timedelta(days=1)).isoformat()])
         self.assertEqual(rec["booked_after_pricelabs_refresh"], [])
 
+# Ryan 2026-09-25: PriceLabs recalculates daily; a card must not block at 24.5 hours.
+class PriceLabsFreshnessWindow(unittest.TestCase):
+    def card(self, hours):
+        bundle = synthetic_bundle()
+        bundle["inputs"]["prices"]["last_refreshed_at"] = (AS_OF - timedelta(hours=hours)).isoformat()
+        result = compute(bundle)
+        return result, render(result, "run", METRICS)
+
+    def test_up_to_24_hours_is_clean(self):
+        result, card = self.card(23.9)
+        self.assertNotEqual(result["status"], "blocked")
+        self.assertNotIn("STALE PRICELABS DATA", card)
+
+    def test_24_to_48_hours_prices_with_a_warning_at_the_top(self):
+        result, card = self.card(30)
+        self.assertNotEqual(result["status"], "blocked")
+        self.assertTrue(result["candidates"] or result["status"] == "analysable")
+        head = "\n".join(card.splitlines()[:4])
+        self.assertIn("STALE PRICELABS DATA: PriceLabs last recalculated 30 hours ago", head)
+        self.assertIn("Sync Now", head)
+
+    def test_past_48_hours_blocks(self):
+        result, _ = self.card(49)
+        self.assertEqual(result["status"], "blocked")
+        self.assertTrue(any("more than 48 hours" in b for b in result["blockers"]), result["blockers"])
+
+    def test_future_dated_still_blocks(self):
+        result, _ = self.card(-2)
+        self.assertEqual(result["status"], "blocked")
+
 
 if __name__ == "__main__":
     unittest.main()

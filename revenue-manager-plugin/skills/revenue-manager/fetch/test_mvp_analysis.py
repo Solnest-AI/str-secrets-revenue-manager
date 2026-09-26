@@ -353,7 +353,9 @@ class AnalysisIntegrationTests(unittest.TestCase):
                 self.assert_degraded(bundle, "ranking")
 
     def test_stale_or_future_price_calculation_withholds_candidates(self):
-        for hours in (-37, -25, 1):
+        # Ryan 2026-09-25: 24-48h prices with a warning (PriceLabs recalculates daily); only
+        # past 48h or future-dated withholds. The 24-48h band is in test_analysis_fixes.
+        for hours in (-49, -73, 1):
             bundle = synthetic_bundle()
             bundle["inputs"]["prices"]["last_refreshed_at"] = (
                 AS_OF + timedelta(hours=hours)

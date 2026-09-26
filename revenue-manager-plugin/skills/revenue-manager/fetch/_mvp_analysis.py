@@ -43,6 +43,8 @@ DEFAULT_MAX_DELTA = 0.15
 # A whole-run block only when mismatches are this share of open nights or more. Below it,
 # only the mismatched dates lose their pricing opinion; the rest are still priced.
 MISMATCH_BLOCK_SHARE = 0.20
+STALE_WARN_HOURS = 24   # PriceLabs recalculates about daily
+STALE_BLOCK_HOURS = 48  # past this a card blocks (Ryan 2026-09-25)
 THIN_COMPS = 20
 NEAR_TERM_DAYS = 30
 PACE_BAND_PP = 5.0
@@ -285,8 +287,19 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         try:
             stamp = datetime.fromisoformat(prices["last_refreshed_at"].replace("Z", "+00:00"))
             age = (as_of - stamp).total_seconds() / 3600
-            if not 0 <= age <= 24:
-                blockers.append("PriceLabs calculated prices are stale or future-dated")
+            # PriceLabs recalculates each listing about once a day, so a card read just before
+            # the nightly run is 23-25 hours old (measured live 2026-09-25: six of seven Solnest
+            # listings at 23.6-23.8h). Up to 48h prices with a loud warning at the top; past 48h,
+            # or future-dated, it blocks. Ryan 2026-09-25.
+            if age < 0:
+                blockers.append("PriceLabs calculated prices are future-dated")
+            elif age > STALE_BLOCK_HOURS:
+                blockers.append(f"PriceLabs calculated prices are more than {STALE_BLOCK_HOURS} hours old "
+                                f"({rounded(age):g}h); hit Sync Now in PriceLabs, then run again")
+            elif age > STALE_WARN_HOURS:
+                notes.append(f"STALE PRICELABS DATA: PriceLabs last recalculated {rounded(age):g} hours ago "
+                             "(it normally does this daily). Hit Sync Now in PriceLabs for the freshest "
+                             "numbers; this card is priced from that last recalculation.")
         except (KeyError, ValueError, TypeError):
             blockers.append("PriceLabs calculation timestamp is unreadable")
     if not pms["coverage"]["analysable"]:
@@ -745,6 +758,7 @@ def render(pack, run_id, metrics):
     # PriceLabs path the flywheel's "PRICED WITHOUT ..." sat ~50 lines down (live 2026-09-25).
     top_gaps = ([n for n in pack.get("notes", []) if str(n).startswith("PRICED WITHOUT")]
                 if not beyond and pack.get("status") == "degraded" else [])
+    top_gaps = [n for n in pack.get("notes", []) if str(n).startswith("STALE PRICELABS DATA")] + top_gaps
     lines.extend(top_gaps)
     mism = pack.get("reconciliation", {}).get("mismatches") or []
     if mism:
