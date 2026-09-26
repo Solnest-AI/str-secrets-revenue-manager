@@ -384,7 +384,7 @@ Read `framework.md` once per session before you write the recommendations. Then 
 5. **Next 30 days:** occupancy vs the market, and the open Airbnb price vs the matched p50/p90, from the card's table. That is the ask side. The runner does not print a realized (cleared) ADR yet: say so if asked, and never work one out by hand.
 6. **Changes:** rule changes first, then DSO suggestions, then flagged existing DSOs (7.1), each with its comp count and % move; or "none".
 
-**Before you send, check:** every analysed property has a block with all six parts; every change shows N comps, its % move and a `⚠️ large move, confirm` label when it passes the cap; a delete is asked separately; the message ends with the plain question (2.6) and the spreadsheet offer (7.5). Anything missing: fix the message first.
+**Before you send, check:** you read `framework.md` this session (read it now if not); every analysed property has a block with all six parts; every change shows N comps, its % move and a `⚠️ large move, confirm` label when it passes the cap; a delete is asked separately; the message ends with the plain question (2.6) and the spreadsheet offer (7.5). Anything missing: fix the message first.
 
 ```
 Property:        <name>  (<currency>)
