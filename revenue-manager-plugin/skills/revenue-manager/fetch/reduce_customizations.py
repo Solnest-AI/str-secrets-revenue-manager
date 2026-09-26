@@ -59,6 +59,7 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _calendar import local_today  # noqa: E402
 from _cache import cache_dir, cache_name, listing_matches, read_json, write_json  # noqa: E402
 from attribution import DOW_KEYS, to_setting  # noqa: E402
 
@@ -118,6 +119,12 @@ def resolve_key() -> str:
                 match = re.match(r"\s*(PRICELABS_API_KEY|PRICELABS_KEY)\s*=\s*(.+?)\s*$", line)
                 if match:
                     return match.group(2).strip('"').strip("'")
+    # The first candidate is parents[4]-relative, which is the plugin CACHE once installed.
+    # Fall back to the bundle lookup (SKILL_PATH_REVENUE_MANAGER / connections kit).
+    from reduce_prices import env_candidates, key_from
+    found = key_from(env_candidates(None))
+    if found:
+        return found
     raise CannotProduce("No PRICELABS_API_KEY in the environment or in " + ", ".join(ENV_CANDIDATES))
 
 
@@ -269,7 +276,7 @@ def flatten_profiles(payload) -> list[list]:
 
 
 def load_or_fetch(listing: str, pms: str, ttl_days: float, use_cache: bool,
-                  skip_logs: bool) -> tuple[dict, str]:
+                  skip_logs: bool, today: date | None = None) -> tuple[dict, str]:
     os.makedirs(CACHE_DIR, exist_ok=True)
     path = os.path.join(CACHE_DIR, cache_name("cz", listing, pms))
     if use_cache and os.path.isfile(path):
@@ -287,7 +294,8 @@ def load_or_fetch(listing: str, pms: str, ttl_days: float, use_cache: bool,
         if listing_matches(blob, listing, pms) and fresh and bool(blob.get("has_logs")) != skip_logs:
             return blob, "hit"
     key = resolve_key()
-    since = (date.today() - timedelta(days=90)).isoformat()
+    today = today or date.today()
+    since = (today - timedelta(days=90)).isoformat()
     data = {
         "rules": call("GET", "/v1/customizations/listing", key,
                       {"listing_id": listing, "pms_name": pms, "toggled_on": "false"}),
@@ -296,7 +304,7 @@ def load_or_fetch(listing: str, pms: str, ttl_days: float, use_cache: bool,
         "nudges": call("GET", "/v1/nudges/available", key),
         "logs": None if skip_logs else call("POST", "/v1/logs", key, None, {
             "log_type": "listing", "listings": [{"listing_id": listing, "pms": pms}],
-            "start_date": since, "end_date": date.today().isoformat(), "limit": 50}),
+            "start_date": since, "end_date": today.isoformat(), "limit": 50}),
     }
     blob = {"pulled_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "listing": listing, "pms": pms, "has_logs": not skip_logs, "data": data}
@@ -312,6 +320,8 @@ def main() -> int:
     ap.add_argument("--ttl-days", type=float, default=7,
                     help="customizations are stable; 7 days, not 1")
     ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--tz", help="property timezone (IANA name or +HH:MM); 'today' is the "
+                                 "property's date, not this computer's. Default: local clock")
     ap.add_argument("--skip-logs", action="store_true",
                     help="skip POST /v1/logs when the account lacks log access")
     ap.add_argument("--json", action="store_true",
@@ -324,8 +334,13 @@ def main() -> int:
                          "hides every off rule.")
     args = ap.parse_args()
 
+    try:
+        today = local_today(args.tz)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     blob, how = load_or_fetch(args.listing, args.pms, args.ttl_days,
-                              not args.no_cache, args.skip_logs)
+                              not args.no_cache, args.skip_logs, today)
     data = blob["data"]
 
     customizations = (data["rules"] or {}).get("customizations")

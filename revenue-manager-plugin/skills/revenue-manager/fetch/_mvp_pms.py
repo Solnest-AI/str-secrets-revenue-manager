@@ -642,6 +642,10 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
         clean = not sum(counts[key] for key in ("unknown", "accepted_unknown_value", "conflict"))
         clean = clean and len(group) == calendar_count and reservation_source_trusted
         known_revenue = sum(row["accommodation_cents"] for row in paid)
+        # Occupancy is over BOOKABLE nights. An owner-blocked night is not a night the
+        # market failed to buy: 21 blocked + 2 booked of 30 is 2 of 9 (22.2%), not 6.7%.
+        # Same denominator as attribution._occ and reduce_prices.tier_b.
+        bookable = calendar_count - counts["blocked"]
         return {
             "start_date": period_start.isoformat(),
             "end_date_exclusive": period_end.isoformat(),
@@ -653,9 +657,10 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
             "accepted_unknown_value_nights": counts["accepted_unknown_value"],
             "open_nights": counts["open"],
             "blocked_nights": counts["blocked"],
+            "bookable_nights": bookable,
             "unknown_nights": counts["unknown"],
             "conflict_nights": counts["conflict"],
-            "confirmed_occupancy_pct": _pct(counts["confirmed_paid"], calendar_count)
+            "confirmed_occupancy_pct": _pct(counts["confirmed_paid"], bookable)
             if clean
             else None,
             "on_books_accommodation_cents": known_revenue if clean else None,

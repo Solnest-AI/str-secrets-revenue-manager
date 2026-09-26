@@ -86,6 +86,12 @@ def compute(inputs, as_of, start, days):
     pms["reviews"]["all_time_coverage_verified"] = reviews_in.get("complete", False)
     pms["reviews"]["total_reported"] = reviews_in.get("total")
     pms["reviews"]["unreadable_sample"] = reviews_unreadable
+    # days_out counts from the PROPERTY-LOCAL today, which after the evening rollover is
+    # the day before `start`. Derived from as_of, so a replay reproduces it exactly.
+    try:
+        today = local_date(inputs["property"], as_of)
+    except CannotAnalyze:
+        today = start
     result = build(
         pms,
         inputs["listing"],
@@ -98,6 +104,7 @@ def compute(inputs, as_of, start, days):
         inputs["context"],
         as_of,
         pile=inputs.get("pile"),
+        today=min(today, start),
     )
     result["named_comps"] = inputs.get("comps", {"status": "unavailable"})
     return result

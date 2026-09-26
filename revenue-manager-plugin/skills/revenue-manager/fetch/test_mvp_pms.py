@@ -177,7 +177,8 @@ class InventoryTests(unittest.TestCase):
             ),
             (1, 1, 1),
         )
-        self.assertEqual(window["confirmed_occupancy_pct"], 14.29)
+        # 1 confirmed of 6 BOOKABLE nights (the blocked night leaves the denominator).
+        self.assertEqual(window["confirmed_occupancy_pct"], 16.67)
         self.assertEqual(window["on_books_accommodation_cents"], 10000)
 
     def test_checkout_date_is_available_and_horizon_is_exclusive(self):

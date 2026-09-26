@@ -1,5 +1,44 @@
 """Calendar availability and coverage checks shared by the read-only safety gates."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+
+def unbookable_flag(value):
+    """PriceLabs' `unbookable`: True, False, or None when unreadable.
+
+    One reading for the runner (pricelabs_status) AND the reducers (reduce_prices), so an
+    unbookable night with an empty booking_status is BLOCKED in both. The reducers used to
+    read only booking_status and counted these nights as bookable-and-unsold.
+    """
+    if value in (True, 1, "1", "true", "True"):
+        return True
+    if value in (False, 0, "0", "false", "False"):
+        return False
+    return None
+
+
+def local_today(tz=None, now=None) -> date:
+    """Today's date in the property's timezone (IANA name or +HH:MM offset).
+
+    Without a timezone this is the computer's local date, which is the old behaviour and
+    is wrong whenever the operator is not in the property's timezone. Unreadable -> error,
+    never a silent fallback.
+    """
+    if not tz:
+        return now.astimezone().date() if now else date.today()
+    now = now or datetime.now(timezone.utc)
+    text = str(tz).strip()
+    if text[:1] in {"+", "-"}:
+        clean = text.replace(":", "")
+        try:
+            offset = timedelta(hours=int(clean[1:3]), minutes=int(clean[3:5] or 0))
+        except ValueError:
+            raise ValueError(f"unreadable timezone offset {tz!r}") from None
+        return now.astimezone(timezone(-offset if clean[0] == "-" else offset)).date()
+    try:
+        return now.astimezone(ZoneInfo(text)).date()
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ValueError(f"unknown timezone {tz!r}") from None
 
 
 def pms_status(row) -> str:
@@ -24,10 +63,10 @@ def pricelabs_status(row) -> str:
         return "BLOCKED"
     if status not in {"", "available"}:
         return "UNKNOWN"
-    unbookable = row.get("unbookable", 0)
-    if unbookable in (True, 1, "1", "true"):
+    flag = unbookable_flag(row.get("unbookable", 0))
+    if flag is True:
         return "BLOCKED"
-    if unbookable in (False, 0, "0", "false"):
+    if flag is False:
         return "AVAILABLE"
     return "UNKNOWN"
 

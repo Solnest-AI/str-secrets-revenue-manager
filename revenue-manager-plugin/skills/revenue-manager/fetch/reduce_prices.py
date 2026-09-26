@@ -49,6 +49,7 @@ import datetime as dt
 import io
 import json
 import os
+import re
 import statistics as st
 import sys
 import urllib.error
@@ -57,7 +58,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from _cache import cache_name, listing_matches, read_json, write_json
-from _calendar import pricelabs_status, validate_calendar
+from _calendar import local_today, pricelabs_status, unbookable_flag, validate_calendar
 
 BASE = "https://api.pricelabs.co"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
@@ -94,22 +95,63 @@ def die(msg: str) -> None:
     sys.exit(2)
 
 
+def _env_values(path: Path, names: set[str]) -> dict:
+    """KEY=value lines from a .env, read as UTF-8 with a Windows BOM dropped (Notepad's BOM
+    otherwise glues itself to the first key name and that key silently vanishes)."""
+    out = {}
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        m = re.match(r"\s*(?:export\s+)?([A-Z_]+)\s*=\s*(.*?)\s*$", line)
+        if m and m[1] in names:
+            out[m[1]] = m[2].strip("\"'")
+    return out
+
+
+def _servers() -> dict:
+    path = Path.home() / ".claude.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig")).get("mcpServers", {}) or {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def bundle_roots(servers: dict, here: Path | None = None) -> list[Path]:
+    """Where this bundle's root can live: the same lookup as _mvp_config.bundle_roots."""
+    from _mvp_config import bundle_roots as shared
+    return shared(servers, here)
+
+
+def env_candidates(env_file: Path | None, here: Path | None = None,
+                   servers: dict | None = None) -> list[Path]:
+    """.env files to search for PRICELABS_API_KEY, first match wins."""
+    candidates = [Path(env_file)] if env_file else []
+    roots = bundle_roots(_servers() if servers is None else servers, here)
+    for root in reversed(roots):  # most specific (explicit env var) first
+        candidates += [root / "mcp-servers" / "pricelabs" / ".env", root / ".env"]
+    candidates += [Path.home() / ".claude" / "mcp-servers" / "pricelabs" / ".env",
+                   Path.cwd() / ".env"]
+    return list(dict.fromkeys(candidates))
+
+
+def key_from(candidates: list[Path]) -> str | None:
+    for path in candidates:
+        if path and path.is_file():
+            val = _env_values(path, {"PRICELABS_API_KEY"}).get("PRICELABS_API_KEY")
+            if val:
+                return val
+    return None
+
+
 def load_key(env_file: Path | None) -> str:
     key = os.environ.get("PRICELABS_API_KEY")
     if key:
         return key.strip()
-    candidates = [env_file] if env_file else []
-    parents = Path(__file__).resolve().parents
-    if len(parents) > 4:  # <repo>/revenue-manager-plugin/skills/revenue-manager/fetch/
-        candidates.append(parents[4] / "mcp-servers" / "pricelabs" / ".env")
-    candidates.append(Path.cwd() / ".env")
-    for path in candidates:
-        if path and path.is_file():
-            for line in path.read_text(encoding="utf-8-sig").splitlines():
-                if line.startswith("PRICELABS_API_KEY="):
-                    val = line.split("=", 1)[1].strip()
-                    if val:
-                        return val
+    found = key_from(env_candidates(env_file))
+    if found:
+        return found
     die("PRICELABS_API_KEY not set and no .env found (try --env-file)")
 
 
@@ -290,7 +332,9 @@ def pacing_line(rows: list[dict], today: str | None = None, windows=(30, 60, 90)
     blocked nights leave the denominator, and a window with under 20% STLY coverage says
     "n/a" rather than 0%. Verdict: behind / ahead when the gap is more than 5 points.
     """
-    fwd = sorted((r for r in rows if r.get("date") and (today is None or str(r["date"]) > today)),
+    # Tonight is still sellable, so it is in the window (>=, not >): an evening pull that
+    # dropped tonight read one night short and missed exactly the most urgent open date.
+    fwd = sorted((r for r in rows if r.get("date") and (today is None or str(r["date"]) >= today)),
                  key=lambda r: str(r["date"]))
     bits = []
     for w in windows:
@@ -298,7 +342,7 @@ def pacing_line(rows: list[dict], today: str | None = None, windows=(30, 60, 90)
         if not win:
             continue
         booked = sum(1 for r in win if is_booked(str(r.get("booking_status", ""))))
-        blocked = sum(1 for r in win if str(r.get("booking_status", "")).strip().lower() == "blocked")
+        blocked = sum(1 for r in win if is_blocked(r))
         bookable = len(win) - blocked
         occ = 100.0 * booked / bookable if bookable else None
         stly_vals = [str(r.get("booking_status_STLY", "")).strip() for r in win]
@@ -340,6 +384,18 @@ def is_booked(status: str) -> bool:
     return status.strip().lower().startswith("booked")
 
 
+def is_blocked(row: dict) -> bool:
+    """Blocked by status, OR an unbooked night PriceLabs marks `unbookable`.
+
+    Same reading as the runner's _calendar.pricelabs_status. PriceLabs leaves booking_status
+    empty on an owner-closed night and sets unbookable=1; reading status alone counted those
+    nights as bookable-and-unsold and understated occupancy."""
+    status = str(row.get("booking_status", "")).strip().lower()
+    if status == "blocked":
+        return True
+    return not is_booked(status) and unbookable_flag(row.get("unbookable", 0)) is True
+
+
 def tier_b(rows: list[dict], gap_pct: float, min_stly_cov: float = 0.20) -> tuple[str, str, dict]:
     """Month rollup + exception rows.
 
@@ -367,7 +423,7 @@ def tier_b(rows: list[dict], gap_pct: float, min_stly_cov: float = 0.20) -> tupl
         status = str(row.get("booking_status", ""))
         if is_booked(status):
             bucket["booked"] += 1
-        elif status.strip().lower() == "blocked":
+        elif is_blocked(row):
             bucket["blocked"] += 1
         stly = str(row.get("booking_status_STLY", "")).strip()
         # A "-1"/"-2" sentinel is PriceLabs saying "no value", NOT "the listing existed
@@ -516,6 +572,8 @@ def main() -> None:
     ap.add_argument("--listings", help="id:pms[,id:pms...]")
     ap.add_argument("--all", action="store_true", help="every listing on the account")
     ap.add_argument("--days", type=int, default=365)
+    ap.add_argument("--tz", help="property timezone (IANA name or +HH:MM); 'today' is the "
+                                 "property's date, not this computer's. Default: local clock")
     ap.add_argument("--tier", choices=["a", "b", "both"], default="a")
     ap.add_argument("--reason-dates", help="comma-separated YYYY-MM-DD; pulls reason for these only")
     ap.add_argument("--gap-pct", type=float, default=12.0, help="exception threshold (default 12)")
@@ -557,7 +615,10 @@ def main() -> None:
 
     want_reason = bool(args.reason_dates)
     wanted_dates = {d.strip() for d in args.reason_dates.split(",")} if want_reason else set()
-    today = dt.date.today()
+    try:
+        today = local_today(args.tz) if args.tz else dt.date.today()
+    except ValueError as exc:
+        die(str(exc))
     if want_reason:
         # Narrow the window to the span actually asked about. Pulling `reason`
         # over a full year to read two dates costs ~1 MB of API payload for

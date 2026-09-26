@@ -1053,8 +1053,17 @@ class AnalysisBoundaryTests(unittest.TestCase):
         self.assertTrue(result["notes"][0].startswith("PRICED WITHOUT"))
         self.assertIn("visibility", result["notes"][0])
 
+        # Since 2026-09-25 the drift is SCOPED: one drifting date loses its own pricing
+        # opinion; the run blocks only when mismatches pass 20% of open nights.
         inputs = self.inputs()
         inputs["prices"]["data"][0]["price"] = 119
+        result = compute(inputs, self.as_of, START, 7)
+        self.assertEqual(result["daily"][0]["action"], "pricing_opinion_withheld")
+        self.assertNotIn(result["daily"][0]["date"], {c["date"] for c in result["candidates"]})
+
+        inputs = self.inputs()
+        for row in inputs["prices"]["data"]:
+            row["price"] = 119
         result = compute(inputs, self.as_of, START, 7)
         self.assertEqual(result["status"], "blocked")
         self.assertEqual(result["candidates"], [])
