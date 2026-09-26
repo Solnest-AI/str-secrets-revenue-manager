@@ -115,28 +115,35 @@ rules, gap fill, extra guest fees, time-based adjustments) is exactly what it wa
 send; every override date in the window equals the pre-send read with the plan's changes laid
 on top. An empty or unreadable re-read is `sent-unverified`, never success.
 
-## Not wired: the 90-day runner (`analyze90.py --pricing beyond`)
+## The 90-day runner on Beyond (`analyze90.py --pricing beyond`, or auto from setup)
 
-`_mvp_analysis.build` needs, from the pricing tool, inputs Beyond does not supply in the same
-form. Missing, specifically:
+A DEGRADED mode (`fetch/_beyond_runner.py`): the card prices and names, at the top, every
+input Beyond's API does not supply. Never a crash, never a silent guess.
 
-1. **Market percentiles.** Every day must carry p50/p75/p90 comp prices and market occupancy
-   (PriceLabs `neighborhood_data`); a missing one raises. Beyond's market insights give
-   per-day AVERAGE booked/posted rate and occupancy for a benchmark cohort, in the owner's
-   billing currency, with no percentiles. `review_price` and `above_market_p90` are built on
-   p75/p90.
-2. **Customization rules for attribution.** `attribution.classify` and
-   `rule_effectiveness` read PriceLabs' rule structure (`reduce_customizations.ALL_RULES`).
-   Beyond's families (time-based adjustments, seasonal min/max, day-of-week floors) would need
-   a new classifier.
-3. **Per-date min stay.** The PMS/pricing reconciliation compares each night's min stay;
-   Beyond's calendar has none, so every open night with a PMS min stay would read as drift.
-4. **A price-calculation timestamp.** The freshness gate wants PriceLabs `last_refreshed_at`;
-   Beyond exposes only the listing's `sync-status.last-successful-sync-at`, a different thing.
-5. **A ceiling.** The runner requires `max`; Beyond's can be null (no ceiling), and its docs advise against setting one.
-6. **The pile** (PriceLabs actions/nudges). Beyond's nearest is base-price recommendations.
+| PriceLabs input | Beyond card does instead |
+|---|---|
+| Market p25-p90 per night | Beyond market insights benchmark AVERAGE posted rate and occupancy (R6 below), only when `meta.currency` is the listing currency (no exchange rate is documented, so nothing is converted; otherwise "market comparison unavailable in Beyond's API"). AirROI trailing-12-month ADR p75 stands in on nights without it. The reference is named on every scenario. |
+| Rule attribution | "Rule check is PriceLabs-only; Beyond rules not graded." |
+| Per-night min stay | The PMS sync check runs its price and booking halves; the min-stay half is skipped and said. |
+| Calculation timestamp | Freshness is the calendar READ time, labelled "read at". |
+| A ceiling | A blank Beyond max is "no ceiling", never invented. |
+| The actions/nudges pile | Skipped and said. |
 
-Each of these is a design decision about what the analysis should say without PriceLabs, not a
-field mapping, and together they are well over the 200-line budget. `BeyondSource` already
-returns listing / calendar / overrides in shapes close to the runner's, for when that work is
-decided.
+Reconciliation compares the PMS nightly price with Beyond's `price-posted` (what is quoted,
+docs tip), falling back to `price`. A night is "at the floor" when Beyond's modeled `price`
+sits on that night's `effective-min-price`.
+
+The min is still an output: current min, open nights pinned at the floor (next 30 days), pace
+(own occupancy vs Beyond's benchmark, else same-lead history) and the comp reference (AirROI
+ADR p25, else Beyond's average). Floor binds on 25%+ of open nights and pace behind: lower 10%;
+binds and pace ahead: raise 10% (never past base); otherwise hold, with the deciding input.
+
+| # | Method + path | operationId | Used for | Doc section | Status |
+|---|---|---|---|---|---|
+| R6 | `GET /api/v1/listings/{id}/market-insights/?filter[start-date]&filter[end-date]&filter[compare-to]&page[size]=366` | `get_listing_market_insights` | per stay date, `benchmark` side of `average-posted-rate`, `average-booked-rate`, `adj-occupancy` (else `occupancy`, the documented fallback). `null` = not computed, never 0. `cluster` first; one retry with `market` when the cluster has no benchmark or answers 422 (documented). 30 requests/minute. | "Market Insights" | DOCS-ONLY |
+
+Setup (`setup_properties.py --pricing beyond`, or auto when Beyond is the only pricing tool
+connected) maps each PMS property to a Beyond listing through `channel-listings` (R1): the PMS
+id on a channel named for the PMS, else the Airbnb room id on an `airbnb` channel, else the
+exact title. A tier with two candidates stops ("not guessed"). It stores
+`settings.pricing_tool = "beyond"` and `settings.beyond_listing_id`.

@@ -218,6 +218,8 @@ def normalized_context(raw, property_id):
         "channel_markup_pct",
         "channel_markup_source",
         "max_delta_pct",
+        "pricing_tool",
+        "beyond_listing_id",
     )
     return {
         "property_id": property_id,

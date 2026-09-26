@@ -21,6 +21,10 @@ What the docs pin down, and this module relies on:
   - Manual overrides: one row per overridden date (start-date == end-date), each with at
     most one of `price` (fixed) or `percentage-adjustment`. Default window today..+365.
   - `max-price` null means no ceiling. `in-active-market` false predicts a calendar 400.
+  - Market insights: per stay date, `listing` and `benchmark` sides of adj-occupancy,
+    occupancy, average-booked-rate and average-posted-rate. AVERAGES, no percentiles, and in
+    the owner's BILLING currency (`meta.currency`), which can differ from the listing's.
+    `null` means "could not be computed", never zero. No exchange rate is documented.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ import re
 from datetime import date, timedelta
 from urllib.parse import quote, urlencode
 
-from _mvp_store import CannotAnalyze
+from _mvp_store import CannotAnalyze, utc_now
 
 HOST = "developers.beyondpricing.com"
 BASE = f"https://{HOST}/api/v1"
@@ -298,7 +302,8 @@ class BeyondSource:
             cal = parse_calendar(self._get(f"/listings/{quote(lid)}/calendar/", {
                 "filter[start-date]": start.isoformat(), "filter[end-date]": end.isoformat(),
                 "sort": "date", "page[size]": CALENDAR_PAGE}), start, end)
-            return {"data": [dict(cal[d], min_stay=None) for d in sorted(cal)]}
+            # Beyond gives no price-calculation time; the read time is the only honest stamp.
+            return {"read_at": utc_now(), "data": [dict(cal[d], min_stay=None) for d in sorted(cal)]}
 
         out = self.client.fetch("prices.beyond", [self._account(), lid, start.isoformat(), days], load)
         return {"last_refreshed_at": self.listing(lid).get("last_sync_at"), **out}
@@ -317,3 +322,75 @@ class BeyondSource:
             return [got[d] for d in sorted(got)]
 
         return self.client.fetch("overrides.beyond", [self._account(), lid, start.isoformat(), days], load)
+
+    def market(self, lid, start: date, days: int) -> dict:
+        """GET market-insights for the window, benchmark side only. Cohort `cluster` first
+        (the default); when it has no benchmark, or answers 422 (a listing with a market but
+        no neighborhood, documented), one retry with `market`. Returns the parsed document
+        plus which cohort answered; the currency check against the listing is the caller's."""
+        lid = listing_id(lid)
+        end = start + timedelta(days=days - 1)
+
+        def read(scope):
+            return parse_market(self._get(f"/listings/{quote(lid)}/market-insights/", {
+                "filter[start-date]": start.isoformat(), "filter[end-date]": end.isoformat(),
+                "filter[compare-to]": scope, "page[size]": CALENDAR_PAGE}), start, end)
+
+        def load():
+            try:
+                got = read("cluster")
+                if got["benchmark_available"]:
+                    return got
+            except CannotAnalyze as exc:
+                if "HTTP 422" not in str(exc):
+                    raise
+            return read("market")
+
+        return self.client.fetch("beyond.market", [self._account(), lid, start.isoformat(), days], load)
+
+
+def _side(attrs, key):
+    pair = attrs.get(key)
+    if pair is None:
+        return None
+    if not isinstance(pair, dict):
+        raise BeyondError(f"Beyond market {key} is not a listing/benchmark pair")
+    return number(pair.get("benchmark"), f"benchmark {key}", nullable=True)
+
+
+def parse_market(raw, start: date, end: date) -> dict:
+    """market-insights -> {"currency", "compare_to", "benchmark_available", "data": [per date:
+    posted_avg, booked_avg, occ, occ_kind]}. Every date in the window must be present (docs:
+    one entry per day whatever the data); a null stays None, never 0."""
+    rows = raw.get("data") if isinstance(raw, dict) else None
+    meta = raw.get("meta") if isinstance(raw, dict) else None
+    if not isinstance(rows, list) or not isinstance(meta, dict):
+        raise BeyondError("Beyond market insights have no data list or meta")
+    if _pagination(raw)["pages"] != 1:
+        raise BeyondError("Beyond market insights came back in more than one page")
+    currency = meta.get("currency")
+    if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
+        raise BeyondError("Beyond market insights carry no currency")
+    out = {}
+    for r in rows:
+        a = r.get("attributes") if isinstance(r, dict) and r.get("type") == "market-insights" else None
+        if not isinstance(a, dict) or not isinstance(a.get("date"), str) or a["date"] in out:
+            raise BeyondError("A Beyond market insights entry is unreadable or repeated")
+        adj, occ = _side(a, "adj-occupancy"), _side(a, "occupancy")
+        out[a["date"]] = {
+            "date": a["date"],
+            "posted_avg": _side(a, "average-posted-rate"),
+            "booked_avg": _side(a, "average-booked-rate"),
+            # documented fallback: adj-occupancy, else occupancy
+            "occ": adj if adj is not None else occ,
+            "occ_kind": "adj-occupancy" if adj is not None else ("occupancy" if occ is not None else None),
+        }
+    want = [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+    if sorted(out) != want:
+        raise BeyondError(f"Beyond market insights do not cover exactly {start} to {end}")
+    available = meta.get("benchmark-data-available")
+    return {"currency": currency, "compare_to": meta.get("compare-to"),
+            "benchmark_available": available is not False and any(
+                v["posted_avg"] is not None or v["occ"] is not None for v in out.values()),
+            "cohort_bedrooms": meta.get("cohort-bedrooms"),
+            "data": [out[d] for d in want]}

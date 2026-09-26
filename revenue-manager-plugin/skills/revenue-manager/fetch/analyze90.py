@@ -3,7 +3,13 @@
 
 Run from the skill directory:
     python3 fetch/analyze90.py --property "Property Name"
+    python3 fetch/analyze90.py --property "Property Name" --pricing beyond
     python3 fetch/analyze90.py --show RUN_ID --details
+
+--pricing auto (default) uses the property's settings.pricing_tool from setup, else PriceLabs.
+Beyond is a DEGRADED mode: what Beyond's API does not supply (market percentiles, rule
+attribution, per-night min stay, a calculation time, sometimes a ceiling, a suggestions pile)
+is named at the top of the card, never guessed (_beyond_runner.py).
 
 Default stdout is compact. Complete normalized evidence and daily calculations are
 saved in a private SQLite workbench outside the plugin. No provider writes or LLM API
@@ -48,6 +54,7 @@ def compute(inputs, as_of, start, days):
     # PRD D12 (2026-09-20): reviews is a CONTEXT spoke, not a required input. Missing
     # or unreadable reviews fail that spoke and degrade the run; they do not block it.
     # The inputs listed here are the ones without which there is nothing to price.
+    beyond = inputs.get("pricing") == "beyond"
     required = (
         "property",
         "calendar",
@@ -59,6 +66,9 @@ def compute(inputs, as_of, start, days):
         "overrides",
         "rules",
     )
+    if beyond:
+        # market is optional (a named gap when unreadable); Beyond has no PriceLabs rules
+        required = tuple(k for k in required if k not in ("market", "rules"))
     missing = [name for name in required if name not in inputs]
     if missing:
         return {
@@ -90,14 +100,15 @@ def compute(inputs, as_of, start, days):
         pms,
         inputs["listing"],
         inputs["prices"],
-        inputs["market"],
+        inputs.get("market") if beyond else inputs["market"],
         inputs["overrides"],
-        inputs["rules"],
+        inputs.get("rules") if beyond else inputs["rules"],
         inputs.get("funnel", {"status": "skipped"}),
         inputs.get("rankings", []),
         inputs["context"],
         as_of,
         pile=inputs.get("pile"),
+        **({"pricing": "beyond", "comps": inputs.get("comps")} if beyond else {}),
     )
     result["named_comps"] = inputs.get("comps", {"status": "unavailable"})
     return result
@@ -122,6 +133,31 @@ def market_start(probe, start):
     return start, None
 
 
+def pricing_tool(requested, settings):
+    """--pricing auto follows the property's setup (settings.pricing_tool), else PriceLabs."""
+    if requested and requested != "auto":
+        return requested
+    return settings.get("pricing_tool") or "pricelabs"
+
+
+def visibility_jobs(settings, sources, client, connections, start, prop):
+    """Funnel and ranking loaders (RankBreeze, else IntelliHost), shared by every pricing tool."""
+    jobs, errors = {}, []
+    rid = str(settings.get("rankbreeze_listing_id") or "")
+    ih_id = str(settings.get("intellihost_property_id") or "")
+    if rid:
+        jobs["funnel"] = lambda: sources.funnel(rid, start)
+        jobs["rankings"] = lambda: sources.rankings(rid, start, prop["capacity"]["max"])
+    elif ih_id:
+        from _rank_intellihost import IntelliHostSource
+        ih = IntelliHostSource(client, connections)
+        jobs["funnel"] = lambda: ih.funnel(ih_id, start)
+        jobs["rankings"] = lambda: ih.rankings(ih_id, start, prop["capacity"]["max"])
+    else:
+        errors.append("No verified RankBreeze or IntelliHost listing mapping")
+    return jobs, errors
+
+
 def run_live(args, client, connections, as_of):
     from _pms_registry import choose
     sources = Sources(client, connections, pms=choose(connections, getattr(args, "pms", "auto")))
@@ -139,13 +175,14 @@ def run_live(args, client, connections, as_of):
     if settings.get("pms_source") and settings["pms_source"] != sources.pms:
         raise CannotAnalyze(f"This property was set up from {settings['pms_source']}, but this run reads "
                             f"{sources.pms}; pass --pms {settings['pms_source']}")
+    if pricing_tool(getattr(args, "pricing", "auto"), settings) == "beyond":
+        return run_live_beyond(args, client, connections, sources, prop, context, start)
     if settings.get("pricing_gap"):
         raise CannotAnalyze(settings["pricing_gap"])
     lid = str(settings.get("pricelabs_listing_id") or pid)
     pms_name = settings.get("pms_name") or ("smartbnb" if sources.pms == "hospitable" else None)
     if not pms_name:
         raise CannotAnalyze("This property has no PriceLabs PMS name on record; run setup_properties.py first")
-    rid = str(settings.get("rankbreeze_listing_id") or "")
     inputs = {"property": prop, "context": context}
     errors = []
     start, rollover_note = market_start(
@@ -174,17 +211,14 @@ def run_live(args, client, connections, as_of):
             args.refresh_context,
         ),
     }
-    ih_id = str(settings.get("intellihost_property_id") or "")
-    if rid:
-        jobs["funnel"] = lambda: sources.funnel(rid, start)
-        jobs["rankings"] = lambda: sources.rankings(rid, start, prop["capacity"]["max"])
-    elif ih_id:
-        from _rank_intellihost import IntelliHostSource
-        ih = IntelliHostSource(client, connections)
-        jobs["funnel"] = lambda: ih.funnel(ih_id, start)
-        jobs["rankings"] = lambda: ih.rankings(ih_id, start, prop["capacity"]["max"])
-    else:
-        errors.append("No verified RankBreeze or IntelliHost listing mapping")
+    vjobs, verrors = visibility_jobs(settings, sources, client, connections, start, prop)
+    jobs.update(vjobs)
+    errors.extend(verrors)
+    return run_jobs(jobs, inputs, errors, client, connections, prop, settings, args), start, errors
+
+
+def run_jobs(jobs, inputs, errors, client, connections, prop, settings, args):
+    """Run the loaders in parallel, then the optional named comps (AirROI)."""
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(loader): name for name, loader in jobs.items()}
         for future in as_completed(futures):
@@ -207,7 +241,26 @@ def run_live(args, client, connections, as_of):
             )
         except (ImportError, CannotAnalyze, ValueError, KeyError, TypeError) as exc:
             inputs["comps"] = {"status": "unavailable", "reason": str(exc)}
-    return inputs, start, errors
+    return inputs
+
+
+def run_live_beyond(args, client, connections, sources, prop, context, start):
+    """The Beyond path: PMS reads as always, Beyond for listing / calendar / overrides / market,
+    RankBreeze or IntelliHost for visibility, AirROI comps if connected. No PriceLabs call, no
+    rollover shift (that is PriceLabs' market data), no pile."""
+    from _beyond_runner import beyond_jobs
+    settings = context["settings"]
+    pid = prop["id"]
+    inputs = {"property": prop, "context": context, "pricing": "beyond"}
+    jobs = {
+        "calendar": lambda: sources.calendar(pid, start, args.days),
+        "reservations": lambda: sources.reservations(pid, start, args.days),
+        "reviews": lambda: sources.reviews(pid),
+        **beyond_jobs(settings, client, connections, start, args.days),
+    }
+    vjobs, errors = visibility_jobs(settings, sources, client, connections, start, prop)
+    jobs.update(vjobs)
+    return run_jobs(jobs, inputs, errors, client, connections, prop, settings, args), start, errors
 
 
 def lid_of(inputs):
@@ -272,6 +325,8 @@ def parser():
     )
     ap.add_argument("--days", type=int, default=90, help="Forward calendar days, default 90 (7-90)")
     ap.add_argument("--pms", default="auto", help="auto (the one connected), hospitable, guesty or ownerrez")
+    ap.add_argument("--pricing", default="auto", choices=("auto", "pricelabs", "beyond"),
+                    help="auto (the property's setup), pricelabs or beyond")
     ap.add_argument("--start", help="Assert property local current date, YYYY-MM-DD")
     default_cache = Path(
         os.environ.get("RC_CACHE_DIR", str(Path.home() / ".cache/revenue-manager"))
@@ -364,7 +419,7 @@ def main(argv=None):
         facts = compute(inputs, as_of, start, args.days)
         if errors:
             facts.setdefault("notes", []).extend(errors)
-        if run["mode"] == "live":
+        if run["mode"] == "live" and inputs.get("pricing") != "beyond":
             # D14a: store the pile, latest-wins. Only on a LIVE run; a replay or a
             # fixture would overwrite "current" with something that is not.
             facts.setdefault("notes", []).append(

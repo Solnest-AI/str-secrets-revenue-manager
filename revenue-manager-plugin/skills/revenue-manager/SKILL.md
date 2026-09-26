@@ -172,6 +172,14 @@ after. To undo, plan the reverse change and ask again:
 python3 fetch/apply_change.py rollback --journal JOURNAL_FILE
 ```
 
+**Beyond instead of PriceLabs:** set up with `setup_properties.py --pricing beyond` (it maps each
+PMS property to its Beyond listing by PMS id, Airbnb id or exact name, never a guess), then
+`analyze90.py --property "..."` follows the stored `pricing_tool`. The Beyond card is always
+`degraded`: its GAPS block names what Beyond's API does not give (market percentiles, rule
+grading, per-night min stay, a calculation time, sometimes a ceiling, a suggestions pile). Say
+those gaps first. It still prints a recommended min with its inputs. Beyond writes go through
+`_beyond_write.py` (see `references/beyond.md`); no live Beyond account has tested them yet.
+
 Every other stack follows Steps 1 to 9 below with the connected tools.
 
 > **v2 ROADMAP (note only — DO NOT build now):** auto-setup the operator's pricing tool (Wheelhouse/Beyond/etc.) and run a first-run discovery audit into a reference file. v1 detects-and-uses what's already connected; PriceLabs is the tested primary.

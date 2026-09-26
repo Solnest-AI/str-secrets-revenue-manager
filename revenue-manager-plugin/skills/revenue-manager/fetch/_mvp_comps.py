@@ -161,13 +161,13 @@ def _parameters(metadata, property_data, subject_airbnb_id):
     if bedrooms is None:
         bedrooms = pl_bedrooms
     elif pl_bedrooms is not None and bedrooms != pl_bedrooms:
-        raise CannotAnalyze("PMS and PriceLabs bedroom counts disagree for named comparables")
+        raise CannotAnalyze("PMS and pricing-tool bedroom counts disagree for named comparables")
     baths = _number(capacity.get("bathrooms"))
     guests = _number(capacity.get("max"), integer=True, minimum=1)
     currency = _currency(metadata.get("currency"))
     pms_currency = _currency(property_data.get("currency"))
     if not currency or not pms_currency or currency != pms_currency:
-        raise CannotAnalyze("Named comparables require matching PMS and PriceLabs currencies")
+        raise CannotAnalyze("Named comparables require matching PMS and pricing-tool currencies")
     subject = _listing_id(subject_airbnb_id)
     if any(value is None for value in (lat, lng, bedrooms, baths, guests)):
         raise CannotAnalyze("Named comparables need location, bedrooms, baths and guest capacity")

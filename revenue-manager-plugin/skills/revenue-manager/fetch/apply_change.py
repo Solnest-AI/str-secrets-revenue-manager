@@ -70,12 +70,14 @@ def audit_statement(journal: dict) -> str:
     lid = _ident(t["listing_id"], "listing_id")
     rows = []
     for op in env["operations"]:
-        if op["kind"] == "listing_price":
-            kind, field = "listing_price", op["field"]
+        if op["kind"] in ("listing_price", "listing_min_stay"):
+            # dateless listing-level fields (Beyond adds listing_min_stay; its max can be null)
+            kind, field = op["kind"], op["field"]
+            new = json.dumps(op["after"], sort_keys=True)
         else:
             kind = "override_delete" if op["after"] is None else "override_set"
             field = op["date"]
-        new = "deleted" if op["after"] is None else json.dumps(op["after"], sort_keys=True)
+            new = "deleted" if op["after"] is None else json.dumps(op["after"], sort_keys=True)
         rows.append("(" + ", ".join([
             _lit(env.get("listing_name") or lid), _lit(lid), _lit(kind), _lit(field),
             _lit(json.dumps(op["before"], sort_keys=True)), _lit(new), _lit(env["reason"]),

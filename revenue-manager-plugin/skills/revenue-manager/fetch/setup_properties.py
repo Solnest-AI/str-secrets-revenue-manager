@@ -11,7 +11,12 @@ brand-new `str-secrets-summit` project has none. This builds them:
   1. creates the tables (migrations 001-004 from this plugin, verbatim; all idempotent)
   2. lists every listed Hospitable property (Hospitable is the source of truth for what exists)
   3. checks each one really exists in PriceLabs under the same id, PMS `smartbnb`
-     (measured 2026-09-24 on 6 of 6 live listings: PriceLabs uses the Hospitable property id)
+     (measured 2026-09-24 on 6 of 6 live listings: PriceLabs uses the Hospitable property id),
+     or, with Beyond as the pricing tool (--pricing beyond, or auto when only Beyond is
+     connected), finds its Beyond listing: the PMS id on a channel listing named for the PMS,
+     else the Airbnb room id on an `airbnb` channel listing, else the exact name. A unique match
+     or nothing; two candidates is "not guessed". Stored as settings.pricing_tool="beyond" and
+     settings.beyond_listing_id (DOCS-ONLY: Beyond's `channel-listings`, references/beyond.md)
   4. finds its RankBreeze listing by Airbnb room id, if RankBreeze is connected
   5. writes one row per property, merged into any row already there
 
@@ -23,7 +28,7 @@ the migration files and the property_config upsert, both to the attendee's own S
 
 Exit 0: rows written (or, with --dry-run, shown). Unmapped properties are listed loudly.
 Exit 2: cannot set up (no Supabase connection, no key for the chosen PMS, nothing mapped).
-No PriceLabs key is NOT a stop (a Beyond user may have none): rows are written with a named
+No pricing-tool key (PriceLabs or Beyond) is NOT a stop: rows are written with a named
 `pricing_gap`, and the 90-day runner says so instead of pricing.
 """
 
@@ -47,6 +52,7 @@ from _mvp_pms import normalize_property  # noqa: E402
 from _mvp_recommendations import _lit  # noqa: E402
 from _mvp_sources import Sources  # noqa: E402
 from _mvp_store import CannotAnalyze, ReadClient, Store  # noqa: E402
+from _beyond import BeyondSource  # noqa: E402
 
 PMS_NAME = "smartbnb"  # PriceLabs' name for Hospitable
 MAX_DELTA = 0.15       # PRD D8
@@ -97,18 +103,44 @@ def match_rankbreeze(room_id, rb_listings):
     return hits[0] if len(hits) == 1 else None
 
 
-PRICELABS_GAP = ("PriceLabs is not connected, so this property has no pricing-tool mapping; the 90-day "
-                 "runner prices through PriceLabs and cannot price it until PriceLabs is connected and "
+def _name(value) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+
+
+def match_beyond(prop: dict, listings: list, pms: str):
+    """(Beyond listing id, how it matched) or (None, why not). Tried strongest first; a tier
+    with two or more candidates STOPS the search ("not guessed") instead of falling through to
+    a weaker one. Listings are BeyondSource.listings() rows (channels = channel-listings)."""
+    def on(channel, value):
+        return [x for x in listings if value and any(
+            str(c.get("channel", "")).lower() == channel and str(c.get("channel_id")) == str(value)
+            for c in x.get("channels") or [])]
+    names = {_name(prop.get("name")), _name(prop.get("public_name"))} - {""}
+    for how, hits in ((f"{PMS_LABEL.get(pms, pms)} id", on(pms, prop.get("id"))),
+                      ("Airbnb id", on("airbnb", airbnb_id(prop))),
+                      ("exact name", [x for x in listings if _name(x.get("name")) in names])):
+        if len(hits) == 1:
+            return str(hits[0]["id"]), how
+        if hits:
+            return None, f"{len(hits)} Beyond listings share its {how}; not guessed"
+    return None, "no Beyond listing has its PMS id, Airbnb id or exact name"
+
+
+PRICELABS_GAP = ("No pricing tool (PriceLabs or Beyond) is connected, so this property has no pricing-tool "
+                 "mapping; the 90-day runner cannot price it until one is connected and "
                  "setup_properties.py is run again")
 
 
 def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_NAME, pms_source="hospitable",
-                   intellihost=None, pricelabs=True) -> dict:
+                   intellihost=None, pricelabs=True, beyond=None) -> dict:
+    tool = "beyond" if beyond else "pricelabs" if pricelabs else None
     settings = {
         "pms_source": pms_source,
-        # Always written (null when mapped) so a re-run after connecting PriceLabs clears it:
-        # the upsert MERGES settings, it never drops a key.
-        "pricing_gap": None if pricelabs else PRICELABS_GAP,
+        # Always written (null when mapped) so a re-run after connecting a pricing tool clears
+        # it: the upsert MERGES settings, it never drops a key. Same for pricing_tool, which
+        # the runner's --pricing auto follows.
+        "pricing_gap": None if tool else PRICELABS_GAP,
+        "pricing_tool": tool,
         "max_delta_pct": MAX_DELTA,
         "channel_markup_pct": dict(markups),
         "channel_markup_source": {
@@ -117,9 +149,11 @@ def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_N
             "note": "Stated by the operator during first-run setup. A calendar sync ratio is not a markup.",
         },
     }
-    if pricelabs:
+    if tool == "pricelabs":
         settings["pms_name"] = pms_name
         settings["pricelabs_listing_id"] = property_id
+    if beyond:
+        settings["beyond_listing_id"] = str(beyond)
     if airbnb:
         settings["airbnb_listing_id"] = airbnb
     if rankbreeze:
@@ -222,6 +256,8 @@ def main(argv=None) -> int:
     ap.add_argument("--markup", action="append", default=[], help="channel=percent, e.g. airbnb=16 (repeat)")
     ap.add_argument("--dry-run", action="store_true", help="show the rows; write nothing")
     ap.add_argument("--pms", default="auto", help="auto (the one connected), hospitable, guesty or ownerrez")
+    ap.add_argument("--pricing", default="auto", choices=("auto", "pricelabs", "beyond"),
+                    help="pricing tool to map to: auto (PriceLabs if connected, else Beyond), pricelabs, beyond")
     ap.add_argument("--env-file", action="append", default=[])
     default_cache = Path(os.environ.get("RC_CACHE_DIR", str(Path.home() / ".cache/revenue-manager")))
     ap.add_argument("--db", type=Path, default=default_cache / "workbench.sqlite3")
@@ -240,17 +276,28 @@ def main(argv=None) -> int:
         # token and OwnerRez checks its own pair in the adapter; both name themselves.
         if pms == "hospitable":
             connections.key("hospitable")
-        try:
-            connections.key("pricelabs")
-            has_pricelabs = True
-        except CannotAnalyze:
-            has_pricelabs = False
+        has = {}
+        for tool_name in ("pricelabs", "beyond"):
+            try:
+                connections.key(tool_name)
+                has[tool_name] = True
+            except CannotAnalyze:
+                has[tool_name] = False
+        pricing = args.pricing
+        if pricing == "auto":
+            pricing = "pricelabs" if has["pricelabs"] else "beyond" if has["beyond"] else None
+        elif not has[pricing]:
+            raise SetupError(f"--pricing {pricing}, but no "
+                             f"{'PRICELABS_API_KEY' if pricing == 'pricelabs' else 'BEYOND_TOKEN'} is set")
+        has_pricelabs = pricing == "pricelabs"
+        tool_label = {"pricelabs": "PriceLabs", "beyond": "Beyond"}.get(pricing)
         args.db.parent.mkdir(parents=True, exist_ok=True)
         client = ReadClient(Store(args.db), max_calls=400)
         sources = Sources(client, connections, pms=pms)
         inventory = (sources._pms.inventory() if sources._pms else
                      sources.pages("/properties", {"include": "listings"}, normalize_property))["data"]
         pl_names = sources.pricelabs_inventory() if has_pricelabs else {}
+        beyond_rows = BeyondSource(client, connections).listings() if pricing == "beyond" else []
         props = [p for p in inventory if p.get("listed") is not False]
         rb, rb_note = [], "RankBreeze not connected (ranking will show as a gap on each card)"
         url = connections.rankbreeze_url()
@@ -274,7 +321,12 @@ def main(argv=None) -> int:
         now = datetime.now(timezone.utc)
         rows, missing = [], []
         for p in props:
-            pl_pms = None
+            pl_pms, bid, how = None, None, None
+            if pricing == "beyond":
+                bid, how = match_beyond(p, beyond_rows, pms)
+                if not bid:
+                    missing.append((p.get("name") or p["id"], how))
+                    continue
             if has_pricelabs:
                 pl_pms = pl_names.get(p["id"])
                 if not pl_pms:
@@ -289,23 +341,32 @@ def main(argv=None) -> int:
             rows.append({"property_id": p["id"], "display_name": p.get("name"),
                          "settings": build_settings(p["id"], ab, match_rankbreeze(ab, rb) if rb else None, markups, now,
                                                     pms_name=pl_pms, pms_source=pms, intellihost=ih_map.get(ab or ""),
-                                                    pricelabs=has_pricelabs)})
+                                                    pricelabs=has_pricelabs, beyond=bid),
+                         "match": how})
         print(f"{label}: {len(props)} listed propert{'y' if len(props) == 1 else 'ies'}. {rb_note}."
               + (f" {ih_note}." if ih_note else ""))
-        if not has_pricelabs:
-            print("  ⚠️  PriceLabs is not connected: pricing-tool mapping is a named gap on every property below "
-                  "(the 90-day runner cannot price until PriceLabs is connected and setup is run again).")
-        pl_mark = "✅" if has_pricelabs else "— (gap)"
+        if not pricing:
+            print("  ⚠️  No pricing tool (PriceLabs or Beyond) is connected: pricing-tool mapping is a named gap "
+                  "on every property below (the 90-day runner cannot price until one is connected and setup "
+                  "is run again).")
+        elif pricing == "pricelabs" and has["beyond"]:
+            print("  Beyond is connected too; this setup maps PriceLabs. Run with --pricing beyond to price "
+                  "through Beyond instead.")
         for r in rows:
             s = r["settings"]
-            print(f"  ✅ {r['display_name']}: PriceLabs {pl_mark}  RankBreeze {'✅' if 'rankbreeze_listing_id' in s else '—'}  "
+            mark = (f"✅ ({r['match']})" if r.get("match") else "✅") if pricing else "— (gap)"
+            print(f"  ✅ {r['display_name']}: {tool_label or 'Pricing tool'} {mark}  "
+                  f"RankBreeze {'✅' if 'rankbreeze_listing_id' in s else '—'}  "
                   f"IntelliHost {'✅' if 'intellihost_property_id' in s else '—'}  "
                   f"Airbnb id {'✅' if 'airbnb_listing_id' in s else '—'}")
         for name, why in missing:
-            print(f"  ❌ {name}: NOT IN PRICELABS under the same {label} id ({why}). The runner cannot price it.")
+            if pricing == "beyond":
+                print(f"  ❌ {name}: NOT MAPPED TO BEYOND ({why}). The runner cannot price it.")
+            else:
+                print(f"  ❌ {name}: NOT IN PRICELABS under the same {label} id ({why}). The runner cannot price it.")
         if not rows:
-            raise SetupError(f"No {label} property maps to a PriceLabs listing, so there is nothing to set up"
-                             if has_pricelabs else f"{label} returned no listed property, so there is nothing to set up")
+            raise SetupError(f"No {label} property maps to a {tool_label} listing, so there is nothing to set up"
+                             if pricing else f"{label} returned no listed property, so there is nothing to set up")
         print(f"Markups: {', '.join(f'{k} {v:g}%' for k, v in markups.items())}")
         if args.dry_run:
             print(f"DRY RUN: nothing written. {len(rows)} row(s) ready for {SUPABASE_SERVER}.")

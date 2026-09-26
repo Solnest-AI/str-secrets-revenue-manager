@@ -67,10 +67,20 @@ def markups(context, as_of):
 
 
 def build(pms, listing, prices, market, overrides, rules, funnel, rankings, context, as_of,
-          pile=None):
-    """Full daily coverage is stored; only rollups and actionable exceptions are emitted."""
+          pile=None, pricing="pricelabs", comps=None):
+    """Full daily coverage is stored; only rollups and actionable exceptions are emitted.
+
+    pricing="beyond" is the DEGRADED Beyond mode (_beyond_runner): no market percentiles,
+    no rule attribution, no per-night min stay, no calculation time, maybe no ceiling, no
+    pile. Each is a named gap on the card; the PriceLabs path is unchanged."""
+    beyond = pricing == "beyond"
+    tool = "Beyond" if beyond else "PriceLabs"
     markup = markups(context, as_of)
     multiplier = 1 + markup["airbnb"] / 100
+    if beyond:
+        import _beyond_runner as BR
+        market = BR.usable_market(market, listing.get("currency"))
+        comps_ref = BR.comp_reference(comps)
     start = pms["window"]["start_date"]
     window = pms["window"]["days"]
     expected_dates = [
@@ -81,18 +91,19 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
     if listing.get("currency") != pms["property"]["currency"]:
         raise CannotAnalyze("PMS and listing currencies disagree")
     bounds = {k: number(listing.get(k)) for k in ("min", "base", "max")}
+    no_ceiling = beyond and listing.get("max") is None  # Beyond: blank max = no ceiling
     if (
-        any(v is None or v <= 0 for v in bounds.values())
-        or not bounds["min"] <= bounds["base"] <= bounds["max"]
+        any(v is None or v <= 0 for k, v in bounds.items() if not (no_ceiling and k == "max"))
+        or not bounds["min"] <= bounds["base"] <= (math.inf if no_ceiling else bounds["max"])
     ):
         raise CannotAnalyze("Listing min/base/max are missing or inconsistent")
     price_map = {r["date"]: r for r in prices["data"]}
     market_map = {r["date"]: r for r in market["data"]}
     if (
         len(price_map) != window
-        or len(market_map) != window
         or len(prices["data"]) != window
-        or len(market["data"]) != window
+        or (beyond and len(market_map) != len(market["data"]))
+        or (not beyond and (len(market_map) != window or len(market["data"]) != window))
     ):
         raise CannotAnalyze("Price or market calendar has missing or duplicate dates")
     override_map = {r["date"]: r for r in overrides}
@@ -100,18 +111,26 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         raise CannotAnalyze("Duplicate overrides prevent trustworthy attribution")
     blockers, notes, mismatches, held_gaps, rows = [], [], [], [], []
     age = None
-    try:
-        stamp = datetime.fromisoformat(prices["last_refreshed_at"].replace("Z", "+00:00"))
-        age = (as_of - stamp).total_seconds() / 3600
-        if not 0 <= age <= 24:
-            blockers.append("PriceLabs calculated prices are stale or future-dated")
-    except (KeyError, ValueError, TypeError):
-        blockers.append("PriceLabs calculation timestamp is unreadable")
+    if beyond:
+        try:
+            age = BR.read_at_age(prices, as_of)
+            if not -0.25 <= age <= 24:
+                blockers.append("The Beyond calendar read is stale or future-dated")
+        except (KeyError, ValueError, TypeError):
+            blockers.append("The Beyond calendar read time is unreadable")
+    else:
+        try:
+            stamp = datetime.fromisoformat(prices["last_refreshed_at"].replace("Z", "+00:00"))
+            age = (as_of - stamp).total_seconds() / 3600
+            if not 0 <= age <= 24:
+                blockers.append("PriceLabs calculated prices are stale or future-dated")
+        except (KeyError, ValueError, TypeError):
+            blockers.append("PriceLabs calculation timestamp is unreadable")
     if not pms["coverage"]["analysable"]:
         blockers.append("PMS inventory or reservation evidence is incomplete")
     if pms["coverage"].get("pms_rates_exposed") is False:
         notes.append("Your PMS does not expose nightly prices or min-stay, so reconciliation checked "
-                     "bookings and availability only; the prices shown are PriceLabs'.")
+                     f"bookings and availability only; the prices shown are {tool}'.")
     settings_delta = context.get("settings", {}).get("max_delta_pct")
     if settings_delta is not None and settings_delta != 0.15:
         notes.append("Saved movement threshold differs; this analysis uses 15% scrutiny")
@@ -182,16 +201,22 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         notes.insert(0, wheel["why"])
     for i, day in enumerate(pms["daily"]):
         date = day["date"]
-        if date not in price_map or date not in market_map:
+        if date not in price_map or (not beyond and date not in market_map):
             raise CannotAnalyze("Daily dates differ across source calendars")
-        price, comp = price_map[date], market_map[date]
+        price, comp = price_map[date], market_map.get(date, {})
         net = number(price.get("price"))
         if net is None or net <= 0:
-            raise CannotAnalyze("PriceLabs contains an unusable daily price")
+            raise CannotAnalyze(f"{tool} contains an unusable daily price")
         values = {k: number(comp.get(k)) for k in ("p25", "p50", "p75", "p90", "occ", "occ_stly")}
-        if any(values[k] is None for k in ("p50", "p75", "p90", "occ")):
+        ref, ref_source = None, None
+        if beyond:
+            # averages, not percentiles: each night's reference is named (see _beyond_runner)
+            if values["occ"] is not None and values["occ"] > 100:
+                raise CannotAnalyze("Beyond benchmark occupancy is above 100%")
+            ref, ref_source = BR.reference_for(date, market_map, comps_ref, multiplier)
+        elif any(values[k] is None for k in ("p50", "p75", "p90", "occ")):
             raise CannotAnalyze("A required daily comp value is missing")
-        if not 0 < values["p50"] <= values["p75"] <= values["p90"] or values["occ"] > 100:
+        elif not 0 < values["p50"] <= values["p75"] <= values["p90"] or values["occ"] > 100:
             raise CannotAnalyze("Daily comp percentiles or occupancy are inconsistent")
         pl_status = pricelabs_status(price)
         classification = day["classification"]
@@ -200,7 +225,8 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         # the check can run; the price/stay half is skipped for that night, never guessed.
         drift = opened and (
             (day["price_cents"] is not None and abs(day["price_cents"] / 100 - net) > 0.011)
-            or (day["min_stay"] is not None and day["min_stay"] != price.get("min_stay"))
+            or (not beyond  # Beyond has no per-night min stay: that half is a named gap
+                and day["min_stay"] is not None and day["min_stay"] != price.get("min_stay"))
         )
         paid_gap = classification == "confirmed_paid" and pl_status != "RESERVED"
         unexpected_booked = opened and pl_status == "RESERVED"
@@ -233,14 +259,21 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             "market_occ_stly": values["occ_stly"],
             "layer": layer,
             "override": over or None,
-            "at_floor": net == bounds["min"],
-            "at_ceiling": net == bounds["max"],
+            "at_floor": (number(price.get("suggested")) or net) <= (
+                number(price.get("effective_min_price")) or bounds["min"]) + 0.005
+            if beyond else net == bounds["min"],
+            "at_ceiling": (not no_ceiling and net >= bounds["max"] - 0.005) if beyond
+            else net == bounds["max"],
             "action": "hold_unavailable" if not opened else "monitor",
             "flags": [],
             "demand": price.get("demand_desc"),
         }
+        if beyond:
+            row["reference"], row["reference_source"] = ref, ref_source
         if opened:
-            if row["airbnb"] > values["p90"]:
+            if beyond and ref is not None and row["airbnb"] > ref:
+                row["flags"].append("above_market_reference")
+            elif not beyond and row["airbnb"] > values["p90"]:
                 row["flags"].append("above_market_p90")
             if drift or unexpected_booked:
                 row["action"] = "resolve_sync"
@@ -250,13 +283,15 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
                 or day.get("closed_for_checkout")
             ):
                 row["action"] = "review_restrictions"
-            elif i < 14 and row["airbnb"] > values["p75"]:
+            elif i < 14 and (ref if beyond else values["p75"]) is not None and row["airbnb"] > (
+                    ref if beyond else values["p75"]):
                 row["action"] = "review_price"
             if (row["min_stay"] or 1) > 1 and i < 14:
                 row["flags"].append("near_term_min_stay")
         rows.append(row)
     if mismatches:
-        blockers.append("Unexplained PMS/PriceLabs price, min-stay or booking mismatch")
+        blockers.append("Unexplained PMS/Beyond price or booking mismatch" if beyond
+                        else "Unexplained PMS/PriceLabs price, min-stay or booking mismatch")
     if wheel.get("flags"):
         notes.append(
             "Resolve the visibility/review ranking flags before treating price as the primary lever"
@@ -274,7 +309,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         if row["action"] == "review_price" and not blockers:
             # This is a review range, not a provider operation or an automatic recommendation.
             lower = max(bounds["min"], math.ceil(row["net"] * 0.85))
-            upper = min(bounds["max"], math.floor(row["net"] * 0.95))
+            upper = min(math.inf if no_ceiling else bounds["max"], math.floor(row["net"] * 0.95))
             if lower > upper:
                 row["action"] = "review_bounds"
                 row["flags"].append("no_reduction_range_within_bounds_and_15pct")
@@ -285,9 +320,9 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         elif row["action"] == "review_price":
             row["action"] = "pricing_opinion_withheld"
     affected = {r["date"] for r in candidates}
-    attribution_rows = attribution.ce_rows(prices["data"], start)
+    attribution_rows = [] if beyond else attribution.ce_rows(prices["data"], start)
     attribution_result = (
-        attribution.classify(affected, attribution_rows, rules["raw"]) if affected else []
+        attribution.classify(affected, attribution_rows, rules["raw"]) if affected and not beyond else []
     )
     # PRD D14c: is each configured rule doing its job? Accepted stays count as booked;
     # holds, blocks, conflicts and unknowns leave the denominator, because a night the
@@ -300,7 +335,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         "blocked": r["status"] in ("blocked", "pending_hold", "conflict", "unknown"),
         "market_occ": r.get("market_occ"),
     } for r in rows]
-    rule_effect = attribution.rule_effectiveness(rules["raw"], effect_rows)
+    rule_effect = [] if beyond else attribution.rule_effectiveness(rules["raw"], effect_rows)
     rollups = []
     for win in pms["windows"]:
         group = rows[: win["days"]]
@@ -323,6 +358,8 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
                 "ceiling_open": sum(r["at_ceiling"] for r in open_rows),
             }
         )
+        if beyond:
+            rollups[-1]["open_reference_mean"] = average(r["reference"] for r in open_rows)
     months = []
     for month in pms["forward_months"]:
         group = [r for r in rows if r["date"].startswith(month["month"])]
@@ -340,11 +377,12 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
                 "matched_open_p90": average(r["p90"] for r in opened),
             }
         )
-    return {
+    result = {
         # D12: "degraded" is a real top-level state. It prices, and it says what it
         # priced without. It is not "blocked" and it is not silently "analysable".
+        # Beyond mode is always at least degraded: its gaps are named at the top.
         "status": ("blocked" if blockers
-                   else "degraded" if wheel["verdict"] == "degraded"
+                   else "degraded" if wheel["verdict"] == "degraded" or beyond
                    else "analysable"),
         "blockers": blockers,
         "notes": notes,
@@ -373,9 +411,9 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         "attribution": attribution_result,
         "rule_effectiveness": rule_effect,
         "pile": pile_summary(pile),
-        "rules": rules["summary"],
+        "rules": [] if beyond else rules["summary"],
         "pms": {k: v for k, v in pms.items() if k not in {"daily", "property"}},
-        "comp_count": market["listings_used"],
+        "comp_count": market.get("listings_used"),
         "price_freshness": {
             "calculated_at": prices.get("last_refreshed_at"),
             "age_hours": rounded(age),
@@ -383,7 +421,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         },
         "recent_decisions": context.get("decisions", []),
         "recent_changes": context.get("changes", []),
-        "market_base_percentiles": market["base_percentiles"],
+        "market_base_percentiles": market.get("base_percentiles"),
         "limitations": [
             "Airbnb asks apply confirmed markup only. Cleaning, taxes, guest fees and "
             "promotions require a checkout quote.",
@@ -392,6 +430,28 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             "Events and named qualitative comps are separate evidence; no automatic event premium.",
         ],
     }
+    if beyond:
+        window30 = next((w for w in rollups if w["days"] == 30), rollups[-1] if rollups else {})
+        lead30 = next((w for w in pms["same_lead"]["windows"] if w["days"] == 30), None)
+        month = [r for r in rows[:30] if r["status"] == "open"]
+        result.update({
+            "pricing_tool": "beyond",
+            "gaps": BR.gaps(market, listing, prices, comps),
+            "market_source": market.get("source") if market["status"] == "ok" else None,
+            "market_reason": market.get("reason"),
+            "comp_reference": comps_ref,
+            "price_freshness": {"read_at": prices.get("read_at"), "age_hours": rounded(age),
+                                "maximum_age_hours": 24, "kind": "read at"},
+            "min_recommendation": BR.recommend_min(
+                bounds, window30, lead30, comps_ref,
+                BR.mean(r["reference"] for r in month if r["reference_source"] == "beyond_benchmark_avg"),
+                multiplier),
+            "limitations": result["limitations"][:1] + [
+                "Review ranges are 5-15% scenarios within current bounds, not approved operations.",
+                "Market references are averages or historical comps, not percentiles; named per night.",
+            ] + result["limitations"][2:],
+        })
+    return result
 
 
 def pile_summary(pile):
@@ -429,23 +489,36 @@ def render(pack, run_id, metrics):
             + "\n".join(pack.get("blockers", []) + pack.get("notes", []))
             + f"\nHTTP calls: {metrics['http_calls']}. External writes: 0.\n"
         )
+    beyond = pack.get("pricing_tool") == "beyond"
+    tool = "Beyond" if beyond else "PriceLabs"
+    ceiling = "none" if pack["bounds"]["max"] is None else f"{pack['bounds']['max']:g}"
     lines = [
         f"{pack['property']['name']} | {pack['window']['start_date']} to "
         f"{pack['window']['end_date_exclusive']} (checkout boundary) | "
         f"{pack['currency']} | {pack['status']}",
         f"Run {run_id}. Bounds min/base/max: {pack['bounds']['min']:g}/"
-        f"{pack['bounds']['base']:g}/{pack['bounds']['max']:g}. "
+        f"{pack['bounds']['base']:g}/{ceiling}. "
         f"Airbnb markup {pack['markups']['airbnb']:g}%, confirmed listing setting.",
-        f"PriceLabs calculated {pack['price_freshness']['age_hours']} hours ago; "
-        f"market comps: {pack['comp_count']}. Full source timestamps are in --details.",
-        "",
-        "days | confirmed | held | open | occ% | market% | open Airbnb | matched p50/p90",
+        (f"Pricing tool Beyond: calendar read at {pack['price_freshness']['read_at']} (Beyond gives no "
+         f"calculation time); market: {pack.get('market_source') or 'unavailable'}. Full source "
+         "timestamps are in --details." if beyond else
+         f"PriceLabs calculated {pack['price_freshness']['age_hours']} hours ago; "
+         f"market comps: {pack['comp_count']}. Full source timestamps are in --details."),
     ]
+    if beyond:
+        lines.extend(["", "GAPS (priced without these; each named, none guessed):"]
+                     + [f"  - {g}" for g in pack.get("gaps", [])])
+    lines.extend([
+        "",
+        "days | confirmed | held | open | occ% | market% | open Airbnb | "
+        + ("market reference" if beyond else "matched p50/p90"),
+    ])
     for w in pack["windows"]:
         lines.append(
             f"{w['days']} | {w['confirmed']} | {w['held']} | {w['open']} | {w['occupancy_pct']} | "
             f"{w['market_occupancy_pct']} | {w['open_airbnb_mean']} | "
-            f"{w['matched_open_p50']}/{w['matched_open_p90']}"
+            + (f"{w.get('open_reference_mean')}" if beyond
+               else f"{w['matched_open_p50']}/{w['matched_open_p90']}")
         )
     lines.extend(["", "Calendar-month slices (partial first/last month):"])
     for m in pack["months"]:
@@ -453,15 +526,24 @@ def render(pack, run_id, metrics):
             f"{m['month']}: {m['days']} nights, {m['confirmed']} confirmed, "
             f"{m['held']} held, {m['open']} open; "
             f"occupancy {m['occupancy_pct']}% vs market {m['market_occupancy_pct']}%; "
-            f"open Airbnb {m['open_airbnb_mean']} vs matched p90 {m['matched_open_p90']}."
+            + (f"open Airbnb {m['open_airbnb_mean']}." if beyond else
+               f"open Airbnb {m['open_airbnb_mean']} vs matched p90 {m['matched_open_p90']}.")
         )
     lines.extend(["", "Flywheel: Visibility > Bookings > Reviews > Ranking"])
     for key in pack["flywheel"]["order"]:
         s = pack["flywheel"]["spokes"][key]
         lines.append(f"{key}: {'ok' if s['ok'] else 'unreadable'}, {s['detail']}")
     market = pack["flywheel"].get("market") or {}
-    lines.append(f"market layer: {'ok' if market.get('ok') else 'absent'}, {market.get('detail', '')}")
-    lines.extend(["", "Rule effectiveness (D14c; the window vs the rest, market as yardstick):"])
+    if beyond:
+        lines.append("market layer: PriceLabs Market Research does not apply to Beyond; the market "
+                     "reference used is named in GAPS.")
+    else:
+        lines.append(f"market layer: {'ok' if market.get('ok') else 'absent'}, {market.get('detail', '')}")
+    if beyond:
+        from _beyond_runner import GAP_PILE, GAP_RULES
+        lines.extend(["", f"Rule effectiveness: {GAP_RULES}", f"Suggestions pile: {GAP_PILE}"])
+    else:
+        lines.extend(["", "Rule effectiveness (D14c; the window vs the rest, market as yardstick):"])
     for e in pack.get("rule_effectiveness", []):
         lines.append(f"{e['rule']}: {e['verdict']}. {e['why']}")
     pile = pack.get("pile") or {}
@@ -506,11 +588,13 @@ def render(pack, run_id, metrics):
     lines.extend(
         ["", "Dated price review scenarios, requiring framework/event review and approval:"]
     )
+    ref_words = {"beyond_benchmark_avg": "Beyond benchmark avg", "airroi_adr_p75": "AirROI ADR p75"}
     for r in pack["candidates"]:
         lines.append(
             f"{r['date']}: net {r['net']:g}, Airbnb {r['airbnb']:g}, "
-            f"comp p75/p90 {r['p75']:g}/{r['p90']:g}; "
-            f"review net {r['review_net_range'][0]}-{r['review_net_range'][1]}; layer {r['layer']}."
+            + (f"vs {ref_words.get(r.get('reference_source'), 'reference')} {r['reference']:g}; "
+               if beyond else f"comp p75/p90 {r['p75']:g}/{r['p90']:g}; ")
+            + f"review net {r['review_net_range'][0]}-{r['review_net_range'][1]}; layer {r['layer']}."
         )
     if not pack["candidates"]:
         lines.append(
@@ -520,8 +604,25 @@ def render(pack, run_id, metrics):
         f"Reconciliation: {pack['reconciliation']['open_dates_checked']} open dates checked; "
         f"{len(pack['reconciliation']['mismatches'])} unexplained mismatches; "
         f"{len(pack['reconciliation']['held_dates_absent_from_pl'])} pending-held dates "
-        "absent from PriceLabs, excluded from candidates."
+        f"absent from {tool}, excluded from candidates."
+        + (" Min stay not compared (Beyond has none per night)." if beyond else "")
     )
+    rec = pack.get("min_recommendation")
+    if rec:
+        ref = rec.get("comp_reference")
+        move = "" if rec["action"] == "hold" else f", {rec['move_pct']:+g}%"
+        lines.extend([
+            "",
+            f"Min price: current {rec['current']:g} -> recommended {rec['recommended']:g} "
+            f"({rec['action']}{move})"
+            + (" [provisional: a required gate failed]" if pack["blockers"] else "") + ".",
+            f"  Why: {rec['why']}.",
+            f"  Inputs: floor-pinned {rec['floor_pinned_open_nights']} of {rec['open_nights']} open nights "
+            f"(next 30 days); pace {rec['pace']} ({rec['pace_detail']}); comp reference: "
+            + (f"{ref['source']}: {ref['airbnb']:g} on Airbnb, {ref['net']:g} net." if ref
+               else "none available."),
+            f"  Method: {rec['method']}.",
+        ])
     lines.extend(pack["blockers"] + pack["notes"])
     comps = pack.get("named_comps", {})
     if comps.get("status") == "ok":

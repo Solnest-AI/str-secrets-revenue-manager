@@ -93,6 +93,11 @@ class FakeBeyond:
         self.replace_overrides, self.enforce_bounds = replace_overrides, enforce_bounds
         self.reads_fail_after_patch, self.empty_reread = reads_fail_after_patch, empty_reread
         self.requests, self.timeouts, self.patched = [], [], False
+        self.booked = set()               # dates Beyond reports as `booked`
+        self.market_currency = currency   # market insights are in the BILLING currency
+        self.market_status = None         # an HTTP code to answer market insights with
+        self.benchmark = True             # benchmark coverage for the cohort
+        self.posted_avg = 200.0
 
     # -------------------------------------------------------------- views
     def patches(self):
@@ -118,7 +123,8 @@ class FakeBeyond:
         elif ov and ov["percentage-adjustment"] is not None:
             price, kind = round(modeled * (1 + ov["percentage-adjustment"] / 100)), "percentage"
         return {"type": "calendar-entries", "id": d, "attributes": {
-            "date": d, "availability": "available", "price": int(price), "price-posted": int(price),
+            "date": d, "availability": "booked" if d in self.booked else "available",
+            "price": int(price), "price-posted": int(price),
             "effective-min-price": int(self.floor(d)),
             "effective-max-price": mm["max-price"] and int(mm["max-price"]),
             "price-override-type": kind, "factors": [{"key": "seasonality", "order": 1,
@@ -132,7 +138,8 @@ class FakeBeyond:
             "in-active-market": self.in_active_market,
             "base-price": self.cust["base-price"]["base-price"], "min-price": mm["min-price"],
             "max-price": mm["max-price"], "min-stay": self.cust["min-stays"]["min-stay"],
-            "bedrooms": 2, "channel-listings": [{"channel": "airbnb", "channel-id": "777"}],
+            "bedrooms": 2, "latitude": "37.77490000", "longitude": "-122.41940000",
+            "channel-listings": [{"channel": "airbnb", "channel-id": "777"}],
             "sync-status": {"state": "completed", "last-successful-sync-at": "2026-10-01T10:00:00Z"}}}}
 
     # -------------------------------------------------------------- the API
@@ -172,6 +179,26 @@ class FakeBeyond:
                     for i in range(days)]
             return Response({"data": rows, "meta": {"pagination": {"page": 1, "pages": 1,
                                                                    "count": len(rows)}}})
+        if method == "GET" and path == PREFIX + "market-insights/":
+            if self.market_status:
+                raise http_error(req.full_url, self.market_status)
+            start = date.fromisoformat(q["filter[start-date]"][0])
+            end = date.fromisoformat(q["filter[end-date]"][0])
+            scope = q.get("filter[compare-to]", ["cluster"])[0]
+            rows = []
+            for i in range((end - start).days + 1):
+                d = (start + timedelta(days=i)).isoformat()
+                bench = self.benchmark
+                rows.append({"type": "market-insights", "id": f"{LID}:{scope}:{d}", "attributes": {
+                    "date": d,
+                    "adj-occupancy": {"listing": 50.0, "benchmark": 60.0 if bench else None},
+                    "occupancy": {"listing": 45.0, "benchmark": 55.0 if bench else None},
+                    "average-booked-rate": {"listing": None, "benchmark": 190.0 if bench else None},
+                    "average-posted-rate": {"listing": 220.0, "benchmark": self.posted_avg if bench else None}}})
+            return Response({"data": rows, "meta": {
+                "pagination": {"page": 1, "pages": 1, "count": len(rows)}, "currency": self.market_currency,
+                "benchmark-data-available": self.benchmark, "compare-to": scope, "cohort-bedrooms": ["2"],
+                "start-date": start.isoformat(), "end-date": end.isoformat()}})
         if method == "PATCH":
             return self.patch(req, path, body)
         raise AssertionError(f"FakeBeyond has no route for {method} {path}")
