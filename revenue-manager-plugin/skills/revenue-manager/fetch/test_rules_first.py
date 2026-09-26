@@ -275,11 +275,33 @@ class RulesFirst(unittest.TestCase):
         out = run(rows, self.rules(day_of_week_adjustment=DOW), effect=[grade])
         self.assertEqual(out["rule_changes"], [])
         self.assertTrue(any("cheap and still not booking" in n for n in out["notes"]), out["notes"])
-        self.assertTrue(out["dso_dates"])  # the nights stay as DSO review scenarios
+        # the same guard holds one layer down: a raise DSO on these nights would contradict it
+        # (live 2026-09-25, The Urban Nest Mon-Wed), so they are withheld with its reason, not suggested
+        guarded = {r["date"] for r in rows if (TODAY + timedelta(days=r["days_out"])).weekday() in (0, 1, 2)
+                   and r["airbnb"] < r["p25"] * 1.2}
+        self.assertTrue(guarded)
+        self.assertTrue(guarded <= set(out["guard_withheld"]), (guarded, out["guard_withheld"]))
+        self.assertFalse(guarded & set(out["dso_dates"]))
+        self.assertIn("cheap and still not booking", next(iter(out["guard_withheld"].values())))
         grade["discount_days"]["gap_to_market_inside"] = -2.0
         out = run(rows, self.rules(day_of_week_adjustment=DOW), effect=[grade])
         self.assertEqual(len(out["rule_changes"]), 1)
         self.assertIn("the window books -2.0 pts vs the market", out["rule_changes"][0]["why"])
+
+    def test_the_guard_only_withholds_dsos_in_its_own_direction(self):
+        # a raise is guarded on Mon-Wed; a near-term Mon-Wed night priced ABOVE p75 is a cut, and
+        # the raise guard says nothing about cuts, so that night stays a DSO suggestion
+        rows = []
+        for i in range(28):
+            wd = (TODAY + timedelta(days=i)).weekday()
+            rows.append(row(i, airbnb=70.0 if wd in (0, 1, 2) else 90.0, p75=150.0))
+        cut_day = next(i for i in range(14) if (TODAY + timedelta(days=i)).weekday() in (0, 1, 2))
+        rows[cut_day] = row(cut_day, airbnb=200.0, p75=150.0)
+        grade = {"rule": "day_of_week_adjustment", "verdict": "neutral",
+                 "discount_days": {"verdict": "neutral", "why": "x", "gap_to_market_inside": -16.1}}
+        out = run(rows, self.rules(day_of_week_adjustment=DOW), effect=[grade])
+        self.assertIn(rows[cut_day]["date"], out["dso_dates"])
+        self.assertNotIn(rows[cut_day]["date"], out["guard_withheld"])
 
     def test_booking_guard_no_cut_where_the_window_is_selling(self):
         grade = {"rule": "last_minute_prices", "verdict": "working", "why": "x", "gap_to_market_inside": 30.3}

@@ -465,14 +465,23 @@ def recommend(rows, candidates, rules, levels, effect, bounds, max_delta, overri
             taken[d] = p["rule"]
         chosen.append(p)
 
-    residual, why_dso, layer_map = [], {}, {}
+    residual, why_dso, layer_map, guard_withheld = [], {}, {}, {}
     row_by_date = {r["date"]: r for r in rows}
     for c in candidates:
         layer_map[c["date"]] = night_layers(row_by_date.get(c["date"], c), rules, levels)
         if c["date"] in taken:
             continue
-        residual.append(c["date"])
         hits = [ev for ev in evaluations if c["date"] in ev.get("dates", [])]
+        # The booking guard holds one layer down too: if it refused a rule move in THIS night's
+        # direction (cheap and still not booking -> no raise; selling -> no cut), a DSO making the
+        # same move contradicts it. Live 2026-09-25 (The Urban Nest, Mon-Wed): the rule layer said
+        # "no raise" while the DSO layer suggested raises on the same nights. Withheld, reason kept.
+        guard = next((ev for ev in hits if ev.get("caution")
+                      and ev.get("direction") == (c.get("direction") or "cut")), None)
+        if guard and c.get("layer") != "fixed_override":
+            guard_withheld[c["date"]] = guard["why"]
+            continue
+        residual.append(c["date"])
         if c.get("layer") == "fixed_override":
             why_dso[c["date"]] = "a fixed DSO sets this night, so no rule reaches it: the DSO is the lever"
         elif hits and hits[0].get("caution"):
@@ -488,6 +497,7 @@ def recommend(rows, candidates, rules, levels, effect, bounds, max_delta, overri
         "folded": taken,
         "layers": layer_map,
         "why_dso": why_dso,
+        "guard_withheld": guard_withheld,
         "existing_dsos": existing_dsos(overrides or [], rows, rules, levels, bounds, today, chosen),
         "notes": notes,
         "thresholds": dict(THRESHOLDS),

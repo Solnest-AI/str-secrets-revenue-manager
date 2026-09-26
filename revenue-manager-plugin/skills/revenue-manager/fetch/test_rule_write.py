@@ -170,7 +170,8 @@ class PlanRules(Base):
         self.assertIn("-18%", card)
         self.assertIn("BLAST RADIUS", card)
         self.assertNotIn("APPROVE", card)
-        self.assertIn("first live write for PriceLabs rules: read the after-values carefully", card)
+        # rule writes were live-tested 2026-09-25, so the first-live-write line is gone
+        self.assertNotIn("first live write for PriceLabs rules", card)
 
     def test_day_of_week_write_carries_all_seven_days(self):
         env = self.plan(FakeRules(), change(rules_set={"day_of_week_adjustment": {

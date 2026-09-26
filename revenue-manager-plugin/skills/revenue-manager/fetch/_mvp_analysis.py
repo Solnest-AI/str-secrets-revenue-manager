@@ -602,6 +602,8 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             c["layers"] = rules_plan["layers"].get(c["date"], [])
             if c["date"] in rules_plan["folded"]:
                 c["folded_into"] = rules_plan["folded"][c["date"]]
+            elif c["date"] in rules_plan.get("guard_withheld", {}):
+                c["withheld_by_guard"] = rules_plan["guard_withheld"][c["date"]]
             elif c["date"] in rules_plan["why_dso"]:
                 c["why_dso"] = rules_plan["why_dso"][c["date"]]
     rollups = []
@@ -792,7 +794,8 @@ def render_rules_first(pack, beyond):
     Each with its reason. Beyond has no rule stack in the runner: its section says so."""
     lines = [""]
     rf = pack.get("rules_first")
-    residual = [r for r in pack["candidates"] if not r.get("folded_into")]
+    residual = [r for r in pack["candidates"] if not r.get("folded_into") and not r.get("withheld_by_guard")]
+    guarded = [r for r in pack["candidates"] if r.get("withheld_by_guard")]
     if beyond or not rf:
         lines.append("Dated price review scenarios, requiring framework/event review and approval "
                      "(Beyond: no rule stack is read, so there is no rules-first step; a named gap):")
@@ -846,6 +849,10 @@ def render_rules_first(pack, beyond):
     lines += [f"  {_candidate_line(r, beyond)}" for r in residual]
     if not residual:
         lines.append("  No DSO suggestions." if not pack["blockers"] else "  Withheld because a required gate failed.")
+    if guarded:
+        shown = ", ".join(r["date"] for r in guarded[:8]) + (" ..." if len(guarded) > 8 else "")
+        lines.append(f"  Not suggested ({len(guarded)} night(s)), same booking guard as the rules above: "
+                     f"{guarded[0]['withheld_by_guard']}. Dates: {shown}")
     existing = rf["existing_dsos"]
     flagged = [e for e in existing if e["flags"]]
     counts = {}

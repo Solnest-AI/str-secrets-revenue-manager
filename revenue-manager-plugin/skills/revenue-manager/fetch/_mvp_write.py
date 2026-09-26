@@ -106,9 +106,9 @@ RULE_TOGGLE = {r: f[0] for r, f in RULE_FIELDS.items()}
 RULE_VALUE = {"last_minute_prices": "last_min_factor_value", "far_out_premium": "far_out_premium_value"}
 RULE_TYPE = {"last_minute_prices": "last_min_factor_type", "far_out_premium": "far_out_premium_type"}
 CONCRETE_TYPES = {"last_minute_prices": {"linear", "linear_gradual"}, "far_out_premium": {"linear", "fix"}}
-# Flip to True only after a rule write has been applied AND rolled back on a live listing through
-# this writer. Until then every rule card says so (SKILL Step 8: say the test status out loud).
-RULE_WRITE_LIVE_TESTED = False
+# Live-tested 2026-09-25 on The Urban Nest: day-of-week Mon -8% -> -7% applied and verified, then
+# rolled back (snapshot re-POST) and verified; an independent re-read matched the original rule.
+RULE_WRITE_LIVE_TESTED = True
 LEVEL_REFUSAL = {"group": "this changes every listing in the group; change it in PriceLabs",
                  "account": "this changes every listing in the account; change it in PriceLabs"}
 

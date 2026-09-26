@@ -411,7 +411,7 @@ After the recommendations, **offer** it, don't auto-generate: *"Want a spreadshe
    uv run --python 3.13 python fetch/apply_change.py plan --target <TARGET> --change <change file>
    ```
    Show the operator the card(s) it prints, re-checked against the safety layer (bounds, max-delta, currency), and ask whether to apply.
-   **Say the test status out loud.** PriceLabs and Hospitable writes are live-tested (2026-09-25). Every other PMS and Beyond card prints `first live write for <Name>: read the after-values carefully.` A PriceLabs rule change is not live-tested yet: its card prints `first live write for PriceLabs rules: read the after-values carefully.` Read that line to the operator word for word before asking. A rule card also prints `BLAST RADIUS` (how many of the next 90 nights the rule reaches), and flags a sign flip or a move over the cap: read those too.
+   **Say the test status out loud.** PriceLabs and Hospitable writes are live-tested (2026-09-25). Every other PMS and Beyond card prints `first live write for <Name>: read the after-values carefully.` PriceLabs rule changes are live-tested too (2026-09-25, applied and undone). Read that line to the operator word for word before asking. A rule card also prints `BLAST RADIUS` (how many of the next 90 nights the rule reaches), and flags a sign flip or a move over the cap: read those too.
 3. **On a plain yes, apply:**
    ```bash
    uv run --python 3.13 python fetch/apply_change.py apply --target <TARGET> --plan <PLAN_ID>

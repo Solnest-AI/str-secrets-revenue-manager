@@ -61,14 +61,14 @@ yet, so check the numbers on your first run.
 | Uplisting | Built from docs | Built from docs |
 | Smoobu | Built from docs | Built from docs |
 | Hostfully | Built from docs | Built from docs |
-| PriceLabs | Live-tested | Live-tested (write, verify, undo) |
+| PriceLabs | Live-tested | Live-tested: date overrides and rule changes (write, verify, undo) |
 | Beyond | Built from docs | Built from docs |
 | RankBreeze | Live-tested | Never. Read-only |
 | IntelliHost | Live-tested | Never. Read-only |
 
 
 - **PriceLabs and Hospitable writes are live-tested** (2026-09-25: one night written, read back,
-  undone and read back again). Every other tool's change card says "first live write for <Name>:
+  undone and read back again; a PriceLabs day-of-week rule change the same way). Every other tool's change card says "first live write for <Name>:
   read the after-values carefully", and Claude says it out loud. Do that. We'll update this table
   as each tool gets its first real write.
 - **Every change goes through one safe writer.** It checks nothing moved since the card,
