@@ -17,7 +17,9 @@ Measured live 2026-09-24 on Premium properties (see references/intellihost.md):
 
 from __future__ import annotations
 
+import itertools
 import json
+import threading
 from datetime import date
 
 from _mvp_store import CannotAnalyze, identity
@@ -25,6 +27,7 @@ from _mvp_store import CannotAnalyze, identity
 URL = "https://clients.intellihost.co/api/mcp"
 UA = "claude-code (revenue-manager)"
 RANK_MAX_AGE_DAYS = 7
+FUNNEL_MAX_AGE_DAYS = 7
 FUNNEL_DAYS = 30
 PREMIUM_GAP = "IntelliHost is connected, but this property needs IntelliHost Premium to read its data"
 STAGES = ["first_page_impressions", "click_through_rate", "booking_rate"]
@@ -47,6 +50,16 @@ def funnel_from_dashboard(payload: dict, start: date) -> dict:
         if isinstance(payload, dict) and payload.get("message"):
             base["reason"] = f"IntelliHost: {str(payload['message'])[:160]}"
         return base
+    try:
+        ended = date.fromisoformat(str(to)[:10])
+    except ValueError:
+        return {**base, "reason": "IntelliHost funnel period end is unreadable"}
+    age = (start - ended).days
+    if age > FUNNEL_MAX_AGE_DAYS:
+        # Measured in the audit: a dashboard whose data stopped 116 days earlier came back
+        # as "ok". Old data is a named gap with its own date, never the current funnel.
+        return {**base, "reason": f"IntelliHost funnel data ends {ended.isoformat()}, {age} days old "
+                                  f"(limit {FUNNEL_MAX_AGE_DAYS}); IntelliHost has stopped syncing this listing"}
     comparison = {
         "first_page_impressions": _pair(f.get("first_page_search_impressions"), f.get("comp_first_page_search_impressions")),
         "click_through_rate": _pair(f.get("click_rate"), f.get("comp_click_rate")),
@@ -58,50 +71,94 @@ def funnel_from_dashboard(payload: dict, start: date) -> dict:
                                "source": "intellihost", "stages": STAGES, "similar_listings_comparison": comparison}}
 
 
+def _guests(value):
+    """guest_count arrives as an int or as a numeric string ("2"); anything else is unreadable."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _day(value):
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
 def rank_rows(payload: dict, start: date, guest_capacity: int = 1) -> list:
+    """Rows from the newest scrape no more than RANK_MAX_AGE_DAYS old. When IntelliHost says the
+    series was `truncated`, every row carries series_truncated=True so the card can say so."""
     series = payload.get("series") if isinstance(payload, dict) else None
     if not isinstance(series, list):
         return []
-    dates = sorted({str(r.get("scrape_date"))[:10] for r in series if isinstance(r, dict) and r.get("scrape_date")})
-    fresh = [d for d in dates if 0 <= (start - date.fromisoformat(d)).days <= RANK_MAX_AGE_DAYS]
+    truncated = bool(payload.get("truncated"))
+    dates = sorted({d for d in (_day(r.get("scrape_date")) for r in series if isinstance(r, dict)) if d})
+    fresh = [d for d in dates if 0 <= (start - d).days <= RANK_MAX_AGE_DAYS]
     if not fresh:
         return []
     latest = fresh[-1]
-    return [{"date": latest, "guest_count": int(r["guest_count"]), "position": r.get("rank"), "page": r.get("page"),
-             "max_age_days": RANK_MAX_AGE_DAYS, "source": "intellihost"}
-            for r in series
-            if isinstance(r, dict) and str(r.get("scrape_date"))[:10] == latest
-            and isinstance(r.get("guest_count"), int) and 1 <= r["guest_count"] <= max(1, int(guest_capacity))]
+    cap = max(1, int(guest_capacity))
+    out = []
+    for r in series:
+        if not isinstance(r, dict) or _day(r.get("scrape_date")) != latest:
+            continue
+        guests = _guests(r.get("guest_count"))
+        if guests is None or not 1 <= guests <= cap:
+            continue
+        row = {"date": latest.isoformat(), "guest_count": guests, "position": r.get("rank"), "page": r.get("page"),
+               "max_age_days": RANK_MAX_AGE_DAYS, "source": "intellihost"}
+        if truncated:
+            row["series_truncated"] = True
+        out.append(row)
+    return out
 
 
 class IntelliHostSource:
     def __init__(self, client, connections):
         self.client, self.connections = client, connections
         self._token = connections.key("intellihost")
-        self._session, self._n = None, 0
+        # analyze90 runs funnel + rankings in a 4-worker pool on ONE instance. A shared,
+        # mutable request counter let thread A look for thread B's id in its own response
+        # (audit REPRO: funnel "skipped"). Each call now owns its id, and the one-time
+        # initialize runs under a lock so it happens once.
+        self._session = None
+        self._ids = itertools.count(1)
+        self._lock = threading.Lock()
+        self._init_lock = threading.Lock()
 
     def _rpc(self, method, params):
-        self._n += 1
+        with self._lock:
+            rid = next(self._ids)
+            session = self._session
         headers = {"Authorization": "Bearer " + self._token, "User-Agent": UA, "Content-Type": "application/json",
                    "Accept": "application/json, text/event-stream"}
-        if self._session:
-            headers["Mcp-Session-Id"] = self._session
+        if session:
+            headers["Mcp-Session-Id"] = session
         text, resp_headers = self.client.request("intellihost", "rpc", URL, headers=headers, text=True,
-                                                 body={"jsonrpc": "2.0", "id": self._n, "method": method, "params": params})
-        self._session = next((v for k, v in resp_headers.items() if k.lower() == "mcp-session-id"), self._session)
+                                                 body={"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+        new_session = next((v for k, v in resp_headers.items() if k.lower() == "mcp-session-id"), None)
+        if new_session:
+            with self._lock:
+                self._session = new_session
         if text.lstrip().startswith("{"):
             result = json.loads(text)
         else:
             events = [json.loads(line[5:]) for line in text.splitlines() if line.startswith("data:")]
-            result = next((x for x in reversed(events) if x.get("id") == self._n), {})
+            result = next((x for x in reversed(events) if x.get("id") == rid), {})
         if result.get("error") or "result" not in result:
             raise CannotAnalyze("IntelliHost RPC returned an error")
         return result["result"]
 
     def _tool(self, name, args):
         if not self._session:
-            self._rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
-                                     "clientInfo": {"name": "revenue-manager", "version": "1"}})
+            with self._init_lock:
+                if not self._session:
+                    self._rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
+                                             "clientInfo": {"name": "revenue-manager", "version": "1"}})
         r = self._rpc("tools/call", {"name": name, "arguments": args})
         text = " ".join(c.get("text", "") for c in r.get("content", []) if c.get("type") == "text")
         if r.get("isError"):
@@ -140,6 +197,8 @@ class IntelliHostSource:
             payload = self._tool("get-rank-series-tool", {"property_id": int(ih_id), "days": 14})
             rows = rank_rows(payload, start, guest_capacity)
             if not rows:
-                raise CannotAnalyze(f"IntelliHost has no rank scrape in the last {RANK_MAX_AGE_DAYS} days")
+                cut = (" (IntelliHost truncated the series it returned, so a newer scrape may be missing)"
+                       if isinstance(payload, dict) and payload.get("truncated") else "")
+                raise CannotAnalyze(f"IntelliHost has no rank scrape in the last {RANK_MAX_AGE_DAYS} days{cut}")
             return rows
         return self.client.fetch("intellihost.rankings", [identity(["intellihost", self._token]), ih_id, start.isoformat(), guest_capacity], load)

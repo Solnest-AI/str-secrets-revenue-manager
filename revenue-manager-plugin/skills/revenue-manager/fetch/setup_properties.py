@@ -22,7 +22,9 @@ Nothing here changes a price. Reads use the runner's read-only transport. The on
 the migration files and the property_config upsert, both to the attendee's own Supabase.
 
 Exit 0: rows written (or, with --dry-run, shown). Unmapped properties are listed loudly.
-Exit 2: cannot set up (no Supabase connection, no Hospitable or PriceLabs key, nothing mapped).
+Exit 2: cannot set up (no Supabase connection, no key for the chosen PMS, nothing mapped).
+No PriceLabs key is NOT a stop (a Beyond user may have none): rows are written with a named
+`pricing_gap`, and the 90-day runner says so instead of pricing.
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _mvp_config import SUPABASE_SERVER, Connections  # noqa: E402
+from _mvp_config import SUPABASE_SERVER, Connections, utf8_console  # noqa: E402
 from _mvp_pms import normalize_property  # noqa: E402
 from _mvp_recommendations import _lit  # noqa: E402
 from _mvp_sources import Sources  # noqa: E402
@@ -95,12 +97,18 @@ def match_rankbreeze(room_id, rb_listings):
     return hits[0] if len(hits) == 1 else None
 
 
+PRICELABS_GAP = ("PriceLabs is not connected, so this property has no pricing-tool mapping; the 90-day "
+                 "runner prices through PriceLabs and cannot price it until PriceLabs is connected and "
+                 "setup_properties.py is run again")
+
+
 def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_NAME, pms_source="hospitable",
-                   intellihost=None) -> dict:
+                   intellihost=None, pricelabs=True) -> dict:
     settings = {
         "pms_source": pms_source,
-        "pms_name": pms_name,
-        "pricelabs_listing_id": property_id,
+        # Always written (null when mapped) so a re-run after connecting PriceLabs clears it:
+        # the upsert MERGES settings, it never drops a key.
+        "pricing_gap": None if pricelabs else PRICELABS_GAP,
         "max_delta_pct": MAX_DELTA,
         "channel_markup_pct": dict(markups),
         "channel_markup_source": {
@@ -109,6 +117,9 @@ def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_N
             "note": "Stated by the operator during first-run setup. A calendar sync ratio is not a markup.",
         },
     }
+    if pricelabs:
+        settings["pms_name"] = pms_name
+        settings["pricelabs_listing_id"] = property_id
     if airbnb:
         settings["airbnb_listing_id"] = airbnb
     if rankbreeze:
@@ -153,6 +164,9 @@ def post_sql(project: str, token: str, sql: str) -> None:
             resp.read()
     except urllib.error.HTTPError as exc:
         detail = exc.read()[:300].decode("utf-8", "replace")
+        if exc.code == 401:
+            raise SetupError("Supabase HTTP 401: the Supabase access token expired or wrong; "
+                             "re-run the connections kit's Supabase step") from None
         raise SetupError(f"Supabase HTTP {exc.code}: {detail}") from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise SetupError("Supabase is unreachable") from None
@@ -199,7 +213,11 @@ def rankbreeze_listings(client: ReadClient, url: str) -> list:
     raise CannotAnalyze("RankBreeze listing inventory did not finish paging")
 
 
+PMS_LABEL = {"hospitable": "Hospitable", "guesty": "Guesty", "ownerrez": "OwnerRez"}
+
+
 def main(argv=None) -> int:
+    utf8_console()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--markup", action="append", default=[], help="channel=percent, e.g. airbnb=16 (repeat)")
     ap.add_argument("--dry-run", action="store_true", help="show the rows; write nothing")
@@ -215,16 +233,24 @@ def main(argv=None) -> int:
         if not supabase:
             raise SetupError(f"No {SUPABASE_SERVER} connection. Run the connections kit's Supabase step first.")
         project, token = supabase
-        connections.key("hospitable")
-        connections.key("pricelabs")
-        args.db.parent.mkdir(parents=True, exist_ok=True)
-        client = ReadClient(Store(args.db), max_calls=400)
         from _pms_registry import choose
         pms = choose(connections, args.pms)
+        label = PMS_LABEL.get(pms, pms)
+        # Only the chosen PMS's credentials are required. Guesty may run on the kit's cached
+        # token and OwnerRez checks its own pair in the adapter; both name themselves.
+        if pms == "hospitable":
+            connections.key("hospitable")
+        try:
+            connections.key("pricelabs")
+            has_pricelabs = True
+        except CannotAnalyze:
+            has_pricelabs = False
+        args.db.parent.mkdir(parents=True, exist_ok=True)
+        client = ReadClient(Store(args.db), max_calls=400)
         sources = Sources(client, connections, pms=pms)
         inventory = (sources._pms.inventory() if sources._pms else
                      sources.pages("/properties", {"include": "listings"}, normalize_property))["data"]
-        pl_names = sources.pricelabs_inventory()
+        pl_names = sources.pricelabs_inventory() if has_pricelabs else {}
         props = [p for p in inventory if p.get("listed") is not False]
         rb, rb_note = [], "RankBreeze not connected (ranking will show as a gap on each card)"
         url = connections.rankbreeze_url()
@@ -248,36 +274,44 @@ def main(argv=None) -> int:
         now = datetime.now(timezone.utc)
         rows, missing = [], []
         for p in props:
-            pl_pms = pl_names.get(p["id"])
-            if not pl_pms:
-                missing.append((p.get("name") or p["id"], "no PriceLabs listing has this PMS id"))
-                continue
-            try:
-                sources.listing(p["id"], pl_pms)
-            except CannotAnalyze as exc:
-                missing.append((p.get("name") or p["id"], str(exc)))
-                continue
+            pl_pms = None
+            if has_pricelabs:
+                pl_pms = pl_names.get(p["id"])
+                if not pl_pms:
+                    missing.append((p.get("name") or p["id"], "no PriceLabs listing has this PMS id"))
+                    continue
+                try:
+                    sources.listing(p["id"], pl_pms)
+                except CannotAnalyze as exc:
+                    missing.append((p.get("name") or p["id"], str(exc)))
+                    continue
             ab = airbnb_id(p)
             rows.append({"property_id": p["id"], "display_name": p.get("name"),
                          "settings": build_settings(p["id"], ab, match_rankbreeze(ab, rb) if rb else None, markups, now,
-                                                    pms_name=pl_pms, pms_source=pms, intellihost=ih_map.get(ab or ""))})
-        print(f"{pms.capitalize()}: {len(props)} listed propert{'y' if len(props) == 1 else 'ies'}. {rb_note}."
+                                                    pms_name=pl_pms, pms_source=pms, intellihost=ih_map.get(ab or ""),
+                                                    pricelabs=has_pricelabs)})
+        print(f"{label}: {len(props)} listed propert{'y' if len(props) == 1 else 'ies'}. {rb_note}."
               + (f" {ih_note}." if ih_note else ""))
+        if not has_pricelabs:
+            print("  ⚠️  PriceLabs is not connected: pricing-tool mapping is a named gap on every property below "
+                  "(the 90-day runner cannot price until PriceLabs is connected and setup is run again).")
+        pl_mark = "✅" if has_pricelabs else "— (gap)"
         for r in rows:
             s = r["settings"]
-            print(f"  ✅ {r['display_name']}: PriceLabs ✅  RankBreeze {'✅' if 'rankbreeze_listing_id' in s else '—'}  "
+            print(f"  ✅ {r['display_name']}: PriceLabs {pl_mark}  RankBreeze {'✅' if 'rankbreeze_listing_id' in s else '—'}  "
                   f"IntelliHost {'✅' if 'intellihost_property_id' in s else '—'}  "
                   f"Airbnb id {'✅' if 'airbnb_listing_id' in s else '—'}")
         for name, why in missing:
-            print(f"  ❌ {name}: NOT IN PRICELABS under the same id ({why}). The runner cannot price it.")
+            print(f"  ❌ {name}: NOT IN PRICELABS under the same {label} id ({why}). The runner cannot price it.")
         if not rows:
-            raise SetupError("No Hospitable property maps to a PriceLabs listing, so there is nothing to set up")
+            raise SetupError(f"No {label} property maps to a PriceLabs listing, so there is nothing to set up"
+                             if has_pricelabs else f"{label} returned no listed property, so there is nothing to set up")
         print(f"Markups: {', '.join(f'{k} {v:g}%' for k, v in markups.items())}")
         if args.dry_run:
             print(f"DRY RUN: nothing written. {len(rows)} row(s) ready for {SUPABASE_SERVER}.")
             return 0
         for f in migration_files():
-            post_sql(project, token, f.read_text())
+            post_sql(project, token, f.read_text(encoding="utf-8-sig"))
         print(f"Tables ready ({len(migration_files())} migrations applied, all idempotent).")
         post_sql(project, token, upsert_statement(rows))
         print(f"SETUP DONE: {len(rows)} propert{'y' if len(rows) == 1 else 'ies'} configured. "

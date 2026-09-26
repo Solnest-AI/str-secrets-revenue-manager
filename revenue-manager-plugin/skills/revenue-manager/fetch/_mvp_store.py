@@ -214,6 +214,9 @@ class ReadClient:
                         time.sleep(delay)
                         continue
                 # Provider bodies/URLs can contain guest data, cookies or credentials.
+                if exc.code == 401:
+                    raise CannotAnalyze(f"{provider} {operation}: HTTP 401, the {provider} token expired "
+                                        "or wrong; reconnect it") from None
                 raise CannotAnalyze(f"{provider} {operation}: HTTP {exc.code}") from None
             except (urllib.error.URLError, TimeoutError, OSError, ValueError):
                 raise CannotAnalyze(

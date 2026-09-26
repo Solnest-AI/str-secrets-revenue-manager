@@ -105,7 +105,7 @@ def load_key(env_file: Path | None) -> str:
     candidates.append(Path.cwd() / ".env")
     for path in candidates:
         if path and path.is_file():
-            for line in path.read_text().splitlines():
+            for line in path.read_text(encoding="utf-8-sig").splitlines():
                 if line.startswith("PRICELABS_API_KEY="):
                     val = line.split("=", 1)[1].strip()
                     if val:

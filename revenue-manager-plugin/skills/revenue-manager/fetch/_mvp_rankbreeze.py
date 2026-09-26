@@ -313,6 +313,25 @@ def parse_booking_funnel(
     return result
 
 
+def _num_or_none(value):
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _complete_pull(row: dict) -> bool:
+    """Active integration, and every one of the six stages has a number for the listing AND
+    for similar listings."""
+    comparison = row.get("similar_listings_comparison")
+    if str(row.get("integration_status") or "").lower() != "active" or not isinstance(comparison, dict):
+        return False
+    for key in METRICS:
+        stage = comparison.get(key)
+        if not isinstance(stage, dict):
+            return False
+        if _num_or_none(stage.get("listing")) is None or _num_or_none(stage.get("similar_listings")) is None:
+            return False
+    return True
+
+
 def funnel_from_summary(payload: dict, as_of: date, listing_id: str, max_age_days: int = 3) -> dict:
     """The Visibility spoke from RankBreeze's OFFICIAL hosted MCP (get_listing_metrics_summary,
     interval=daily). Measured live 2026-09-25: the last 3 pull dates, each carrying
@@ -339,7 +358,12 @@ def funnel_from_summary(payload: dict, as_of: date, listing_id: str, max_age_day
             mine.append((pulled, r))
     if not mine:
         return base
-    pulled, r = max(mine, key=lambda x: x[0])
+    # The newest COMPLETE pull wins: RankBreeze's latest pull is often still being collected
+    # (a stage missing or null), and an older full pull is a better answer than a newer hole.
+    # Only when none in the window is complete does the newest one go through, so the spoke
+    # names the gap instead of the runner guessing.
+    complete = [x for x in mine if _complete_pull(x[1])]
+    pulled, r = max(complete or mine, key=lambda x: x[0])
     comparison = r.get("similar_listings_comparison")
     if not isinstance(comparison, dict) or not comparison:
         return {**base, "reason": "RankBreeze funnel has no similar-listings comparison"}

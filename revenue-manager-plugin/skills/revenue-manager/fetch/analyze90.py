@@ -24,7 +24,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from _mvp_analysis import build, render
-from _mvp_config import Connections, read_context
+from _mvp_config import Connections, read_context, utf8_console
 from _mvp_pms import analyze
 from _mvp_sources import MarketRolledOver, Sources
 from _mvp_store import CannotAnalyze, ReadClient, Store, encode, utc_now
@@ -136,6 +136,11 @@ def run_live(args, client, connections, as_of):
     pid = prop["id"]
     context = read_context(client, connections, pid, args.settings)
     settings = context["settings"]
+    if settings.get("pms_source") and settings["pms_source"] != sources.pms:
+        raise CannotAnalyze(f"This property was set up from {settings['pms_source']}, but this run reads "
+                            f"{sources.pms}; pass --pms {settings['pms_source']}")
+    if settings.get("pricing_gap"):
+        raise CannotAnalyze(settings["pricing_gap"])
     lid = str(settings.get("pricelabs_listing_id") or pid)
     pms_name = settings.get("pms_name") or ("smartbnb" if sources.pms == "hospitable" else None)
     if not pms_name:
@@ -259,7 +264,7 @@ def parser():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     scope = ap.add_mutually_exclusive_group(required=True)
-    scope.add_argument("--property", help="Exact Hospitable property name or UUID")
+    scope.add_argument("--property", help="Exact PMS property name or id (Hospitable, Guesty or OwnerRez)")
     scope.add_argument("--show", metavar="RUN_ID", help="Read a saved result offline")
     scope.add_argument("--replay", metavar="RUN_ID", help="Recalculate a saved snapshot offline")
     scope.add_argument(
@@ -301,6 +306,7 @@ def parser():
 
 
 def main(argv=None):
+    utf8_console()
     args = parser().parse_args(argv)
     if not 7 <= args.days <= 90 or args.max_calls < 1:
         parser().error("--days must be 7-90 and --max-calls must be positive")
@@ -341,7 +347,7 @@ def main(argv=None):
             )
             errors = []
         elif args.inputs:
-            fixture = json.loads(args.inputs.read_text())
+            fixture = json.loads(args.inputs.read_text(encoding="utf-8-sig"))
             inputs = fixture["inputs"]
             as_of = datetime.fromisoformat(fixture["as_of"])
             start = date.fromisoformat(fixture["start"])

@@ -127,7 +127,7 @@ def _read_env_file(path: str) -> dict[str, str]:
     expanded = os.path.expanduser(path)
     if not os.path.isfile(expanded):
         return out
-    with open(expanded) as fh:
+    with open(expanded, encoding="utf-8-sig") as fh:
         for line in fh:
             m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$", line)
             if m:
@@ -479,7 +479,7 @@ def main() -> int:
 
     if args.json:
         os.makedirs(os.path.dirname(os.path.abspath(args.json)), exist_ok=True)
-        with open(args.json, "w") as fh:
+        with open(args.json, "w", encoding="utf-8") as fh:
             json.dump({
                 "generated": date.today().isoformat(),
                 "window": {"from": d_from, "to": d_to},
