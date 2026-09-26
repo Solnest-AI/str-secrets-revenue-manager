@@ -139,7 +139,7 @@ Any of the eight PMSs plus PriceLabs or Beyond runs through the runner in `fetch
 
 **Where the price lives** decides `--target`: PriceLabs manages the listing → `pricelabs` (the default); Beyond manages it → `beyond`; the PMS prices it itself → the PMS name. A PMS target on a listing PriceLabs or Beyond manages is refused, because the tool would overwrite the change on its next sync.
 
-First time on this Supabase project (no rows in `property_config`): ask the markup question (Step 5), then run setup, dry run first. One `--markup <channel>=<percent>` per channel, Airbnb required:
+First time on this Supabase project (no rows in `property_config`): ask the markup question (Step 5), then run setup, dry run first. One `--markup <channel>=<percent>` for every booking site they list on; none is optional and none comes first:
 
 ```bash
 uv run --python 3.13 python fetch/setup_properties.py --pms <PMS> --markup <CHANNEL>=<PERCENT> --dry-run
