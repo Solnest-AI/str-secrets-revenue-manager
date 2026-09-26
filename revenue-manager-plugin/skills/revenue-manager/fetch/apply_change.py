@@ -23,9 +23,20 @@ Apply stops at the first plan that is not verified; later plans are not attempte
 
 Change file shape (one listing per file):
     {"listing_id": "...", "pms": "smartbnb", "reason": "why, in one line",
+     "rules_set": {"last_minute_prices": {"last_min_factor_value": -18}},
      "listing_prices": {"min": 180},
      "overrides_set": [{"date": "2026-10-03", "price": 260, "price_type": "fixed", "min_stay": 2}],
      "overrides_delete": ["2026-10-10"]}
+
+RULES FIRST. `rules_set` changes the listing's OWN PriceLabs rules (last_minute_prices,
+far_out_premium, day_of_week_adjustment; name only the fields that change, the writer reads the
+rest fresh and sends the whole rule, all seven days for day-of-week). The analysis card prints a
+ready change file for every rule change it proposes. Rules are listed first on the card and sent
+first; if the rule write fails, nothing after it is sent. A group- or account-level rule (a
+"level": "group"/"account" or a "group_id" in the file) is refused: this changes every listing in
+the group/account; change it in PriceLabs. Undo is the same one command: rollback --journal
+<journal> re-POSTs the rule exactly as the snapshot saved it and re-reads it to prove it (the rule
+snapshot file in the snapshots folder works as --journal too).
 
 "pms" here is PriceLabs' name for the PMS, not the PMS's own name: Hospitable is "smartbnb"
 (the `pms_name` in the property's property_config row, also on analyze90 --details).

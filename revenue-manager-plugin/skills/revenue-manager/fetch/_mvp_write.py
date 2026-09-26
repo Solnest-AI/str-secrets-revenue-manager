@@ -18,12 +18,25 @@ after. NOT the reason text, timestamps or warnings: a rebuilt plan keeps its id,
 changed field gets a new one, and a live value that drifted since the plan is refused.
 
 What it will write, and nothing else (WriteClient refuses the rest):
+  POST   /v1/customizations/listing        listing-level rules only (rules_set), sent FIRST
   POST   /v1/listings                      min / base / max only, never tags, sync or groups
   POST   /v1/listings/{id}/overrides       with update_children false, always
   DELETE /v1/listings/{id}/overrides       with update_children false, always
-Reads it needs: GET /v1/listings/{id}, GET /v1/listings/{id}/overrides, POST
-/v1/listing_prices (a read that happens to be a POST). Customization rules and nudge
-acceptance are separate operations with their own measured traps and are NOT here yet.
+Reads it needs: GET /v1/listings/{id}, GET /v1/listings/{id}/overrides, GET
+/v1/customizations/listing (always toggled_on=false), POST /v1/listing_prices (a read that
+happens to be a POST). Group- and account-level rules are refused by name ("this changes every
+listing in the group/account; change it in PriceLabs"); nudge acceptance is not here.
+
+Rules first (Ryan 2026-09-25). A plan may carry rule changes and DSOs; the rule operations are
+listed first and sent first, in ONE all-or-nothing POST, and if that POST fails nothing else is
+sent. Only the three rules with one signed number the re-read can prove are writable
+(last_minute_prices, far_out_premium, day_of_week_adjustment). Each rule write keeps every
+guarantee: a fresh GET with toggled_on=false at plan and again at apply, a drift refusal when
+ANY of the listing's six rules moved (the rule block hash), customization_write's snapshot on
+disk before the send (the exact payload that re-POSTs the prior state), a guarded payload
+(merge_dow so omitted days are not zeroed, validate, destructive_warnings), a field-by-field
+re-read of every rule (written or not) where an empty or unreadable re-read is NOT success,
+the journal always, and a one-step undo that re-POSTs the snapshot.
 
 Measured-behaviour guards, each one a way PriceLabs returns HTTP 200 while doing the wrong
 thing: an `errors` array on the listings response, an error envelope in place of the
@@ -48,6 +61,8 @@ from urllib.parse import quote, urlencode, urlsplit
 
 from reduce_prices import payload_matches, split_payload
 from _calendar import pricelabs_status
+import customization_write as cw
+from attribution import DOW_KEYS, rule_covers, to_setting, toggle_is_on
 
 PL_HOST = "api.pricelabs.co"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
@@ -72,7 +87,27 @@ PCT_RANGE = (-75.0, 1000.0)
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 TOP_KEYS = {"listing_id", "pms", "reason", "listing_prices", "overrides_set", "overrides_delete",
-            "overrides_restore"}
+            "overrides_restore", "rules_set", "rules_restore", "level"}
+
+# The rules the writer may change, and every field each one carries on the wire. Seasonality,
+# demand factor and the custom seasonal profile carry a tone or a season set that no re-read can
+# prove, so they are refused: "change it in PriceLabs".
+RULE_FIELDS = {
+    "last_minute_prices": ("last_min_factor_on", "last_min_factor_type", "last_min_factor_value",
+                           "last_min_factor_dfd"),
+    "far_out_premium": ("far_out_premium_on", "far_out_premium_type", "far_out_premium_value",
+                        "far_out_premium_start", "far_out_premium_step"),
+    "day_of_week_adjustment": ("dow_factor_on", *DOW_KEYS),
+}
+# Integer on the wire (customer-api.json); a whole float read back is sent as an int.
+RULE_INTS = set(DOW_KEYS) | {"far_out_premium_value", "far_out_premium_start",
+                             "far_out_premium_step", "last_min_factor_dfd"}
+RULE_TOGGLE = {r: f[0] for r, f in RULE_FIELDS.items()}
+RULE_VALUE = {"last_minute_prices": "last_min_factor_value", "far_out_premium": "far_out_premium_value"}
+RULE_TYPE = {"last_minute_prices": "last_min_factor_type", "far_out_premium": "far_out_premium_type"}
+CONCRETE_TYPES = {"last_minute_prices": {"linear", "linear_gradual"}, "far_out_premium": {"linear", "fix"}}
+LEVEL_REFUSAL = {"group": "this changes every listing in the group; change it in PriceLabs",
+                 "account": "this changes every listing in the account; change it in PriceLabs"}
 
 
 class CannotWrite(Exception):
@@ -89,14 +124,15 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 def _allowed(method: str, path: str) -> bool:
     seg = r"[A-Za-z0-9._:-]+"
     reads = {("GET", rf"/v1/listings/{seg}"), ("GET", rf"/v1/listings/{seg}/overrides"),
-             ("POST", r"/v1/listing_prices")}
+             ("POST", r"/v1/listing_prices"), ("GET", r"/v1/customizations/listing")}
+    # listing-level rules only: /v1/customizations/group and /account stay refused
     writes = {("POST", r"/v1/listings"), ("POST", rf"/v1/listings/{seg}/overrides"),
-              ("DELETE", rf"/v1/listings/{seg}/overrides")}
+              ("DELETE", rf"/v1/listings/{seg}/overrides"), ("POST", r"/v1/customizations/listing")}
     return any(m == method and re.fullmatch(p, path) for m, p in reads | writes)
 
 
 class WriteClient:
-    """The only transport in this skill that can change a price. It knows exactly six
+    """The only transport in this skill that can change a price. It knows exactly eight
     calls and refuses everything else, including every other PriceLabs write. No retries:
     a POST that failed is reported, never resent behind the operator's back."""
 
@@ -204,6 +240,18 @@ class Live:
             out[r["date"]] = {k: v for k, v in r.items() if k not in OVERRIDE_META and v is not None}
         return out
 
+    def rules(self) -> dict:
+        """The listing's OWN six rules, fresh, with toggled_on=false (the default hides every OFF
+        rule, and an OFF rule is not a no-op). An unreadable answer is refused, never read as
+        "no rules"."""
+        raw = self.client.request("GET", "/v1/customizations/listing",
+                                  {"listing_id": self.lid, "pms_name": self.pms, "toggled_on": "false"})
+        block = raw.get("customizations") if isinstance(raw, dict) else None
+        if not isinstance(block, dict) or raw.get("error") or raw.get("error_code"):
+            raise CannotWrite("PriceLabs did not return this listing's rules (no customizations map); "
+                              "absence cannot be assumed")
+        return block
+
     def prices(self, start: date, days: int, currency, status: dict | None = None) -> dict:
         """Nightly prices by date. Pass a dict as `status` to also get PriceLabs' reading of
         each night (RESERVED / BLOCKED / AVAILABLE / UNKNOWN) from the same response."""
@@ -250,6 +298,291 @@ def content_hash(envelope: dict) -> str:
 
 def plan_id(envelope: dict) -> str:
     return content_hash(envelope)[:12]
+
+
+# ------------------------------------------------------------------------------ rules
+
+def block_hash(block: dict) -> str:
+    """What the listing's six rules were when the plan was made. Apply refuses if it moved."""
+    return hashlib.sha256(canonical(block if isinstance(block, dict) else {})).hexdigest()[:16]
+
+
+def _blank(v) -> bool:
+    return v is None or v == ""
+
+
+def _wire(field: str, value):
+    """A config value as it goes on the wire: whole numbers on integer fields as ints."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if field in RULE_INTS:
+        number = to_setting(value)
+        if number is None or number != int(number):
+            raise CannotWrite(f"{field} must be a whole number, got {value!r}")
+        return int(number)
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def rule_payload(rule: str, cfg: dict) -> dict:
+    """The exact object POSTed for one rule. Blank fields are left out (a market-driven type has
+    no value to send). A last-minute or far-out rule switched OFF is sent as its toggle alone:
+    PriceLabs resets their stored config on toggle-off anyway (measured), so sending the stale
+    numbers alongside would only invite a validation refusal."""
+    out = {k: _wire(k, cfg[k]) for k in RULE_FIELDS[rule] if k in cfg and not _blank(cfg[k])}
+    toggle = RULE_TOGGLE[rule]
+    if toggle in out:
+        out[toggle] = toggle_is_on(out[toggle])
+    if rule in RULE_TYPE and toggle in out and not out[toggle]:
+        return {toggle: False}
+    return out
+
+
+def _expected(rule: str, want: dict) -> dict:
+    """What a correct re-read shows for `want`: a `fix` far-out reads back as linear, step 1;
+    a market-driven or `none` type and a toggled-off last-minute/far-out carry no provable
+    numbers, so only their toggle (and type) are compared."""
+    exp = dict(want)
+    if rule in RULE_TYPE:
+        toggle, kind = RULE_TOGGLE[rule], exp.get(RULE_TYPE[rule])
+        if not toggle_is_on(exp.get(toggle)):
+            return {toggle: False}
+        if rule == "far_out_premium" and kind == "fix":
+            exp.update({"far_out_premium_type": "linear", "far_out_premium_step": 1})
+        if kind not in CONCRETE_TYPES[rule]:
+            return {k: exp[k] for k in (toggle, RULE_TYPE[rule]) if k in exp}
+    return exp
+
+
+def _same_setting(field: str, a, b) -> bool:
+    if _blank(a) and _blank(b):  # blank == blank, the same convention as _same
+        return True
+    if field.endswith("_on"):
+        return toggle_is_on(a) == toggle_is_on(b)
+    x, y = to_setting(a), to_setting(b)
+    if x is not None and y is not None and not isinstance(a, bool) and not isinstance(b, bool):
+        return abs(x - y) < 0.005
+    return a == b
+
+
+def rule_diff(rule: str, want: dict, got) -> list:
+    """The fields on which a re-read of a WRITTEN rule differs from what was sent (as PriceLabs
+    stores it: see _expected). Rules the write did not touch go through _unchanged_diff."""
+    if not isinstance(got, dict):
+        return ["<missing from the re-read>"]
+    exp = _expected(rule, want)
+    keys = set(exp)
+    if rule == "day_of_week_adjustment":
+        keys |= set(DOW_KEYS)
+    out = []
+    for k in sorted(keys):
+        a, b = exp.get(k), got.get(k)
+        if rule == "day_of_week_adjustment" and k in DOW_KEYS:
+            a, b = (0 if _blank(a) else a), (0 if _blank(b) else b)  # an unset day is 0
+        if isinstance(a, (dict, list)) or isinstance(b, (dict, list)):
+            if canonical(a) != canonical(b):
+                out.append(k)
+        elif not _same_setting(k, a, b):
+            out.append(k)
+    return out
+
+
+def _echo(rule: str, want: dict, got: dict) -> list:
+    """customization_write.echo_diff on each signed number this write set: the sign is the
+    failure that returns 200 (a discount stored as a premium)."""
+    if not toggle_is_on(want.get(RULE_TOGGLE[rule])):
+        return []
+    if rule in RULE_TYPE and want.get(RULE_TYPE[rule]) not in CONCRETE_TYPES[rule]:
+        return []
+    probs = []
+    if rule == "day_of_week_adjustment":
+        for key in DOW_KEYS:
+            v = to_setting(want.get(key)) or 0
+            intent = {"rule": rule, "direction": "down" if v < 0 else "up" if v > 0 else "none",
+                      "day": key.rsplit("_", 1)[-1]}
+            if v:
+                intent["magnitude"] = abs(v)
+            probs += cw.echo_diff(intent, got)
+    else:
+        v = to_setting(want.get(RULE_VALUE[rule])) or 0
+        intent = {"rule": rule, "direction": "down" if v < 0 else "up" if v > 0 else "none"}
+        if v:
+            intent["magnitude"] = abs(v)
+        probs += cw.echo_diff(intent, got)
+    return probs
+
+
+def show_rule(rule: str, cfg) -> str:
+    """A rule's setting in words, for the card."""
+    if not isinstance(cfg, dict) or not cfg:
+        return "not set on this listing"
+    if not toggle_is_on(cfg.get(RULE_TOGGLE.get(rule, ""))):
+        return "OFF"
+    if rule == "day_of_week_adjustment":
+        days = [f"{k.rsplit('_', 1)[-1].title()} {to_setting(cfg.get(k)) or 0:+g}%" for k in DOW_KEYS]
+        return "on: " + ", ".join(days)
+    kind = cfg.get(RULE_TYPE[rule])
+    if kind not in CONCRETE_TYPES[rule]:
+        return f"on, {kind}"
+    v = to_setting(cfg.get(RULE_VALUE[rule])) or 0
+    if rule == "last_minute_prices":
+        return f"on, {kind} {v:+g}% over 0-{int(to_setting(cfg.get('last_min_factor_dfd')) or 0)} days out"
+    return f"on, {kind} {v:+g}% from {int(to_setting(cfg.get('far_out_premium_start')) or 0)} days out"
+
+
+def _rule_moves(rule: str, before: dict, after: dict):
+    """(label, old %, new %) for every signed number the write changes."""
+    keys = DOW_KEYS if rule == "day_of_week_adjustment" else [RULE_VALUE[rule]]
+    for k in keys:
+        old = to_setting(before.get(k)) or 0.0
+        new = to_setting(after.get(k)) if k in after else old
+        new = old if new is None else new
+        if abs(new - old) >= 0.005:
+            yield k.rsplit("_", 1)[-1].title() if rule == "day_of_week_adjustment" else rule, old, new
+
+
+def _unchanged_diff(before, after) -> list:
+    """Every field of a rule this write did not touch, compared exactly (blank == blank)."""
+    if not isinstance(after, dict):
+        return ["<missing from the re-read>"]
+    out = []
+    for k in sorted(set(before) | set(after)):
+        a, b = before.get(k), after.get(k)
+        if isinstance(a, (dict, list)) or isinstance(b, (dict, list)):
+            if canonical(a) != canonical(b):
+                out.append(k)
+        elif not _same_setting(k, a, b):
+            out.append(k)
+    return out
+
+
+def _level_refusal(change: dict) -> None:
+    """Group and account rules are read and shown, never written from here."""
+    level = change.get("level")
+    if "group_id" in change or "subgroup_id" in change or level in ("group", "subgroup"):
+        raise CannotWrite(LEVEL_REFUSAL["group"])
+    if level == "account" or "pms_name" in change and "listing_id" not in change:
+        raise CannotWrite(LEVEL_REFUSAL["account"])
+    if level not in (None, "listing"):
+        raise CannotWrite(f"level {level!r} is not something this writer changes (listing only)")
+
+
+def plan_rules(change: dict, live: "Live", rollback: bool, warnings: list) -> tuple[list, int]:
+    """The rule operations of a plan, built on a FRESH read with toggled_on=false."""
+    r_set = change.get("rules_set") or {}
+    r_res = change.get("rules_restore") or {}
+    if not isinstance(r_set, dict) or not isinstance(r_res, dict):
+        raise CannotWrite("rules_set is an object of rule name -> the fields to change")
+    if not (r_set or r_res):
+        return [], 0
+    for rule in list(r_set) + list(r_res):
+        if rule not in RULE_FIELDS:
+            raise CannotWrite(f"{rule}: the writer changes {', '.join(RULE_FIELDS)} only (one signed "
+                              "number a re-read can prove); change it in PriceLabs")
+    block = live.rules()
+    bh = block_hash(block)
+    ops, already = [], 0
+    for rule, changes in r_set.items():
+        if not isinstance(changes, dict) or not changes:
+            raise CannotWrite(f"rules_set.{rule} must name at least one field to change")
+        unknown = sorted(set(changes) - set(RULE_FIELDS[rule]))
+        if unknown:
+            raise CannotWrite(f"{rule}: {unknown} is not a field of this rule (fields: "
+                              f"{', '.join(RULE_FIELDS[rule])})")
+        before = block.get(rule)
+        if not isinstance(before, dict) or not before:
+            raise CannotWrite(f"This listing does not set {rule} itself (it may inherit it from a group "
+                              "or the account); a listing write could not be undone back to that, so "
+                              "change it in PriceLabs")
+        extra = sorted(set(before) - set(RULE_FIELDS[rule]))
+        if extra:
+            raise CannotWrite(f"{rule} carries {extra}, which this writer cannot send back; a rollback "
+                              "could not restore it")
+        if rule == "day_of_week_adjustment":
+            try:
+                after = cw.merge_dow(before, {k: v for k, v in changes.items() if k in DOW_KEYS})
+            except ValueError as exc:
+                raise CannotWrite(str(exc)) from None
+            if "dow_factor_on" in changes:
+                if not isinstance(changes["dow_factor_on"], bool):
+                    raise CannotWrite("dow_factor_on must be true or false")
+                after["dow_factor_on"] = changes["dow_factor_on"]
+        else:
+            after = {k: v for k, v in before.items() if not _blank(v)}
+            after.update(changes)
+        payload = rule_payload(rule, after)
+        toggle = RULE_TOGGLE[rule]
+        if not toggle_is_on(payload.get(toggle)) and set(changes) - {toggle}:
+            raise CannotWrite(f"{rule} is OFF on this listing, so {sorted(set(changes) - {toggle})} would "
+                              f"not take effect; add \"{toggle}\": true (and the type) to turn it on")
+        errors = cw.validate({rule: payload})
+        if errors:
+            raise CannotWrite("PriceLabs would reject the whole write: " + "; ".join(errors))
+        if not rule_diff(rule, payload, before) and not rule_diff(rule, rule_payload(rule, before), after):
+            raise CannotWrite(f"{rule} is already set that way")
+        ops.append({"kind": "rule_set", "field": rule, "rule": rule, "before": before,
+                    "after": payload, "block": bh})
+        warnings.extend(cw.destructive_warnings({rule: payload}))
+        was_on, now_on = toggle_is_on(before.get(RULE_TOGGLE[rule])), toggle_is_on(payload.get(RULE_TOGGLE[rule]))
+        if was_on and not now_on:
+            warnings.append(f"{rule}: OFF is not none. Switching it off hands these dates to PriceLabs' "
+                            "market-driven default; to suppress it, send type none with the toggle ON.")
+        if now_on and not was_on:
+            warnings.append(f"{rule}: this listing's own rule was OFF, so today its group or account rule "
+                            "(if any) or PriceLabs' market default runs these dates; this write makes the "
+                            "listing's own rule take over.")
+    for rule, cfg in r_res.items():
+        if not rollback:
+            raise CannotWrite("rules_restore is only built by the undo command (apply_change.py rollback "
+                              "--journal <journal or snapshot>); use rules_set for a change")
+        before = block.get(rule)
+        if not isinstance(before, dict) or not isinstance(cfg, dict):
+            raise CannotWrite(f"{rule} cannot be put back: PriceLabs no longer returns it for this listing")
+        payload = rule_payload(rule, cfg)
+        if not rule_diff(rule, payload, before):
+            already += 1
+            continue
+        errors = cw.validate({rule: payload})
+        if errors:
+            raise CannotWrite(f"{rule}: the saved rule would be rejected: " + "; ".join(errors))
+        ops.append({"kind": "rule_set", "field": rule, "rule": rule, "before": before,
+                    "after": payload, "block": bh})
+        warnings.append(f"RESTORES {rule} exactly as it was before.")
+    return ops, already
+
+
+def rule_warnings(ops: list, calendar: dict, night_status: dict, today: date, delta: float) -> list:
+    """Blast radius, sign flips and the D8 move flag for each rule operation."""
+    out = []
+    over = _over(delta)
+    for op in ops:
+        rule, before, after = op["rule"], op["before"], op["after"]
+        merged_after = {**before, **after}
+        reach, open_n = 0, 0
+        for d, _ in sorted(calendar.items()):
+            when = date.fromisoformat(d)
+            row = {"date": d, "dow": when.weekday(), "days_out": (when - today).days}
+            if rule_covers(rule, merged_after, row) or rule_covers(rule, before, row):
+                if rule == "day_of_week_adjustment":
+                    key = DOW_KEYS[when.weekday()]
+                    if _same_setting(key, before.get(key) or 0, merged_after.get(key) or 0) and \
+                            toggle_is_on(before.get("dow_factor_on")) == toggle_is_on(merged_after.get("dow_factor_on")):
+                        continue
+                reach += 1
+                open_n += night_status.get(d) not in ("RESERVED", "BLOCKED")
+        out.append(f"BLAST RADIUS: {rule} reaches {reach} of the next {HORIZON_DAYS} nights ({open_n} open), "
+                   "and every later date in its window until it is changed. A rule is not a date: "
+                   "it keeps pricing forward.")
+        for label, old, new in _rule_moves(rule, before, after):
+            if old < 0 < new or new < 0 < old:
+                out.append(f"SIGN FLIP: {label} goes from {old:+g}% to {new:+g}%, a "
+                           f"{'discount into a premium' if old < 0 else 'premium into a discount'}.")
+            move = (1 + new / 100) / (1 + old / 100) - 1 if old > -100 else 0
+            if abs(move) > delta + 1e-9:
+                out.append(f"{over}: {label} {old:+g}% -> {new:+g}% moves those nights about "
+                           f"{move:+.1%}. Extra scrutiny (D8).")
+    return out
 
 
 # ------------------------------------------------------------------------------ plan
@@ -348,10 +681,15 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
     over = _over(delta)
     if not isinstance(change, dict):
         raise CannotWrite("The change must be a JSON object")
+    _level_refusal(change)  # before anything is read: a group/account rule is never written here
     unknown = set(change) - TOP_KEYS
     if unknown:
         raise CannotWrite(f"Unsupported change keys {sorted(unknown)}: this writer does listing "
-                          "min/base/max and date overrides only")
+                          "rules (rules_set), min/base/max and date overrides only")
+    if change.get("rules_restore") and not rollback:
+        raise CannotWrite("rules_restore is only built by the undo command (apply_change.py rollback "
+                          "--journal <journal or snapshot>). A change file cannot carry it; use "
+                          "rules_set for the fields you want.")
     if change.get("overrides_restore") and not rollback:
         raise CannotWrite("overrides_restore is only built by the undo command (apply_change.py "
                           "rollback --journal <journal or snapshot>). A change file cannot carry it; "
@@ -367,13 +705,18 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
     o_res = change.get("overrides_restore") or []
     if not isinstance(prices, dict) or not all(isinstance(x, list) for x in (o_set, o_del, o_res)):
         raise CannotWrite("listing_prices is an object; the overrides_* keys are lists")
-    if not (prices or o_set or o_del or o_res):
+    if not (prices or o_set or o_del or o_res or change.get("rules_set") or change.get("rules_restore")):
         raise CannotWrite("The change has nothing to write")
 
     listing = live.listing()
     currency = listing["currency"]
     ops, warnings = [], []
     already, past = 0, []
+
+    # rules FIRST: listed first on the card and sent first on apply
+    rule_ops, rules_back = plan_rules(change, live, rollback, warnings)
+    ops.extend(rule_ops)
+    already += rules_back
 
     # listing min / base / max
     merged = {f: listing[f] for f in LISTING_FIELDS}
@@ -513,7 +856,8 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
     priced = [op for op in ops if op["kind"] == "override" and op["after"] and _price_changes(op)]
     night_status = {}
     calendar = (live.prices(today, HORIZON_DAYS, currency, status=night_status)
-                if (min_raised or max_cut or priced) else {})
+                if (min_raised or max_cut or priced or rule_ops) else {})
+    warnings.extend(rule_warnings(rule_ops, calendar, night_status, today, delta))
 
     # A listing min/max never moves a booked or blocked night, and a date override that sets its
     # own fixed min_price / max_price outranks the listing bound. Live 2026-09-25 (Olde Town
@@ -646,7 +990,11 @@ def describe(envelope: dict) -> str:
              f"({t['pms']}, {t.get('currency') or 'no currency'})",
              f"Reason: {envelope['reason']}", ""]
     for op in envelope["operations"]:
-        if op["kind"] == "listing_price":
+        if op["kind"] == "rule_set":
+            lines.append(f"  rule {op['rule']} (listing level, applied first): "
+                         f"{show_rule(op['rule'], op['before'])}  ->  "
+                         f"{show_rule(op['rule'], {**op['before'], **op['after']})}")
+        elif op["kind"] == "listing_price":
             lines.append(f"  {op['field']:>4}: {_money(op['before'])} -> {_money(op['after'])}")
         else:
             lines.append(f"  {op['date']}: {_show(op['before'])}  ->  {_show(op['after'])}")
@@ -713,6 +1061,13 @@ def rollback_change(journal_or_envelope: dict) -> dict:
     plan_change(..., rollback=True): that is what lets overrides_restore through."""
     if not isinstance(journal_or_envelope, dict):
         raise CannotWrite("That is not a journal or snapshot this writer saved")
+    if (set(journal_or_envelope) == {"listing_id", "pms_name", "customizations"}
+            and isinstance(journal_or_envelope.get("customizations"), dict)):
+        # customization_write's rule snapshot: the exact rules to re-POST
+        snap = journal_or_envelope
+        return {"listing_id": snap["listing_id"], "pms": snap["pms_name"],
+                "reason": "ROLLBACK from the rule snapshot",
+                "rules_restore": copy.deepcopy(snap["customizations"])}
     if "envelope" not in journal_or_envelope and "operations" not in journal_or_envelope:
         snap = copy.deepcopy(journal_or_envelope)
         if not snap.get("listing_id") or set(snap) - TOP_KEYS:
@@ -723,6 +1078,9 @@ def rollback_change(journal_or_envelope: dict) -> dict:
     out = {"listing_id": t["listing_id"], "pms": t["pms"],
            "reason": f"ROLLBACK of plan {plan_id(env)}: {env.get('reason', '')}".strip()}
     prices = {op["field"]: op["before"] for op in env["operations"] if op["kind"] == "listing_price"}
+    rules = {op["rule"]: copy.deepcopy(op["before"]) for op in env["operations"] if op["kind"] == "rule_set"}
+    if rules:
+        out["rules_restore"] = rules
     restore, delete = [], []
     for op in env["operations"]:
         if op["kind"] != "override":
@@ -792,9 +1150,19 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
     listing = live.listing()
     touches_overrides = any(op["kind"] == "override" for op in envelope["operations"])
     overrides = live.overrides() if touches_overrides else {}
+    rule_ops = [op for op in envelope["operations"] if op["kind"] == "rule_set"]
+    rules_now = live.rules() if rule_ops else {}
     if (listing["currency"] or None) != t.get("currency"):
         raise CannotWrite("The listing currency changed since the plan. Nothing was sent; plan again.")
+    if rule_ops and any(op.get("block") != block_hash(rules_now) for op in rule_ops):
+        moved = [op["rule"] for op in rule_ops
+                 if canonical(op["before"]) != canonical(rules_now.get(op["rule"]))]
+        raise CannotWrite("This listing's PriceLabs rules changed since the plan"
+                          + (f" ({', '.join(moved)})" if moved else " (a rule the plan does not touch)")
+                          + ". Nothing was sent; plan again.")
     for op in envelope["operations"]:
+        if op["kind"] == "rule_set":
+            continue
         if op["kind"] == "listing_price":
             if not _same(op["field"], listing[op["field"]], op["before"]):
                 raise CannotWrite(f"{op['field']} changed since the plan ({_money(op['before'])} -> "
@@ -830,6 +1198,23 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
         send_error = None
         prices = {op["field"]: op["after"] for op in envelope["operations"] if op["kind"] == "listing_price"}
         try:
+            if rule_ops:
+                # the rule kill switch, on disk before the send: the exact payload that re-POSTs
+                # the prior state (customization_write). A failure here sends nothing.
+                journal["rule_snapshot_path"] = cw.write_snapshot(
+                    cw.snapshot_payload(live.lid, live.pms, {op["rule"]: op["before"] for op in rule_ops}),
+                    str(state / "snapshots"))
+                # RULES FIRST, in one all-or-nothing POST. If it fails nothing else is sent.
+                body = {"listing_id": live.lid, "pms_name": live.pms,
+                        "customizations": {op["rule"]: op["after"] for op in rule_ops}}
+                journal["sent"].append({"call": "POST /v1/customizations/listing",
+                                        "rules": sorted(body["customizations"])})
+                resp = live.client.request("POST", "/v1/customizations/listing", body=body)
+                if not isinstance(resp, dict) or resp.get("error") or resp.get("error_code"):
+                    code = resp.get("error_code") if isinstance(resp, dict) else None
+                    code = code if isinstance(code, str) and re.fullmatch(r"ERR-[A-Z-]{1,60}", code) else None
+                    raise CannotWrite("PriceLabs refused the rule write" + (f" ({code})" if code else "")
+                                      + "; nothing after it was sent")
             if prices:
                 body = {"listings": [{"id": live.lid, "pms": live.pms, **prices}]}
                 journal["sent"].append({"call": "POST /v1/listings", "fields": sorted(prices)})
@@ -890,6 +1275,26 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
                     journal["verification"].append({"date": d, "ok": not diff, "differs_on": diff})
                     if diff:
                         problems.append(f"override {d} differs on {', '.join(diff)}")
+            if rule_ops:
+                # every rule, written or not, field by field. An empty re-read is NOT success.
+                after_rules = live.rules()
+                if not after_rules:
+                    problems.append("the rule re-read came back empty; the write cannot be confirmed")
+                wanted_rules = {op["rule"]: op["after"] for op in rule_ops}
+                for rule in sorted(set(rules_now) | set(after_rules) | set(wanted_rules)):
+                    if rule in wanted_rules:
+                        diff = rule_diff(rule, wanted_rules[rule], after_rules.get(rule))
+                        if diff and isinstance(after_rules.get(rule), dict):
+                            # say it in words: a sign stored the wrong way reads SIGN INVERTED
+                            problems.extend(f"{rule}: {e}" for e in
+                                            _echo(rule, wanted_rules[rule], after_rules[rule]))
+                    elif isinstance(rules_now.get(rule), dict):
+                        diff = _unchanged_diff(rules_now[rule], after_rules.get(rule))
+                    else:
+                        diff = ["<appeared after the write>"]
+                    journal["verification"].append({"field": rule, "ok": not diff, "differs_on": diff})
+                    if diff:
+                        problems.append(f"rule {rule} differs on {', '.join(diff)}")
         except CannotWrite as exc:
             reread_error = f"the re-read after the write failed ({exc})"
         except Exception as exc:  # noqa: BLE001

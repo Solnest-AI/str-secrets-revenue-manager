@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from datetime import date as Date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -9,6 +10,7 @@ from statistics import mean
 
 import attribution
 import flywheel
+import rules_first
 from _calendar import pricelabs_status
 from _mvp_store import CannotAnalyze
 
@@ -583,6 +585,19 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         "market_occ": r.get("market_occ"),
     } for r in rows]
     rule_effect = [] if beyond else attribution.rule_effectiveness(rules["raw"], effect_rows)
+    # Rules first, then DSOs (Ryan 2026-09-25). A blocked run proposes nothing: no candidates,
+    # and no grading-only rule change either.
+    rules_plan = None
+    if not beyond:
+        rules_plan = rules_first.recommend(
+            rows, [] if blockers else candidates, rules.get("raw") or {}, rules.get("levels") or {},
+            [] if blockers else rule_effect, bounds, max_delta, overrides, today_date)
+        for c in candidates:
+            c["layers"] = rules_plan["layers"].get(c["date"], [])
+            if c["date"] in rules_plan["folded"]:
+                c["folded_into"] = rules_plan["folded"][c["date"]]
+            elif c["date"] in rules_plan["why_dso"]:
+                c["why_dso"] = rules_plan["why_dso"][c["date"]]
     rollups = []
     for win in pms["windows"]:
         group = rows[: win["days"]]
@@ -672,6 +687,17 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         "rule_effectiveness": rule_effect,
         "pile": pile_summary(pile),
         "rules": [] if beyond else rules["summary"],
+        "rules_first": None if beyond else {
+            "stack": rules.get("stack") or rules_first.stack_rows(
+                rules.get("raw") or {}, rules.get("levels") or {}),
+            "gaps": list(rules.get("gaps") or []),
+            "rule_changes": rules_plan["rule_changes"],
+            "dso_dates": rules_plan["dso_dates"],
+            "existing_dsos": rules_plan["existing_dsos"],
+            "notes": rules_plan["notes"],
+            "thresholds": rules_plan["thresholds"],
+            "target": {"listing_id": listing.get("id"), "pms": listing.get("pms")},
+        },
         "pms": {k: v for k, v in pms.items() if k not in {"daily", "property"}},
         "comp_count": market.get("listings_used"),
         "custom_comp_set": market.get("custom_comp_set"),
@@ -735,6 +761,101 @@ def pile_summary(pile):
         "this_listing": items,
         "counts": c,
     }
+
+
+EXISTING_DSO_LINES = 10
+
+
+def _candidate_line(r, beyond):
+    ref_words = {"beyond_benchmark_avg": "Beyond benchmark avg", "airroi_adr_p75": "AirROI ADR p75",
+                 "airroi_adr_p25": "AirROI ADR p25"}
+    line = (f"{r['date']}: net {r['net']:g}, Airbnb {r['airbnb']:g}, "
+            + (f"vs {ref_words.get(r.get('reference_source'), 'reference')} {r['reference']:g}; "
+               if beyond else f"comp p75/p90 {r['p75']:g}/{r['p90']:g}; ")
+            + f"review {r.get('direction', 'cut')} net {r['review_net_range'][0]}-"
+            f"{r['review_net_range'][1]}; layer {r['layer']}")
+    if r.get("layers") is not None:
+        line += f"; layers: {', '.join(r['layers']) or 'none active'}"
+    if r.get("why_dso"):
+        line += f". Why a DSO: {r['why_dso']}"
+    return line + "."
+
+
+def render_rules_first(pack, beyond):
+    """Rule changes first, then the DSO suggestions no rule explains, then the DSOs already set.
+    Each with its reason. Beyond has no rule stack in the runner: its section says so."""
+    lines = [""]
+    rf = pack.get("rules_first")
+    residual = [r for r in pack["candidates"] if not r.get("folded_into")]
+    if beyond or not rf:
+        lines.append("Dated price review scenarios, requiring framework/event review and approval "
+                     "(Beyond: no rule stack is read, so there is no rules-first step; a named gap):")
+        lines += [_candidate_line(r, beyond) for r in residual]
+        if not residual:
+            lines.append("None emitted." if not pack["blockers"] else "Withheld because a required gate failed.")
+        return lines
+    lines.append("RULES FIRST, THEN DATE OVERRIDES. Rule changes are applied before any DSO; the DSO "
+                 "list holds only the nights no rule explains.")
+    lines.append("Rule stack (what PriceLabs applies here; listing > group > account):")
+    for s in rf["stack"]:
+        lines.append(f"  {s['rule']} [{s['level']}]: {s['setting']}")
+    for g in rf["gaps"]:
+        lines.append(f"  GAP: {g}")
+    changes = rf["rule_changes"]
+    days = pack["window"]["days"]
+    lines.append(f"1) Rule changes ({len(changes)}):")
+    target = rf.get("target") or {}
+    for i, ch in enumerate(changes, 1):
+        lines.append(f"  R{i}. {ch['summary']} [{ch['level']} level]. Touches {ch['touches_open']} open "
+                     f"night(s) in the next {days} days ({ch['touches_nights']} nights in its window), "
+                     "and every later date in the window until changed.")
+        lines.append(f"      Why: {ch['why']}.")
+        if ch["folded"]:
+            shown = ", ".join(ch["folded"][:8]) + (" ..." if len(ch["folded"]) > 8 else "")
+            lines.append(f"      Folds {len(ch['folded'])} review night(s) into this change (no DSO for "
+                         f"them): {shown}")
+        if ch.get("blocked_by_fixed_dso"):
+            lines.append(f"      Not reached: {len(ch['blocked_by_fixed_dso'])} open night(s) in the "
+                         "window carry a fixed DSO, which the rule cannot move.")
+        for w in ch.get("warnings") or []:
+            lines.append(f"      ! {w}")
+        if ch["writable"] and target.get("listing_id") and target.get("pms"):
+            spec = {"listing_id": target["listing_id"], "pms": target["pms"],
+                    "reason": f"rules first: {ch['summary']}", "rules_set": ch["change"]}
+            lines.append(f"      Change file: {json.dumps(spec, separators=(', ', ': '))}")
+        elif ch["writable"]:
+            lines.append(f"      rules_set: {json.dumps(ch['change'])}")
+        else:
+            lines.append(f"      NOT WRITABLE BY THE WRITER: {ch['refusal']}.")
+    if not changes:
+        lines.append("  No rule change." + ("" if not pack["blockers"] else " Withheld because a required gate failed.")
+                     + " No rule that is ON with a readable number explains a pattern "
+                     f"(needs {rf['thresholds']['RULE_MIN_NIGHTS']}+ open nights, more than "
+                     f"{rf['thresholds']['RULE_PATTERN_SHARE']:.0%} of the window, and "
+                     f"{rf['thresholds']['RULE_CONTRAST_PP']:g} points more than outside it).")
+    for n in rf["notes"]:
+        lines.append(f"  note: {n}")
+    lines.append(f"2) DSO suggestions: the nights no rule explains ({len(residual)}):")
+    lines += [f"  {_candidate_line(r, beyond)}" for r in residual]
+    if not residual:
+        lines.append("  No DSO suggestions." if not pack["blockers"] else "  Withheld because a required gate failed.")
+    existing = rf["existing_dsos"]
+    flagged = [e for e in existing if e["flags"]]
+    counts = {}
+    for e in flagged:
+        for f in e["flags"]:
+            key = f.split(":")[0]
+            counts[key] = counts.get(key, 0) + 1
+    lines.append(f"3) Existing DSOs in the window ({len(existing)}; {len(flagged)} flagged"
+                 + (": " + ", ".join(f"{v} {k}" for k, v in sorted(counts.items())) if counts else "")
+                 + "):")
+    for e in flagged[:EXISTING_DSO_LINES]:
+        lines.append(f"  {e['date']}: {e['shown']}. " + "; ".join(e["flags"]) + ".")
+    if len(flagged) > EXISTING_DSO_LINES:
+        lines.append(f"  ... {len(flagged) - EXISTING_DSO_LINES} more flagged; all are in --details.")
+    lines.append("  GAP: group- and account-level DSOs are not read here (PriceLabs applies a group or "
+                 "account % override ahead of the listing's own); check the Group view in PriceLabs.")
+    return lines
 
 
 def render(pack, run_id, metrics):
@@ -917,23 +1038,7 @@ def render(pack, run_id, metrics):
         "confirmed creations in 24h; "
         f"{pms['pickup']['last_7d']['confirmed_positive_value_bookings']} in 7d."
     )
-    lines.extend(
-        ["", "Dated price review scenarios, requiring framework/event review and approval:"]
-    )
-    ref_words = {"beyond_benchmark_avg": "Beyond benchmark avg", "airroi_adr_p75": "AirROI ADR p75",
-                 "airroi_adr_p25": "AirROI ADR p25"}
-    for r in pack["candidates"]:
-        lines.append(
-            f"{r['date']}: net {r['net']:g}, Airbnb {r['airbnb']:g}, "
-            + (f"vs {ref_words.get(r.get('reference_source'), 'reference')} {r['reference']:g}; "
-               if beyond else f"comp p75/p90 {r['p75']:g}/{r['p90']:g}; ")
-            + f"review {r.get('direction', 'cut')} net {r['review_net_range'][0]}-"
-            f"{r['review_net_range'][1]}; layer {r['layer']}."
-        )
-    if not pack["candidates"]:
-        lines.append(
-            "None emitted." if not pack["blockers"] else "Withheld because a required gate failed."
-        )
+    lines.extend(render_rules_first(pack, beyond))
     lines.append(
         f"Reconciliation: {pack['reconciliation']['open_dates_checked']} open dates checked; "
         f"{len(pack['reconciliation']['mismatches'])} unexplained mismatches "

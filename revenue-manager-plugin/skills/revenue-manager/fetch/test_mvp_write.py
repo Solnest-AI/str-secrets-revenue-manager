@@ -607,7 +607,10 @@ class Transport(unittest.TestCase):
 
     def test_refuses_every_write_it_was_not_built_for(self):
         c = self.client()
-        for method, path in (("POST", "/v1/customizations/listing"), ("POST", "/v1/nudges/accept"),
+        # POST /v1/customizations/listing is allowed since rules-first (listing level only);
+        # the group and account rule writes stay refused (test_rule_write.py covers the rest)
+        for method, path in (("POST", "/v1/customizations/group"),
+                             ("POST", "/v1/customizations/account"), ("POST", "/v1/nudges/accept"),
                              ("POST", "/v1/add_listing_data"), ("POST", "/v1/group_overrides"),
                              ("DELETE", "/v1/group_overrides"), ("POST", "/v1/mappings/map"),
                              ("POST", "/v1/refresh_listing"), ("PUT", "/v1/listings")):

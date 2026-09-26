@@ -218,6 +218,9 @@ class Sources:
                 "push_enabled",
                 "last_refreshed_at",
                 "last_date_pushed",
+                # which group's rules this listing can inherit (rules_first.resolve_stack)
+                "group_id",
+                "subgroup_id",
             )
             return {k: item.get(k) for k in fields}
 
@@ -378,31 +381,68 @@ class Sources:
         )
 
     def rules(self, lid, pms):
+        """The WHOLE rule stack for one listing: its own six rules, its group's, the account's.
+
+        Every read passes toggled_on=false: the default omits OFF rules, and an OFF rule is not
+        a no-op. The listing's own read is required (unreadable blocks, as before). The group and
+        account reads are not: each one that cannot be read is a NAMED GAP on the card, never
+        silently skipped, because a rule this listing does not set itself may come from there.
+        A listing with no own-level rules answers 200 with an empty map (vendor spec); a rule it
+        does not set resolves from the group, then the account (rules_first.resolve_stack).
+        """
+        from rules_first import resolve_stack, stack_rows
+
+        # Free-text profile names are unnecessary for numeric attribution.
+        def compact(value):
+            if isinstance(value, dict):
+                return {
+                    k: compact(v)
+                    for k, v in value.items()
+                    if k not in {"season_name", "name", "description", "notes"}
+                }
+            if isinstance(value, list):
+                return [compact(x) for x in value]
+            return value
+
+        def read(path, params, what):
+            raw = self.pl_get(path, {**params, "toggled_on": "false"})
+            block = raw.get("customizations") if isinstance(raw, dict) else None
+            if not isinstance(block, dict) or (isinstance(raw, dict) and raw.get("error")):
+                raise CannotAnalyze(f"{what} rules came back without a customizations map")
+            return {k: compact(v) for k, v in block.items() if k in ALL_RULES}
+
         def load():
-            raw = self.pl_get(
-                "/v1/customizations/listing",
-                {"listing_id": lid, "pms_name": pms, "toggled_on": "false"},
-            )
-            rules = raw.get("customizations") if isinstance(raw, dict) else None
-            if not isinstance(rules, dict) or not all(k in rules for k in ALL_RULES):
-                raise CannotAnalyze(
-                    "PriceLabs did not return all customization rules, including OFF rules"
-                )
-
-            # Free-text profile names are unnecessary for numeric attribution.
-            def compact(value):
-                if isinstance(value, dict):
-                    return {
-                        k: compact(v)
-                        for k, v in value.items()
-                        if k not in {"season_name", "name", "description", "notes"}
-                    }
-                if isinstance(value, list):
-                    return [compact(x) for x in value]
-                return value
-
-            rules = {k: compact(rules[k]) for k in ALL_RULES}
-            return {"raw": rules, "summary": normalize_rules(rules)}
+            own = read("/v1/customizations/listing", {"listing_id": lid, "pms_name": pms},
+                       "PriceLabs listing")
+            gaps, group, account, group_id, subgroup_id = [], None, None, None, None
+            try:
+                meta = self.listing(lid, pms)
+                group_id, subgroup_id = meta.get("group_id"), meta.get("subgroup_id")
+            except CannotAnalyze as exc:
+                gaps.append(f"GROUP RULES NOT CHECKED: the listing's group could not be read ({exc}); "
+                            "a rule this listing does not set itself may come from a group")
+            if group_id not in (None, "", 0):
+                try:
+                    group = read("/v1/customizations/group", {"group_id": group_id}, "Group")
+                except CannotAnalyze as exc:
+                    gaps.append(f"GROUP RULES UNREADABLE (group {group_id}): {exc}; a rule this listing "
+                                "does not set itself may come from there")
+            if subgroup_id not in (None, "", 0):
+                gaps.append(f"SUBGROUP RULES NOT READ (subgroup {subgroup_id}): PriceLabs documents no "
+                            "subgroup read; a subgroup rule sits between the listing's and the group's")
+            try:
+                account = read("/v1/customizations/account", {"pms_name": pms}, "Account")
+            except CannotAnalyze as exc:
+                gaps.append(f"ACCOUNT RULES UNREADABLE: {exc}; a rule neither the listing nor its "
+                            "group sets may come from the account")
+            effective, levels = resolve_stack(own, group, account)
+            summary = normalize_rules(effective)
+            for row in summary:
+                row["level"] = levels.get(row["rule"], "listing")
+            return {"raw": effective, "summary": summary, "levels": levels,
+                    "stack": stack_rows(effective, levels),
+                    "listing_rules": own, "group": {"id": group_id, "rules": group},
+                    "account": account, "gaps": gaps}
 
         return self.client.fetch("rules", [self.connections.account("pricelabs"), lid, pms], load)
 
