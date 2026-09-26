@@ -187,7 +187,7 @@ def min_price_recommendation(bounds, rows, multiplier, max_delta, comp_p25=None,
 # OTAs in the order used to pick the market-comparison markup. The market data (AirROI,
 # RankBreeze, PriceLabs neighborhood) is Airbnb-facing, so Airbnb's markup is used when the
 # property has one; a property not on Airbnb uses its own OTA's markup, and the card says which.
-OTA_ORDER = ("airbnb", "vrbo", "booking", "expedia", "google", "tripadvisor", "hometogo")
+OTA_ORDER = ("airbnb", "vrbo", "booking", "expedia", "tripadvisor", "hometogo")
 
 
 def market_markup(markup):

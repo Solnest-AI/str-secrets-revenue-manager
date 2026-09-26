@@ -19,6 +19,9 @@ from setup_properties import (
     listed_channels,
     property_markups,
     channel_name,
+    airbnb_ids,
+    pick_airbnb,
+    parse_airbnb_choices,
     parse_min_prices,
     upsert_statement,
 )
@@ -43,7 +46,7 @@ class Markups(unittest.TestCase):
     def test_channel_spellings_collapse_to_one_name(self):
         for raw, want in (("Booking.com", "booking"), ("booking_com", "booking"), ("HomeAway", "vrbo"),
                           ("VRBO", "vrbo"), ("airbnb2", "airbnb"), ("Air BnB", "airbnb"), ("expedia", "expedia"),
-                          ("gvr", "google"), ("Google Vacation Rentals", "google")):  # Hospitable says gvr (live 2026-09-26)
+                          ("gvr", "direct"), ("Google Vacation Rentals", "direct")):  # GVR sells the direct price (Ryan 2026-09-26)
             with self.subTest(raw=raw):
                 self.assertEqual(channel_name(raw), want)
         with self.assertRaisesRegex(SetupError, "twice"):
@@ -108,6 +111,44 @@ class PerPropertyMarkups(unittest.TestCase):
         # an explicit per-property markup is kept even for an OTA the PMS does not list
         self.assertEqual(property_markups(self.PROPS[1], given, {"p2": {"airbnb": 17.0}}, "hospitable")[0],
                          {"booking": 22.0, "direct": 10.0, "airbnb": 17.0})
+
+
+class TwoAirbnbListings(unittest.TestCase):
+    # Farm House, live 2026-09-26: two Airbnb listings on one Hospitable property (the house and a
+    # cottage rented on its own). Parent/child listings look the same.
+    PROP = {"id": "fh", "name": "The Farm House",
+            "listings": [{"platform": "airbnb", "platform_id": "111"}, {"platform": "homeaway", "platform_id": "v"},
+                         {"platform": "airbnb", "platform_id": "222"}, {"platform": "gvr", "platform_id": "g"}]}
+
+    def test_both_ids_are_seen(self):
+        self.assertEqual(airbnb_ids(self.PROP), ["111", "222"])
+
+    def test_the_one_rankbreeze_tracks_is_used(self):
+        ab, note = pick_airbnb(self.PROP, [{"id": 9, "room_id": "222"}])
+        self.assertEqual(ab, "222")
+        self.assertIn("the one RankBreeze tracks", note)
+
+    def test_none_or_both_tracked_is_not_guessed_and_says_how_to_choose(self):
+        for rb in ([], [{"id": 9, "room_id": "111"}, {"id": 8, "room_id": "222"}]):
+            with self.subTest(rb=rb):
+                ab, note = pick_airbnb(self.PROP, rb)
+                self.assertIsNone(ab)
+                self.assertIn("2 Airbnb listings", note)
+                self.assertIn('--airbnb-for "The Farm House=<room id>"', note)
+
+    def test_the_operator_can_choose_and_a_wrong_id_is_refused(self):
+        self.assertEqual(pick_airbnb(self.PROP, [], "111")[0], "111")
+        with self.assertRaisesRegex(SetupError, "not one of its Airbnb listings"):
+            pick_airbnb(self.PROP, [], "333")
+        self.assertEqual(parse_airbnb_choices(["The Farm House=111"]), {"The Farm House": "111"})
+        with self.assertRaises(SetupError):
+            parse_airbnb_choices(["The Farm House"])
+
+    def test_one_listing_is_used_as_is(self):
+        self.assertEqual(pick_airbnb({"listings": [{"platform": "airbnb", "platform_id": "5"}]}, []), ("5", None))
+
+    def test_gvr_is_direct_so_it_needs_no_markup_of_its_own(self):
+        self.assertEqual(listed_channels(self.PROP), {"airbnb", "vrbo"})
 
 
 class Mapping(unittest.TestCase):

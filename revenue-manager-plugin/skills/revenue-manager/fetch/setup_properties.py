@@ -81,8 +81,10 @@ _CHANNEL = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 # PMS and operator spellings of the same booking site, keyed by the name with punctuation removed.
 CHANNEL_ALIASES = {"homeaway": "vrbo", "homeaway2": "vrbo", "vrbo": "vrbo", "abritel": "vrbo",
                    "bookingcom": "booking", "booking": "booking", "airbnb": "airbnb", "airbnb2": "airbnb",
-                   "airbnbofficial": "airbnb", "expedia": "expedia", "googlevacationrentals": "google", "gvr": "google",
-                   "google": "google", "tripadvisor": "tripadvisor", "hometogo": "hometogo"}
+                   "airbnbofficial": "airbnb", "expedia": "expedia", "tripadvisor": "tripadvisor", "hometogo": "hometogo",
+                   # Google Vacation Rentals sells the direct-booking site's price (Hospitable calls it
+                   # gvr), so it carries the direct markup, not one of its own (Ryan 2026-09-26)
+                   "gvr": "direct", "googlevacationrentals": "direct", "google": "direct"}
 # Channels a PMS reports that are not an OTA, so they carry no markup requirement.
 NOT_OTA = {"direct", "manual", "website", "owner", "block", "blocked", "other", "hospitable", "guesty",
            "ownerrez", "hostaway", "hostfully", "lodgify", "smoobu", "uplisting", "none"}
@@ -149,17 +151,21 @@ def parse_property_markups(items) -> dict:
     return out
 
 
+def one_property(who: str, props: list, flag: str) -> str:
+    """The id of the one listed property named `who` (id or exact name). A per-property setting that
+    silently lands nowhere is a setting the operator thinks they have and do not."""
+    hits = [p for p in props if str(p.get("id")) == who
+            or str(p.get("name") or "").casefold() == who.casefold()]
+    if len(hits) != 1:
+        raise SetupError(f"{flag} {who!r} matches {len(hits)} listed properties; use the exact property id or name")
+    return str(hits[0]["id"])
+
+
 def match_property_markups(per_property: dict, props: list) -> dict:
-    """{property id: {channel: percent}}. Every name must match exactly one property: an override
-    that silently lands nowhere is a markup the operator thinks is set and is not."""
+    """{property id: {channel: percent}}."""
     out = {}
     for who, values in per_property.items():
-        hits = [p for p in props if str(p.get("id")) == who
-                or str(p.get("name") or "").casefold() == who.casefold()]
-        if len(hits) != 1:
-            raise SetupError(f"--markup-for {who!r} matches {len(hits)} listed properties; use the exact "
-                             "property id or name")
-        out.setdefault(str(hits[0]["id"]), {}).update(values)
+        out.setdefault(one_property(who, props, "--markup-for"), {}).update(values)
     return out
 
 
@@ -227,6 +233,49 @@ def pricing_tool_for(mapped_to_pricelabs: bool, stated: str = "auto"):
     if mapped_to_pricelabs:
         return "pricelabs"
     return "beyond" if stated == "beyond" else None
+
+
+def airbnb_ids(prop: dict) -> list:
+    """Every distinct Airbnb listing id the PMS links to this property. Two is normal: a parent
+    and child listing, or a second unit (a cottage) rented on its own."""
+    out = []
+    for x in prop.get("listings") or []:
+        pid = str(x.get("platform_id") or "")
+        if channel_name(x.get("platform")) == "airbnb" and pid and pid not in out:
+            out.append(pid)
+    return out
+
+
+def parse_airbnb_choices(items) -> dict:
+    """{property id or exact name: Airbnb room id}, from --airbnb-for "<property>=<room id>"."""
+    out = {}
+    for item in items or []:
+        if "=" not in str(item):
+            raise SetupError(f'--airbnb-for takes "<property id or exact name>=<Airbnb room id>" (got {item!r})')
+        who, room = (x.strip() for x in str(item).rsplit("=", 1))
+        if not who or not room:
+            raise SetupError(f"--airbnb-for {item!r} needs a property and an Airbnb room id")
+        out[who] = room
+    return out
+
+
+def pick_airbnb(prop: dict, rb_listings: list, chosen: str = None):
+    """(the Airbnb id to rank this property by, a note or None). One linked listing is used as is.
+    With two or more (parent/child, or a second unit) the one RankBreeze tracks is used when
+    exactly one is tracked; otherwise nothing is guessed and the note names the ids to choose from."""
+    ids = airbnb_ids(prop)
+    if chosen:
+        if chosen not in ids:
+            raise SetupError(f"--airbnb-for {prop.get('name') or prop.get('id')}: {chosen} is not one of its "
+                             f"Airbnb listings ({', '.join(ids) or 'none'})")
+        return chosen, "Airbnb listing chosen with --airbnb-for"
+    if len(ids) <= 1:
+        return (ids[0] if ids else None), None
+    tracked = [i for i in ids if rb_listings and match_rankbreeze(i, rb_listings)]
+    if len(tracked) == 1:
+        return tracked[0], f"{len(ids)} Airbnb listings; ranked by the one RankBreeze tracks ({tracked[0]})"
+    return None, (f"{len(ids)} Airbnb listings (a parent/child pair or a second unit): {', '.join(ids)}. "
+                  f"Pick the one to rank with --airbnb-for \"{prop.get('name') or prop.get('id')}=<room id>\"")
 
 
 def airbnb_id(prop: dict):
@@ -406,6 +455,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--markup", action="append", default=[],
                     help="channel=percent for every booking site you list on, e.g. airbnb=16 (repeat)")
+    ap.add_argument("--airbnb-for", action="append", default=[],
+                    help='the Airbnb listing to rank a property by when it has two: "<property id or exact name>=<room id>"')
     ap.add_argument("--markup-for", action="append", default=[],
                     help='one property\'s markup when it differs: "<property id or exact name>:<channel>=<percent>" (repeat)')
     ap.add_argument("--dry-run", action="store_true", help="show the rows; write nothing")
@@ -425,6 +476,7 @@ def main(argv=None) -> int:
     try:
         markups = parse_markups(args.markup)
         per_property = parse_property_markups(args.markup_for)
+        airbnb_choice = parse_airbnb_choices(args.airbnb_for)
         min_prices = parse_min_prices(args.min_price)
         connections = Connections(env_files=args.env_file)
         supabase = connections.supabase()
@@ -462,6 +514,7 @@ def main(argv=None) -> int:
         props = [p for p in inventory if p.get("listed") is not False]
         floors = match_min_prices(min_prices, props)
         overrides = match_property_markups(per_property, props)
+        chosen_airbnb = {one_property(who, props, "--airbnb-for"): room for who, room in airbnb_choice.items()}
         rb, rb_note = [], "RankBreeze not connected (ranking will show as a gap on each card)"
         url = connections.rankbreeze_url()
         if url:
@@ -507,8 +560,8 @@ def main(argv=None) -> int:
                 except CannotAnalyze as exc:
                     missing.append((p.get("name") or p["id"], str(exc)))
                     continue
-            ab = airbnb_id(p)
-            rows.append({"property_id": p["id"], "display_name": p.get("name"),
+            ab, ab_note = pick_airbnb(p, rb, chosen_airbnb.get(str(p["id"])))
+            rows.append({"property_id": p["id"], "display_name": p.get("name"), "airbnb_note": ab_note,
                          "settings": build_settings(p["id"], ab, match_rankbreeze(ab, rb) if rb else None, p_markups, now,
                                                     pms_name=pl_pms, pms_source=pms, intellihost=ih_map.get(ab or ""),
                                                     pricelabs=has_pricelabs,
@@ -540,6 +593,8 @@ def main(argv=None) -> int:
                   f"Prices set by {PRICE_OWNER.get(s['pricing_tool'], label)}"
                   + (f"  Min {s['min_price']:g}" if "min_price" in s else "")
                   + "  Markups " + ", ".join(f"{k} {v:g}%" for k, v in s["channel_markup_pct"].items()))
+            if r.get("airbnb_note"):
+                print(f"      {r['airbnb_note']}")
         for name, why in missing:
             if pricing == "beyond":
                 print(f"  ❌ {name}: NOT MAPPED TO BEYOND ({why}). Marked Beyond-priced; the runner cannot "

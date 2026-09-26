@@ -9,10 +9,15 @@
   the markup on each, and stops ("<property> is listed on vrbo with no markup") until every
   booking site has one. Hospitable, Guesty and OwnerRez report which sites each property is
   on, so a missing one is caught even if it was not mentioned (measured live on Hospitable:
-  Airbnb, VRBO, Booking.com and Google Vacation Rentals, which Hospitable calls `gvr`).
+  Airbnb, VRBO and Booking.com).
 - **One property can have its own markup:** `--markup-for "<property>:<channel>=<percent>"`.
-- **Channel spellings are one name:** Booking.com/booking_com, HomeAway/VRBO, gvr/Google
-  Vacation Rentals.
+- **Channel spellings are one name:** Booking.com/booking_com, HomeAway/VRBO. Google
+  Vacation Rentals (Hospitable's `gvr`) sells the direct-booking price, so it uses the
+  direct markup and never needs one of its own.
+- **Two Airbnb listings on one property** (a parent/child pair, or a second unit like a
+  cottage rented on its own) no longer lose ranking: setup ranks by the one RankBreeze
+  tracks when exactly one is tracked, otherwise it names both ids and
+  `--airbnb-for "<property>=<room id>"` picks one. Measured live: The Farm House.
 - **The card lists every markup** and says which one the market comparison used: Airbnb's
   when the property is on Airbnb (the market data is Airbnb prices), otherwise its own OTA's.
 - **Already set up? Nothing breaks.** Stored markups keep working exactly as before; run
