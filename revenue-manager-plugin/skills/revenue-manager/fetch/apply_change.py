@@ -8,8 +8,14 @@
 Show the operator the card(s) and ask whether to apply. A plain yes applies them; one yes
 can cover every card shown together. No codes, no ritual. Without a yes, nothing is applied.
 
-Every rollback snapshot is itself a change file, so undoing any applied change is one
-command: `apply_change.py plan --change <snapshot>`, shown and applied like any other.
+Undo is one command: `apply_change.py rollback --journal <journal or snapshot file>`. It
+plans the reverse change from what is live NOW (items already back are skipped, dates now in
+the past are dropped, both said on the card) and is shown and applied like any other change.
+Only this command can put a whole saved override back (overrides_restore); a change file
+cannot carry one. Plans expire after 24 hours: apply refuses and asks for a fresh plan.
+
+--max-delta-pct: the property's property_config.settings.max_delta_pct (15 or 0.15; default
+15%). A move above it is a loud warning on the card, never a block (D8).
 
 Exit 0: plans printed, or every plan applied AND verified field by field.
 Exit 2: nothing trustworthy to report (refused, drifted, failed, or sent-but-unverified).
@@ -39,6 +45,20 @@ from _mvp_write import (  # noqa: E402
     CannotWrite, Live, WriteClient, apply_batch, describe, load_envelope, load_plan,
     plan_change, plan_id, rollback_change, save_envelope,
 )
+
+
+def undo_source(arg: str, state: Path) -> Path:
+    """A journal or snapshot this writer saved, and nothing else: only these may carry
+    overrides_restore, so the file must live in the writer's own journal/snapshots folders."""
+    p = Path(arg)
+    homes = [(state / d).resolve() for d in ("journal", "snapshots")]
+    tries = [p] if p.is_absolute() or p.exists() else [state / "journal" / p.name,
+                                                         state / "snapshots" / p.name]
+    for c in tries:
+        if c.is_file() and c.resolve().parent in homes:
+            return c.resolve()
+    raise CannotWrite(f"{arg} is not a journal or snapshot this writer saved (they live in "
+                      f"{state / 'journal'} and {state / 'snapshots'})")
 
 AUDIT_TABLE = "public.pricelabs_change_log"
 
@@ -122,11 +142,14 @@ def main(argv=None) -> int:
     p = sub.add_parser("plan")
     p.add_argument("--change", action="append", required=True,
                    help="change JSON file (repeat for a batch), or - for stdin")
+    p.add_argument("--max-delta-pct", type=float, default=None,
+                   help="property_config.settings.max_delta_pct (15 or 0.15)")
     a = sub.add_parser("apply")
     a.add_argument("--plan", action="append", required=True, help="plan id (repeat for a batch)")
     a.add_argument("--no-audit", action="store_true")
     r = sub.add_parser("rollback")
-    r.add_argument("--journal", required=True)
+    r.add_argument("--journal", required=True, help="journal or snapshot file")
+    r.add_argument("--max-delta-pct", type=float, default=None)
     args = ap.parse_args(argv)
     state = Path(cache_dir("writes"))
 
@@ -134,16 +157,15 @@ def main(argv=None) -> int:
         connections = Connections(env_files=args.env_file)
         if args.cmd == "plan":
             specs = [read_change(c) for c in args.change]
-            envs = [plan_change(sp, live_for(connections, sp.get("listing_id"), sp.get("pms")))
+            envs = [plan_change(sp, live_for(connections, sp.get("listing_id"), sp.get("pms")),
+                                max_delta=args.max_delta_pct)
                     for sp in specs]
             print_plans(envs, state)
             return 0
         if args.cmd == "rollback":
-            jp = Path(args.journal)
-            if not jp.is_absolute() and not jp.exists():
-                jp = state / "journal" / jp.name
-            spec = rollback_change(load_envelope(jp))
-            print_plans([plan_change(spec, live_for(connections, spec["listing_id"], spec["pms"]))], state)
+            spec = rollback_change(load_envelope(undo_source(args.journal, state)))
+            print_plans([plan_change(spec, live_for(connections, spec["listing_id"], spec["pms"]),
+                                     max_delta=args.max_delta_pct, rollback=True)], state)
             return 0
         # apply: every id is loaded and hash-checked before anything is sent
         envs = [load_plan(state, pid) for pid in args.plan]
@@ -166,6 +188,11 @@ def main(argv=None) -> int:
         return 0
     except (CannotWrite, CannotAnalyze, CannotPersist, OSError) as exc:
         print(f"CANNOT WRITE: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001 - never a raw traceback after a send
+        print(f"CANNOT WRITE: unexpected {type(exc).__name__}. If apply ran, a write may have been "
+              f"sent: read the live listing, then check the newest journal in {state / 'journal'} "
+              "and undo with apply_change.py rollback --journal <that file>.", file=sys.stderr)
         return 2
 
 

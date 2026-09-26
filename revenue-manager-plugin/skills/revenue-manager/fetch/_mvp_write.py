@@ -240,14 +240,17 @@ def plan_id(envelope: dict) -> str:
 
 # ------------------------------------------------------------------------------ plan
 
-def _date(value, today: date) -> str:
+def _parse_date(value) -> date:
     if not isinstance(value, str) or not _DATE.match(value):
         raise CannotWrite(f"{value!r} is not a YYYY-MM-DD date")
     try:
-        d = date.fromisoformat(value)
+        return date.fromisoformat(value)
     except ValueError:
         raise CannotWrite(f"{value!r} is not a real date") from None
-    if d < today:
+
+
+def _date(value, today: date) -> str:
+    if _parse_date(value) < today:
         raise CannotWrite(f"{value} is in the past")
     return value
 
@@ -274,11 +277,29 @@ def _same_override(a, b) -> list:
 
 
 def _pct(before: float, after: float) -> float:
+    if before <= 0:
+        raise CannotWrite("a move from $0 cannot be measured as a percent")
     return abs(after - before) / before
 
 
 def _money(v) -> str:
     return f"{float(v):,.2f}"
+
+
+def max_delta_fraction(value=None) -> float:
+    """property_config.settings.max_delta_pct, written either as 15 or as 0.15 (D8)."""
+    if value is None:
+        return MAX_DELTA
+    v = _num(value, "max_delta_pct")
+    if v > 1:
+        v = v / 100
+    if not 0 < v <= 1:
+        raise CannotWrite(f"max_delta_pct {value!r} must be above zero, written as 15 or 0.15")
+    return v
+
+
+def _over(delta: float) -> str:
+    return f"OVER {delta * 100:g}%"
 
 
 def _show(o) -> str:
@@ -291,16 +312,32 @@ def _show(o) -> str:
     return " ".join(parts) + (f' (note: "{o["reason"]}")' if o.get("reason") else "")
 
 
+def _price_changes(op) -> bool:
+    b, a = op["before"] or {}, op["after"] or {}
+    return "price" in a and (not _same("price", a.get("price"), b.get("price"))
+                             or a.get("price_type") != b.get("price_type"))
+
+
 def plan_change(change: dict, live: Live, *, today: date | None = None,
-                now: datetime | None = None) -> dict:
+                now: datetime | None = None, max_delta=None, rollback: bool = False) -> dict:
+    """rollback=True is set ONLY by the undo path (apply_change.py rollback), which builds the
+    change from a journal or snapshot this writer saved. It is the only way overrides_restore
+    is accepted, and it builds the undo from live state: items already back are skipped and
+    dates now in the past are dropped, both said out loud on the card."""
     today = today or date.today()
     now = now or datetime.now(timezone.utc)
+    delta = max_delta_fraction(max_delta)
+    over = _over(delta)
     if not isinstance(change, dict):
         raise CannotWrite("The change must be a JSON object")
     unknown = set(change) - TOP_KEYS
     if unknown:
         raise CannotWrite(f"Unsupported change keys {sorted(unknown)}: this writer does listing "
                           "min/base/max and date overrides only")
+    if change.get("overrides_restore") and not rollback:
+        raise CannotWrite("overrides_restore is only built by the undo command (apply_change.py "
+                          "rollback --journal <journal or snapshot>). A change file cannot carry it; "
+                          "use overrides_set for the fields you want on a date.")
     if change.get("listing_id") != live.lid or change.get("pms") != live.pms:
         raise CannotWrite("The change names a different listing than the one being read")
     reason = change.get("reason")
@@ -318,30 +355,38 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
     listing = live.listing()
     currency = listing["currency"]
     ops, warnings = [], []
+    already, past = 0, []
 
     # listing min / base / max
     merged = {f: listing[f] for f in LISTING_FIELDS}
     for field, value in prices.items():
         if field not in LISTING_FIELDS:
             raise CannotWrite(f"{field!r} is not a field this writer sets (min, base, max only)")
-        after = _num(value, field)
-        if after <= 0:
-            raise CannotWrite(f"{field} must be above zero")
-        after = round(after, 2)
+        after = round(_num(value, field), 2)
+        if after <= 0:  # checked AFTER rounding: 0.004 would otherwise be sent as 0.00
+            raise CannotWrite(f"{field} must be above zero (it would be sent as {_money(after)})")
         if _same(field, after, listing[field]):
+            if rollback:
+                already += 1
+                continue
             raise CannotWrite(f"{field} is already {_money(after)}")
         merged[field] = after
         ops.append({"kind": "listing_price", "field": field, "before": listing[field], "after": after})
-        if _pct(listing[field], after) > MAX_DELTA + 1e-9:
-            warnings.append(f"OVER 15%: {field} {_money(listing[field])} -> {_money(after)} "
+        if _pct(listing[field], after) > delta + 1e-9:
+            warnings.append(f"{over}: {field} {_money(listing[field])} -> {_money(after)} "
                             f"({(after - listing[field]) / listing[field]:+.1%}). Extra scrutiny (D8).")
     if not merged["min"] <= merged["base"] <= merged["max"]:
         raise CannotWrite(f"After this change min <= base <= max would not hold "
                           f"({merged['min']}, {merged['base']}, {merged['max']})")
+    min_raised = any(op.get("field") == "min" and op["after"] > op["before"] for op in ops)
+    max_cut = any(op.get("field") == "max" and op["after"] < op["before"] for op in ops)
 
-    calendar = None
-    needs_calendar = (prices.get("min") is not None and merged["min"] > listing["min"]) or \
-                     (prices.get("max") is not None and merged["max"] < listing["max"])
+    def undo_date(value):
+        """In an undo a past date is dropped, never a reason to refuse the whole undo."""
+        if rollback and _parse_date(value) < today:
+            past.append(value)
+            return None
+        return _date(value, today)
 
     # overrides
     seen = set()
@@ -366,8 +411,6 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
                 raise CannotWrite(f"price_type must be one of {sorted(PRICE_TYPES)}")
             price = _num(item.get("price"), f"{d} price")
             if ptype == "fixed":
-                if price <= 0:
-                    raise CannotWrite(f"{d} fixed price must be above zero")
                 if not currency:
                     raise CannotWrite("The listing has no currency; a fixed override needs one "
                                       "that exactly matches the PMS")
@@ -377,6 +420,8 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
                     raise CannotWrite(f"{d} percent must be between -75 and 1000")
                 after.pop("currency", None)
             after["price"], after["price_type"] = _price_str(price), ptype
+            if ptype == "fixed" and float(after["price"]) <= 0:  # after rounding, like the listing
+                raise CannotWrite(f"{d} fixed price must be above zero")
         if "min_stay" in item:
             ms = item["min_stay"]
             if isinstance(ms, bool) or not isinstance(ms, int) or ms < 1:
@@ -388,38 +433,55 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
         if before:
             warnings.append(f"REPLACES the existing override on {d} (was {_show(before)}); "
                             "fields not mentioned are carried forward and re-checked.")
-        if after.get("price_type") == "fixed":
-            needs_calendar = needs_calendar or not (before and before.get("price_type") == "fixed")
-        elif abs(float(after.get("price", 0))) > MAX_DELTA * 100:
-            warnings.append(f"OVER 15%: {d} override is {after['price']}% on PriceLabs' price (D8).")
     for item in o_res:
-        # A rollback puts back a whole override exactly as it was read. Any postable field
-        # is allowed, and every one of them is shown on the card and covered by the plan id.
+        # Undo only: put back a whole override exactly as a journal/snapshot recorded it.
         if not isinstance(item, dict):
             raise CannotWrite("Each overrides_restore entry is an object")
         bad = set(item) - OVERRIDE_POSTABLE
         if bad:
             raise CannotWrite(f"{sorted(bad)} is not a field PriceLabs accepts on an override")
-        d = _date(item.get("date"), today)
+        d = undo_date(item.get("date"))
+        if d is None:
+            continue
         if d in seen:
             raise CannotWrite(f"{d} appears twice in one change")
         seen.add(d)
         before, after = existing.get(d), {k: v for k, v in item.items() if v is not None}
+        if after.get("price_type") == "fixed" and after.get("currency") != currency:
+            raise CannotWrite(f"{d}: the saved override's currency is {after.get('currency')!r} but "
+                              f"the listing's is {currency!r}; it cannot be put back as it was")
         if not _same_override(before, after):
-            raise CannotWrite(f"{d} already has exactly this override")
+            already += 1
+            continue
         ops.append({"kind": "override", "date": d, "before": before, "after": after})
         warnings.append(f"RESTORES the override on {d} exactly as it was before.")
     for d in o_del:
-        d = _date(d, today)
+        d = undo_date(d) if rollback else _date(d, today)
+        if d is None:
+            continue
         if d in seen:
             raise CannotWrite(f"{d} appears twice in one change")
         seen.add(d)
         if d not in existing:
+            if rollback:
+                already += 1
+                continue
             raise CannotWrite(f"{d} has no override to delete")
         before = existing[d]
         ops.append({"kind": "override", "date": d, "before": before, "after": None})
         warnings.append(f"REMOVES the override on {d} (was {_show(before)}); that night goes "
                         "back to PriceLabs' own price and settings.")
+
+    if rollback:
+        if past:
+            warnings.append(f"{len(past)} date(s) are in the past now and were left out of the undo: "
+                            f"{', '.join(sorted(past))}.")
+        if already:
+            warnings.append(f"{already} item{'s' if already != 1 else ''} already back to before; "
+                            "left out of the undo.")
+        if not ops:
+            raise CannotWrite(f"Nothing to undo: {already} item(s) already back to before"
+                              + (f", {len(past)} date(s) in the past" if past else "") + ".")
 
     for op in ops:
         if op["kind"] == "override" and op["before"] and op["after"]:
@@ -430,37 +492,89 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
                 warnings.append(f"{op['date']}: {', '.join(dropped)} is removed, so the override is "
                                 "deleted and written fresh in the same step.")
 
-    if needs_calendar:
-        calendar = live.prices(today, HORIZON_DAYS, currency)
-        if prices.get("min") is not None and merged["min"] > listing["min"]:
-            n = sum(1 for p in calendar.values() if p < merged["min"])
-            if n:
-                warnings.append(f"{n} of the next {HORIZON_DAYS} nights are priced below the new min "
-                                f"{_money(merged['min'])} today and will be lifted to it.")
-        if prices.get("max") is not None and merged["max"] < listing["max"]:
-            n = sum(1 for p in calendar.values() if p > merged["max"])
-            if n:
-                warnings.append(f"{n} of the next {HORIZON_DAYS} nights are priced above the new max "
-                                f"{_money(merged['max'])} today and will be cut to it.")
-        for op in ops:
-            if op["kind"] != "override" or not op["after"] or op["after"].get("price_type") != "fixed":
-                continue
-            prev = op["before"]
-            ref = float(prev["price"]) if prev and prev.get("price_type") == "fixed" else calendar.get(op["date"])
-            new = float(op["after"]["price"])
-            if ref is None:
-                warnings.append(f"{op['date']}: no current price to compare against; the 15% check "
-                                "could not run.")
-            elif _pct(ref, new) > MAX_DELTA + 1e-9:
-                warnings.append(f"OVER 15%: {op['date']} fixed {_money(new)} vs {_money(ref)} now "
-                                f"({(new - ref) / ref:+.1%}). Extra scrutiny (D8).")
+    priced = [op for op in ops if op["kind"] == "override" and op["after"] and _price_changes(op)]
+    calendar = live.prices(today, HORIZON_DAYS, currency) if (min_raised or max_cut or priced) else {}
+
+    # a min raise / max cut moves real nights; flag the biggest single-night move (D8)
+    for moved, below, bound, word, pick in (
+            (min_raised, True, merged["min"], "below the new min", "lifted to"),
+            (max_cut, False, merged["max"], "above the new max", "cut to")):
+        if not moved:
+            continue
+        hit = {d: p for d, p in calendar.items() if (p < bound if below else p > bound)}
+        if not hit:
+            continue
+        line = (f"{len(hit)} of the next {HORIZON_DAYS} nights are priced {word} "
+                f"{_money(bound)} today and will be {pick} it.")
+        zero = sorted(d for d, p in hit.items() if p <= 0)
+        moves = sorted(((bound - p) / p, d, p) for d, p in hit.items() if p > 0)
+        if moves:
+            m, d, p = max(moves, key=lambda x: abs(x[0]))
+            biggest = f"{d} {_money(p)} -> {_money(bound)} ({m:+.1%})"
+            if abs(m) > delta + 1e-9:
+                warnings.append(line)
+                warnings.append(f"{over}: the biggest single-night move is {biggest}. "
+                                "Extra scrutiny (D8).")
+            else:
+                warnings.append(line + f" Biggest single-night move: {biggest}.")
+        else:
+            warnings.append(line)
+        if zero:
+            warnings.append(f"{len(zero)} of those nights show $0 in PriceLabs, so their move "
+                            f"could not be measured ({', '.join(zero[:5])}).")
+
+    # every price that changes on a date: bounds (never below min) and the 15% flag, once each
     for op in ops:
-        if op["kind"] == "override" and op["after"] and op["after"].get("price_type") == "fixed" \
-                and op["before"] and op["before"].get("price_type") == "fixed":
-            ref, new = float(op["before"]["price"]), float(op["after"]["price"])
-            if _pct(ref, new) > MAX_DELTA + 1e-9:
-                warnings.append(f"OVER 15%: {op['date']} fixed {_money(new)} vs {_money(ref)} now "
-                                f"({(new - ref) / ref:+.1%}). Extra scrutiny (D8).")
+        if op["kind"] != "override" or not op["after"]:
+            continue
+        d, a, prev = op["date"], op["after"], op["before"] or {}
+        if "price" not in a:
+            continue
+        if not _price_changes(op):
+            if a.get("price_type") == "fixed" and float(a["price"]) < merged["min"] - 0.005:
+                warnings.append(f"{d}: the fixed {_money(a['price'])} carried forward is below your "
+                                f"min of {_money(merged['min'])}.")
+            continue
+        cal = calendar.get(d)
+        if cal is not None and cal <= 0:
+            raise CannotWrite(f"{d}: PriceLabs shows $0 for that night, so this change cannot be "
+                              "measured against it. Nothing was planned; check that date in "
+                              "PriceLabs first.")
+        p = float(a["price"])
+        if a["price_type"] == "fixed":
+            night = p
+            ref = float(prev["price"]) if prev.get("price_type") == "fixed" and "price" in prev else cal
+            if ref is not None and ref <= 0:
+                raise CannotWrite(f"{d}: the current fixed price is $0, so the move cannot be "
+                                  "measured. Nothing was planned.")
+        else:
+            ref = cal
+            if "price" not in prev:
+                underlying = cal
+            elif prev.get("price_type") in ("percent", "percent_stacked"):
+                q = float(prev["price"])
+                underlying = cal / (1 + q / 100) if cal is not None and q > -100 else None
+            else:
+                underlying = None  # a fixed price hides PriceLabs' own number for that night
+            night = underlying * (1 + p / 100) if underlying is not None else None
+        if night is None:
+            warnings.append(f"{d}: no current price for that night, so the {a['price']}% could not "
+                            "check it against your min and max.")
+        elif night < merged["min"] - 0.005:
+            raise CannotWrite(f"{d}: that night would be ${_money(night)}, below your min of "
+                              f"${_money(merged['min'])}. Nothing was planned.")
+        elif night > merged["max"] + 0.005:
+            warnings.append(f"ABOVE YOUR MAX: {d} would be ${_money(night)}, above your max of "
+                            f"${_money(merged['max'])}. A fixed price is charged as written.")
+        if ref is None or night is None:
+            if a["price_type"] == "fixed":
+                warnings.append(f"{d}: no current price to compare against; the 15% check "
+                                "could not run.")
+            elif abs(p) > delta * 100 + 1e-9:
+                warnings.append(f"{over}: {d} override is {a['price']}% on PriceLabs' price (D8).")
+        elif _pct(ref, night) > delta + 1e-9:
+            warnings.append(f"{over}: {d} {a['price_type']} {_money(night)} vs {_money(ref)} now "
+                            f"({(night - ref) / ref:+.1%}). Extra scrutiny (D8).")
 
     return {
         "version": VERSION,
@@ -543,7 +657,16 @@ def load_plan(state_dir, pid: str) -> dict:
 # ------------------------------------------------------------------------------ apply
 
 def rollback_change(journal_or_envelope: dict) -> dict:
-    """The change that puts every field back to its before-image."""
+    """The change that puts every field back to its before-image. Accepts a journal, an
+    envelope, or a rollback snapshot (which is already this change). Plan the result with
+    plan_change(..., rollback=True): that is what lets overrides_restore through."""
+    if not isinstance(journal_or_envelope, dict):
+        raise CannotWrite("That is not a journal or snapshot this writer saved")
+    if "envelope" not in journal_or_envelope and "operations" not in journal_or_envelope:
+        snap = copy.deepcopy(journal_or_envelope)
+        if not snap.get("listing_id") or set(snap) - TOP_KEYS:
+            raise CannotWrite("That is not a journal or snapshot this writer saved")
+        return snap
     env = journal_or_envelope.get("envelope", journal_or_envelope)
     t = env["target"]
     out = {"listing_id": t["listing_id"], "pms": t["pms"],
@@ -566,12 +689,51 @@ def rollback_change(journal_or_envelope: dict) -> dict:
     return out
 
 
+PLAN_MAX_AGE = timedelta(hours=24)
+
+
+def _check_fresh(envelope: dict, now: datetime, today: date) -> None:
+    """A plan is a picture of prices at one moment: older than a day, or with a date that has
+    since passed, it is refused rather than applied on stale numbers."""
+    try:
+        created = datetime.fromisoformat(str(envelope.get("created_at")))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise CannotWrite("The plan has no readable creation time. Nothing was sent; plan again "
+                          "for fresh numbers.") from None
+    age = now - created
+    if age > PLAN_MAX_AGE or age < -timedelta(hours=1):
+        raise CannotWrite(f"This plan was made {created.isoformat(timespec='minutes')}, more than 24 "
+                          "hours ago. Nothing was sent; plan again for fresh numbers.")
+    for op in envelope["operations"]:
+        if op["kind"] == "override" and _parse_date(op["date"]) < today:
+            raise CannotWrite(f"{op['date']} is in the past now. Nothing was sent; plan again for "
+                              "fresh numbers.")
+
+
+def _check_bounds(listing: dict, envelopes: list) -> None:
+    """min <= base <= max on the live values with every planned after-value laid on top, in
+    order, across the whole batch for this listing."""
+    merged = {f: listing[f] for f in LISTING_FIELDS}
+    for env in envelopes:
+        for op in env["operations"]:
+            if op["kind"] == "listing_price":
+                merged[op["field"]] = op["after"]
+    if not merged["min"] <= merged["base"] <= merged["max"]:
+        raise CannotWrite(f"Live values plus the approved change(s) would leave min <= base <= max "
+                          f"broken (min {_money(merged['min'])}, base {_money(merged['base'])}, max "
+                          f"{_money(merged['max'])}). Nothing was sent; plan again.")
+
+
 def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None = None,
                    now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
+    today = today or date.today()
     t = envelope["target"]
     if (t["listing_id"], t["pms"]) != (live.lid, live.pms):
         raise CannotWrite("The plan is for a different listing than the one connected")
+    _check_fresh(envelope, now, today)
     h12 = content_hash(envelope)[:12]
     state = Path(state_dir)
 
@@ -589,89 +751,126 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
         elif _same_override(overrides.get(op["date"]), op["before"]):
             raise CannotWrite(f"The override on {op['date']} changed since the plan. Nothing was "
                               "sent; plan again.")
+    _check_bounds(listing, [envelope])
 
     # 2. rollback snapshot, on disk before anything leaves the machine (S3)
-    stamp = now.strftime("%Y%m%dT%H%M%S%fZ")
+    stamp = now.strftime("%Y%m%dT%H%M%S%fZ") + "-" + os.urandom(3).hex()
     snap = _write_new(state / "snapshots" / f"{stamp}-{h12}.json", rollback_change(envelope))
     journal = {"envelope": envelope, "plan_id": plan_id(envelope), "status": "failed-before-send",
                "snapshot_path": str(snap), "sent": [], "verification": [], "applied_at": None}
     jpath = state / "journal" / f"{stamp}-{h12}.json"
+    undo = f"apply_change.py rollback --journal {jpath.name}"
+    written = False
 
     def finish(status, problem=None):
+        nonlocal written
         journal["status"] = status
         journal["journal_path"] = str(jpath)
         if problem:
             journal["problem"] = problem
-        _write_new(jpath, journal)
+        if not written:
+            _write_new(jpath, journal)
+            written = True
         return journal
 
-    # 3. send
     try:
+        # 3. send. Every call is journalled BEFORE it goes out: a write that errored may
+        #    still have landed, so anything attempted is re-read, never assumed.
+        send_error = None
         prices = {op["field"]: op["after"] for op in envelope["operations"] if op["kind"] == "listing_price"}
-        if prices:
-            body = {"listings": [{"id": live.lid, "pms": live.pms, **prices}]}
-            resp = live.client.request("POST", "/v1/listings", body=body)
-            journal["sent"].append({"call": "POST /v1/listings", "fields": sorted(prices)})
-            rows = resp.get("listings") if isinstance(resp, dict) else None
-            if not isinstance(rows, list) or len(rows) != 1:
-                raise CannotWrite("PriceLabs did not confirm the listing update")
-            if rows[0].get("errors"):
-                raise CannotWrite("PriceLabs reported errors on the listing update: "
-                                  + "; ".join(map(str, rows[0]["errors"]))[:300])
-        over_ops = [op for op in envelope["operations"] if op["kind"] == "override"]
-        dels = [op["date"] for op in over_ops if op["after"] is None or op.get("replace")]
-        if dels:
-            live.client.request("DELETE", f"/v1/listings/{quote(live.lid)}/overrides",
-                                body={"pms": live.pms, "update_children": False,
-                                      "overrides": [{"date": d} for d in dels]})
-            journal["sent"].append({"call": "DELETE overrides", "dates": dels})
-        sets = [op["after"] for op in over_ops if op["after"]]
-        if sets:
-            live.client.request("POST", f"/v1/listings/{quote(live.lid)}/overrides",
-                                body={"pms": live.pms, "update_children": False, "overrides": sets})
-            journal["sent"].append({"call": "POST overrides", "dates": [o["date"] for o in sets]})
-    except CannotWrite as exc:
-        status = "sent-unverified" if journal["sent"] else "failed-before-send"
-        finish(status, str(exc))
-        raise CannotWrite(f"{exc}. Status: {status}. The rollback snapshot is {snap.name}; "
-                          "re-read the listing, and if anything moved run rollback on this journal "
-                          f"({jpath.name}).") from None
-    journal["applied_at"] = now.isoformat(timespec="seconds")
+        try:
+            if prices:
+                body = {"listings": [{"id": live.lid, "pms": live.pms, **prices}]}
+                journal["sent"].append({"call": "POST /v1/listings", "fields": sorted(prices)})
+                resp = live.client.request("POST", "/v1/listings", body=body)
+                rows = resp.get("listings") if isinstance(resp, dict) else None
+                row = rows[0] if isinstance(rows, list) and len(rows) == 1 else None
+                if not isinstance(row, dict):
+                    # Unreadable reply: not trusted either way. Stop sending; the re-read decides.
+                    journal["response_note"] = "PriceLabs' reply to the listing update was unreadable"
+                    raise CannotWrite("PriceLabs' reply to the listing update was unreadable")
+                if row.get("errors"):
+                    raise CannotWrite("PriceLabs reported errors on the listing update: "
+                                      + "; ".join(map(str, row["errors"]))[:300])
+            over_ops = [op for op in envelope["operations"] if op["kind"] == "override"]
+            dels = [op["date"] for op in over_ops if op["after"] is None or op.get("replace")]
+            if dels:
+                journal["sent"].append({"call": "DELETE overrides", "dates": dels})
+                live.client.request("DELETE", f"/v1/listings/{quote(live.lid)}/overrides",
+                                    body={"pms": live.pms, "update_children": False,
+                                          "overrides": [{"date": d} for d in dels]})
+            sets = [op["after"] for op in over_ops if op["after"]]
+            if sets:
+                journal["sent"].append({"call": "POST overrides", "dates": [o["date"] for o in sets]})
+                live.client.request("POST", f"/v1/listings/{quote(live.lid)}/overrides",
+                                    body={"pms": live.pms, "update_children": False, "overrides": sets})
+        except CannotWrite as exc:
+            send_error = str(exc)
+        except Exception as exc:  # noqa: BLE001 - after a send nothing may escape unjournalled
+            send_error = f"unexpected {type(exc).__name__} while sending"
+        if not journal["sent"]:
+            finish("failed-before-send", send_error)
+            raise CannotWrite(f"{send_error}. Status: failed-before-send; nothing left this machine. "
+                              f"The rollback snapshot is {snap.name}.")
+        journal["applied_at"] = now.isoformat(timespec="seconds")
 
-    # 4. re-read and prove it, field by field, including every field that should NOT move
-    problems = []
-    after_listing = live.listing()
-    for f in LISTING_FIELDS:
-        want = prices.get(f, listing[f])
-        ok = _same(f, after_listing[f], want)
-        journal["verification"].append({"field": f, "want": want, "live": after_listing[f], "ok": ok})
-        if not ok:
-            problems.append(f"{f} is {_money(after_listing[f])} live, expected {_money(want)}")
-    if touches_overrides:
-        after_over = live.overrides()
-        wanted = dict(overrides)
-        for op in envelope["operations"]:
-            if op["kind"] == "override":
-                if op["after"] is None:
-                    wanted.pop(op["date"], None)
-                else:
-                    wanted[op["date"]] = op["after"]
-        for d in sorted(set(wanted) | set(after_over)):
-            diff = _same_override(after_over.get(d), wanted.get(d))
-            journal["verification"].append({"date": d, "ok": not diff, "differs_on": diff})
-            if diff:
-                problems.append(f"override {d} differs on {', '.join(diff)}")
-    if problems:
-        finish("sent-unverified", "; ".join(problems))
-        raise CannotWrite("The write did not take as approved: " + "; ".join(problems)
-                          + f". Journal {jpath.name}; run rollback on it after reading the live listing.")
-    return finish("verified")
+        # 4. re-read and prove it, field by field, including every field that should NOT move
+        problems, reread_error = [], None
+        try:
+            after_listing = live.listing()
+            for f in LISTING_FIELDS:
+                want = prices.get(f, listing[f])
+                ok = _same(f, after_listing[f], want)
+                journal["verification"].append({"field": f, "want": want, "live": after_listing[f],
+                                                "ok": ok})
+                if not ok:
+                    problems.append(f"{f} is {_money(after_listing[f])} live, expected {_money(want)}")
+            if touches_overrides:
+                after_over = live.overrides()
+                wanted = dict(overrides)
+                for op in envelope["operations"]:
+                    if op["kind"] == "override":
+                        if op["after"] is None:
+                            wanted.pop(op["date"], None)
+                        else:
+                            wanted[op["date"]] = op["after"]
+                for d in sorted(set(wanted) | set(after_over)):
+                    diff = _same_override(after_over.get(d), wanted.get(d))
+                    journal["verification"].append({"date": d, "ok": not diff, "differs_on": diff})
+                    if diff:
+                        problems.append(f"override {d} differs on {', '.join(diff)}")
+        except CannotWrite as exc:
+            reread_error = f"the re-read after the write failed ({exc})"
+        except Exception as exc:  # noqa: BLE001
+            reread_error = f"the re-read after the write failed (unexpected {type(exc).__name__})"
+        errors = ([send_error] if send_error and not journal.get("response_note") else []) \
+            + ([reread_error] if reread_error else [])
+        if errors or problems:
+            finish("sent-unverified", "; ".join(errors + problems))
+            what = "could not be verified" if reread_error else "did not take as approved"
+            raise CannotWrite(f"The write was SENT but {what}: " + "; ".join(errors + problems)
+                              + f". Read the live listing. Journal: {jpath}. "
+                              f"Undo with: {undo}")
+        return finish("verified")
+    finally:
+        if not written:  # any other way out (a crash, an interrupt) still leaves the journal
+            finish("sent-unverified" if journal["sent"] else "failed-before-send",
+                   journal.get("problem") or "stopped before the result was known")
 
 
 def apply_batch(envelopes: list, live_for, *, state_dir, on_verified=None, today=None, now=None) -> list:
     """Apply plans in order, stopping at the first one that is not verified. One yes can
     cover a batch, but a failure never lets the rest ride on it: later plans are reported
-    as not attempted, and the caller decides again with the facts in front of them."""
+    as not attempted, and the caller decides again with the facts in front of them.
+    Before anything is sent, every listing's live min/base/max is re-read and the whole
+    batch's after-values laid on top: plans that are fine alone but not together send nothing."""
+    groups = {}
+    for env in envelopes:
+        t = env.get("target") or {}
+        groups.setdefault((t.get("listing_id"), t.get("pms")), []).append(env)
+    for (lid, pms), envs in groups.items():
+        if len(envs) > 1 and any(op["kind"] == "listing_price" for e in envs for op in e["operations"]):
+            _check_bounds(live_for(lid, pms).listing(), envs)
     journals = []
     for i, env in enumerate(envelopes):
         t = env.get("target") or {}

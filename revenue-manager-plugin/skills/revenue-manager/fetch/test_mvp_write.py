@@ -166,8 +166,17 @@ class Base(unittest.TestCase):
     def plan(self, fake, spec, now=NOW):
         return plan_change(spec, live_for(fake), today=TODAY, now=now)
 
-    def apply(self, fake, env):
-        return apply_envelope(env, live_for(fake), state_dir=self.state, today=TODAY)
+    def apply(self, fake, env, now=LATER, today=TODAY):
+        return apply_envelope(env, live_for(fake), state_dir=self.state, today=today, now=now)
+
+    def plan_undo(self, fake, journal, today=TODAY, now=LATER):
+        return plan_change(rollback_change(journal), live_for(fake), today=today, now=now,
+                           rollback=True)
+
+    def journal_on_disk(self):
+        files = sorted(self.state.glob("journal/*.json"))
+        self.assertEqual(len(files), 1, files)
+        return json.loads(files[0].read_text())
 
 
 class PlanId(Base):
@@ -518,7 +527,7 @@ class Batch(Base):
         b = self.plan(fake, change(overrides_delete=["2026-10-10"]))
         seen = []
         journals = apply_batch([a, b], lambda lid, pms: live_for(fake), state_dir=self.state,
-                               today=TODAY, on_verified=lambda j: seen.append(j["plan_id"]))
+                               today=TODAY, now=LATER, on_verified=lambda j: seen.append(j["plan_id"]))
         self.assertEqual([j["status"] for j in journals], ["verified", "verified"])
         self.assertEqual(seen, [plan_id(a), plan_id(b)])
         self.assertEqual(fake.listing["min"], 170.0)
@@ -530,7 +539,8 @@ class Batch(Base):
         b = self.plan(fake, change(overrides_delete=["2026-10-10"]))
         fake.listing["min"] = 155.0  # a drifted since the plan
         with self.assertRaisesRegex(CannotWrite, "NOT ATTEMPTED: " + plan_id(b)):
-            apply_batch([a, b], lambda lid, pms: live_for(fake), state_dir=self.state, today=TODAY)
+            apply_batch([a, b], lambda lid, pms: live_for(fake), state_dir=self.state, today=TODAY,
+                        now=LATER)
         self.assertEqual(fake.writes(), [])
         self.assertIn("2026-10-10", fake.overrides)
 
@@ -540,7 +550,7 @@ class Rollback(Base):
         original = {"listing": copy.deepcopy(fake.listing), "overrides": copy.deepcopy(fake.overrides)}
         env = self.plan(fake, spec)
         journal = self.apply(fake, env)
-        back = self.plan(fake, rollback_change(journal))
+        back = self.plan_undo(fake, journal)
         self.assertNotEqual(plan_id(back), plan_id(env), "a rollback is its own plan")
         self.assertEqual(self.apply(fake, back)["status"], "verified")
         self.assertEqual(fake.listing, original["listing"])
@@ -665,6 +675,320 @@ class CLI(unittest.TestCase):
         bad.write_text("{not json")
         r = self.run_cli("plan", "--change", str(bad))
         self.assertEqual(r.returncode, 2, r.stderr)
+
+
+# ------------------------------------------------------------------ audit 2026-09-25 items 4-10
+
+def fail_on(fake, method, path_suffix, code=500, after=None):
+    """Make one route raise an HTTP error (optionally only after another call was seen)."""
+    real_open = fake.open
+
+    def opener(req, timeout):
+        seen = [r for r in fake.requests if after and r[0] == after[0] and r[1] == after[1]]
+        if req.get_method() == method and urlsplit(req.full_url).path.endswith(path_suffix) \
+                and (after is None or seen):
+            fake.requests.append((method, urlsplit(req.full_url).path, None))
+            raise HTTPError(req.full_url, code, "boom", {}, io.BytesIO(b"{}"))
+        return real_open(req, timeout)
+    fake.open = opener
+
+
+class OverrideBounds(Base):
+    """Bug 1: a night price is never written below the listing min."""
+
+    def test_fixed_override_below_min_is_refused_in_plain_words(self):
+        with self.assertRaisesRegex(CannotWrite, r"that night would be \$140\.00, below your min of \$150\.00"):
+            self.plan(FakePriceLabs(), change(overrides_set=[
+                {"date": "2026-10-05", "price": 140, "price_type": "fixed"}]))
+
+    def test_fixed_override_below_the_min_this_change_sets_is_refused(self):
+        with self.assertRaisesRegex(CannotWrite, r"below your min of \$170\.00"):
+            self.plan(FakePriceLabs(), change(listing_prices={"min": 170}, overrides_set=[
+                {"date": "2026-10-05", "price": 165, "price_type": "fixed"}]))
+
+    def test_fixed_override_above_max_is_a_loud_warning(self):
+        fake = FakePriceLabs()
+        fake.prices["2026-10-05"] = 400.0
+        env = self.plan(fake, change(overrides_set=[
+            {"date": "2026-10-05", "price": 420, "price_type": "fixed"}]))
+        self.assertTrue(any("ABOVE YOUR MAX" in w and "400.00" in w for w in env["warnings"]),
+                        env["warnings"])
+
+    def test_percent_override_that_lands_below_min_is_refused(self):
+        # 2026-10-01 is a $160 night; -10% = $144, below the $150 min
+        with self.assertRaisesRegex(CannotWrite, r"that night would be \$144\.00, below your min"):
+            self.plan(FakePriceLabs(), change(overrides_set=[
+                {"date": "2026-10-01", "price": -10, "price_type": "percent"}]))
+
+    def test_percent_override_with_no_known_night_price_warns(self):
+        fake = FakePriceLabs()
+        del fake.prices["2026-10-05"]
+        env = self.plan(fake, change(overrides_set=[
+            {"date": "2026-10-05", "price": -10, "price_type": "percent"}]))
+        self.assertTrue(any("could not check" in w and "2026-10-05" in w for w in env["warnings"]),
+                        env["warnings"])
+
+
+class ApplyBounds(Base):
+    """Bug 2: min <= base <= max is re-checked at apply against live, across the batch."""
+
+    def test_ui_edit_between_plan_and_yes_is_caught(self):
+        fake = FakePriceLabs()
+        env = self.plan(fake, change(listing_prices={"min": 190}))
+        fake.listing["base"] = 180.0  # someone lowered base in the PriceLabs UI
+        with self.assertRaisesRegex(CannotWrite, "min <= base <= max"):
+            self.apply(fake, env)
+        self.assertEqual(fake.writes(), [])
+
+    def test_two_plans_that_are_fine_alone_but_not_together_send_nothing(self):
+        fake = FakePriceLabs()
+        a = self.plan(fake, change(listing_prices={"min": 190}))
+        b = self.plan(fake, change(listing_prices={"base": 185}))
+        with self.assertRaisesRegex(CannotWrite, "min <= base <= max"):
+            apply_batch([a, b], lambda lid, pms: live_for(fake), state_dir=self.state,
+                        today=TODAY, now=LATER)
+        self.assertEqual(fake.writes(), [])
+
+
+class UndoAfterPartialWrite(Base):
+    """Bug 3: undo is built from live state; items already back are skipped, not fatal."""
+
+    def test_undo_after_the_override_post_failed(self):
+        fake = FakePriceLabs()
+        env = self.plan(fake, change(listing_prices={"min": 170}, overrides_set=[
+            {"date": "2026-10-05", "price": 230, "price_type": "fixed"}]))
+        fail_on(fake, "POST", "/overrides")
+        with self.assertRaises(CannotWrite):
+            self.apply(fake, env)
+        journal = self.journal_on_disk()
+        self.assertEqual(journal["status"], "sent-unverified")
+        self.assertEqual(fake.listing["min"], 170.0)  # the min DID land
+        back = self.plan_undo(fake, journal)
+        self.assertEqual([op.get("field") for op in back["operations"]], ["min"])
+        self.assertTrue(any("1 item already back to before" in w for w in back["warnings"]),
+                        back["warnings"])
+        fake.open = FakePriceLabs.open.__get__(fake)
+        self.assertEqual(self.apply(fake, back)["status"], "verified")
+        self.assertEqual(fake.listing["min"], 150.0)
+
+    def test_undo_when_everything_is_already_back_says_so(self):
+        fake = FakePriceLabs()
+        journal = self.apply(fake, self.plan(fake, change(listing_prices={"min": 170})))
+        fake.listing["min"] = 150.0
+        with self.assertRaisesRegex(CannotWrite, "already back to before"):
+            self.plan_undo(fake, journal)
+
+
+class JournalAlwaysWritten(Base):
+    """Bug 4: a failed re-read after a send still leaves a journal and an undo command."""
+
+    def test_reread_failure_after_send_writes_the_journal(self):
+        fake = FakePriceLabs()
+        env = self.plan(fake, change(listing_prices={"min": 170}))
+        fail_on(fake, "GET", f"/v1/listings/{LID}", code=503, after=("POST", "/v1/listings"))
+        with self.assertRaises(CannotWrite) as ctx:
+            self.apply(fake, env)
+        msg = str(ctx.exception)
+        journal = self.journal_on_disk()
+        self.assertEqual(journal["status"], "sent-unverified")
+        self.assertIn("SENT", msg)
+        self.assertIn(Path(journal["journal_path"]).name, msg)
+        self.assertIn(f"apply_change.py rollback --journal {Path(journal['journal_path']).name}", msg)
+        self.assertEqual(fake.listing["min"], 170.0)
+
+
+class RestoreOnlyFromUndo(Base):
+    """Bug 5: overrides_restore is internal to undo; a change file cannot carry it."""
+
+    def test_change_file_with_overrides_restore_is_refused(self):
+        with self.assertRaisesRegex(CannotWrite, "overrides_restore"):
+            self.plan(FakePriceLabs(), change(overrides_restore=[
+                {"date": "2026-10-05", "price": "1", "price_type": "fixed", "currency": "USD"}]))
+
+    def test_undo_restore_still_checks_currency(self):
+        fake = FakePriceLabs()
+        journal = self.apply(fake, self.plan(fake, change(overrides_delete=["2026-10-10"])))
+        journal["envelope"]["operations"][0]["before"]["currency"] = "USD"
+        with self.assertRaisesRegex(CannotWrite, "currency"):
+            self.plan_undo(fake, journal)
+
+    def test_snapshot_file_is_an_undo_source(self):
+        fake = FakePriceLabs()
+        journal = self.apply(fake, self.plan(fake, change(overrides_delete=["2026-10-10"])))
+        snap = json.loads(Path(journal["snapshot_path"]).read_text())
+        back = plan_change(rollback_change(snap), live_for(fake), today=TODAY, now=LATER,
+                           rollback=True)
+        self.assertEqual(self.apply(fake, back)["status"], "verified")
+        self.assertEqual(fake.overrides["2026-10-10"]["price"], "250")
+
+    def test_cli_plan_refuses_a_change_file_with_overrides_restore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "c.json"
+            f.write_text(json.dumps(change(overrides_restore=[{"date": "2026-10-05", "price": "1"}])))
+            env = dict(os.environ, RC_CACHE_DIR=tmp, PRICELABS_API_KEY="synthetic-key")
+            here = Path(__file__).resolve().parent
+            r = subprocess.run([sys.executable, "-B", str(here / "apply_change.py"), "plan", "--change",
+                                str(f)], capture_output=True, text=True, env=env, cwd=tmp, timeout=60)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("overrides_restore", r.stderr)
+
+
+    def test_cli_undo_refuses_a_file_outside_the_writers_own_folders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "fake-journal.json"
+            f.write_text(json.dumps(change(overrides_restore=[{"date": "2026-10-05", "price": "1"}])))
+            env = dict(os.environ, RC_CACHE_DIR=tmp, PRICELABS_API_KEY="synthetic-key")
+            here = Path(__file__).resolve().parent
+            r = subprocess.run([sys.executable, "-B", str(here / "apply_change.py"), "rollback",
+                                "--journal", str(f)], capture_output=True, text=True, env=env,
+                               cwd=tmp, timeout=60)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("not a journal or snapshot this writer saved", r.stderr)
+
+class OddPostResponse(Base):
+    """Bug 6: a non-dict row in the POST response goes to the re-read, never a traceback."""
+
+    def odd_response(self, fake):
+        real_open = fake.open
+
+        def opener(req, timeout):
+            resp = real_open(req, timeout)
+            if req.get_method() == "POST" and urlsplit(req.full_url).path == "/v1/listings":
+                return Response({"listings": ["ok"]})
+            return resp
+        fake.open = opener
+
+    def test_odd_row_but_the_write_landed_is_verified_by_the_reread(self):
+        fake = FakePriceLabs()
+        env = self.plan(fake, change(listing_prices={"min": 170}))
+        self.odd_response(fake)
+        self.assertEqual(self.apply(fake, env)["status"], "verified")
+
+    def test_odd_row_and_the_write_did_not_land_is_unverified(self):
+        fake = FakePriceLabs(silent_noop=True)
+        env = self.plan(fake, change(listing_prices={"min": 170}))
+        self.odd_response(fake)
+        with self.assertRaisesRegex(CannotWrite, "SENT"):
+            self.apply(fake, env)
+        self.assertEqual(self.journal_on_disk()["status"], "sent-unverified")
+
+    def test_cli_turns_any_exception_into_cannot_write(self):
+        import contextlib
+        import apply_change
+        with tempfile.TemporaryDirectory() as tmp:
+            old = os.environ.get("RC_CACHE_DIR")
+            os.environ["RC_CACHE_DIR"] = tmp
+            orig = (apply_change.load_plan, apply_change.apply_batch)
+            apply_change.load_plan = lambda state, pid: {"target": {}}
+
+            def boom(*a, **k):
+                raise RuntimeError("row 0 is a str")
+            apply_change.apply_batch = boom
+            err = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(err):
+                    rc = apply_change.main(["apply", "--plan", "0123456789ab", "--no-audit"])
+            finally:
+                apply_change.load_plan, apply_change.apply_batch = orig
+                if old is None:
+                    os.environ.pop("RC_CACHE_DIR", None)
+                else:
+                    os.environ["RC_CACHE_DIR"] = old
+        self.assertEqual(rc, 2)
+        self.assertIn("CANNOT WRITE", err.getvalue())
+        self.assertIn("journal", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
+
+class UndoPastDates(Base):
+    """Bug 7: past dates drop out of an undo instead of blocking it."""
+
+    def test_undo_drops_dates_that_are_now_past(self):
+        fake = FakePriceLabs()
+        journal = self.apply(fake, self.plan(fake, change(listing_prices={"min": 170}, overrides_set=[
+            {"date": "2026-10-03", "price": 230, "price_type": "fixed"}])))
+        later = date(2026, 10, 5)
+        back = self.plan_undo(fake, journal, today=later)
+        self.assertEqual([op.get("field") for op in back["operations"]], ["min"])
+        self.assertTrue(any("2026-10-03" in w and "past" in w for w in back["warnings"]),
+                        back["warnings"])
+
+    def test_a_normal_change_with_a_past_date_is_still_refused(self):
+        with self.assertRaisesRegex(CannotWrite, "past"):
+            self.plan(FakePriceLabs(), change(overrides_set=[
+                {"date": "2026-09-30", "price": 200, "price_type": "fixed"}]))
+
+
+class PlanExpiry(Base):
+    """Bug 8: a plan older than 24h, or with a date now past, is refused at apply."""
+
+    def test_plan_older_than_24h_is_refused(self):
+        fake = FakePriceLabs()
+        env = self.plan(fake, change(listing_prices={"min": 170}))
+        with self.assertRaisesRegex(CannotWrite, "plan again for fresh numbers"):
+            self.apply(fake, env, now=datetime(2026, 10, 2, 12, 1, tzinfo=timezone.utc))
+        self.assertEqual(fake.writes(), [])
+
+    def test_plan_whose_date_is_now_past_is_refused(self):
+        fake = FakePriceLabs()
+        env = self.plan(fake, change(overrides_set=[
+            {"date": "2026-10-01", "price": 200, "price_type": "fixed"}]))
+        with self.assertRaisesRegex(CannotWrite, "plan again for fresh numbers"):
+            self.apply(fake, env, today=date(2026, 10, 2))
+        self.assertEqual(fake.writes(), [])
+
+
+class RoundingAndDuplicates(Base):
+    def test_min_that_rounds_to_zero_is_refused(self):  # bug 9
+        with self.assertRaisesRegex(CannotWrite, "above zero"):
+            self.plan(FakePriceLabs(), change(listing_prices={"min": 0.004}))
+
+    def test_fixed_to_fixed_over_15_is_flagged_once(self):  # bug 10
+        # the min raise makes the plan read the calendar, which is where the second copy came from
+        env = self.plan(FakePriceLabs(), change(listing_prices={"min": 155}, overrides_set=[
+            {"date": "2026-10-10", "price": 300, "price_type": "fixed"}]))
+        flags = [w for w in env["warnings"] if "OVER 15%" in w]
+        self.assertEqual(len(flags), 1, env["warnings"])
+
+
+class NightMove(Base):
+    """Bug 11: the flag measures the night, and honours max_delta_pct."""
+
+    def test_min_raise_that_lifts_a_night_more_than_15_is_flagged(self):
+        fake = FakePriceLabs()
+        fake.prices["2026-10-02"] = 100.0
+        env = self.plan(fake, change(listing_prices={"min": 165}))  # +10% on the field
+        flags = [w for w in env["warnings"] if "OVER 15%" in w]
+        self.assertTrue(any("2026-10-02" in w and "+65.0%" in w for w in flags), env["warnings"])
+
+    def test_small_night_lift_is_not_flagged(self):
+        env = self.plan(FakePriceLabs(), change(listing_prices={"min": 170}))  # 160 -> 170
+        self.assertFalse(any("OVER" in w for w in env["warnings"]), env["warnings"])
+        self.assertTrue(any("+6.2%" in w for w in env["warnings"]), env["warnings"])
+
+    def test_max_delta_accepts_15_or_0_15(self):
+        for md in (15, 0.15):
+            with self.subTest(md=md):
+                over = self.plan_md(change(listing_prices={"base": 240}), md)
+                at = self.plan_md(change(listing_prices={"base": 230}), md)
+                self.assertTrue(any("OVER 15%" in w for w in over["warnings"]))
+                self.assertFalse(any("OVER" in w for w in at["warnings"]))
+
+    def test_max_delta_from_property_config_is_used(self):
+        env = self.plan_md(change(listing_prices={"base": 225}), 10)  # +12.5%
+        self.assertTrue(any("OVER 10%" in w for w in env["warnings"]), env["warnings"])
+
+    def plan_md(self, spec, md):
+        return plan_change(spec, live_for(FakePriceLabs()), today=TODAY, now=NOW, max_delta=md)
+
+
+class ZeroNight(Base):
+    def test_zero_priced_night_is_a_clear_refusal(self):  # bug 12
+        fake = FakePriceLabs()
+        fake.prices["2026-10-05"] = 0.0
+        with self.assertRaisesRegex(CannotWrite, r"\$0"):
+            self.plan(fake, change(overrides_set=[
+                {"date": "2026-10-05", "price": 240, "price_type": "fixed"}]))
 
 
 if __name__ == "__main__":
