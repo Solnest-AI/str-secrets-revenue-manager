@@ -395,6 +395,13 @@ class Sources:
 
         def load():
             actions = self.pl_get("/v1/actions")
+            # Same rule as nudges: an error envelope ({"error": ...}, {"message": ...}) is not
+            # "0 actions". Stored as zero, it would supersede the last real pile.
+            if not (isinstance(actions, list)
+                    or (isinstance(actions, dict) and isinstance(actions.get("data"), list)
+                        and not actions.get("error"))):
+                raise CannotAnalyze("PriceLabs actions response carries no actions list; "
+                                    "an error envelope is not an empty pile")
             nudges = self.pl_get("/v1/nudges/available")
             if not isinstance(nudges, dict) or "nudges" not in nudges:
                 raise CannotAnalyze("PriceLabs nudges response carries no `nudges` "

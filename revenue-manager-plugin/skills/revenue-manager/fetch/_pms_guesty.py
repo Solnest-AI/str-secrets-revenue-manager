@@ -142,7 +142,7 @@ def token_from_cache(path) -> str | None:
     p = Path(path)
     if not p.is_file():
         return None
-    text = p.read_text().strip()
+    text = p.read_text(encoding="utf-8-sig").strip()
     if text.startswith("{"):
         try:
             d = json.loads(text)
@@ -180,7 +180,9 @@ def get_token(connections) -> str:
             tok = json.loads(r.read()).get("access_token")
     except urllib.error.HTTPError as exc:
         exc.close()
-        raise GuestyError(f"Guesty token request refused (HTTP {exc.code}); today's 5-token cap may be spent") from None
+        why = ("the client id or secret is expired or wrong" if exc.code == 401
+               else "today's 5-token cap may be spent")
+        raise GuestyError(f"Guesty token request refused (HTTP {exc.code}); {why}") from None
     except (urllib.error.URLError, TimeoutError, OSError, ValueError):
         raise GuestyError("Guesty token endpoint unreachable") from None
     if not tok:
@@ -188,7 +190,7 @@ def get_token(connections) -> str:
     kit = next((p for p in paths if p.name == "guesty.token"), None)
     if kit:
         kit.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        kit.write_text(tok)
+        kit.write_text(tok, encoding="utf-8")
         kit.chmod(0o600)
     return tok
 
@@ -268,11 +270,15 @@ class GuestySource:
                                  lambda: self._paged("/reservations", reservation_query(pid, fields), "results", mapper))
 
     def reviews(self, pid):
+        # Same trap as reservations: the bare listingId param is not trusted to narrow the
+        # account-wide collection, so use the filters JSON, then keep ONLY rows that say they
+        # belong to this listing. A row with no listingId cannot be attributed and is dropped.
         def load():
-            raw = self._get("/reviews", {"listingId": pid, "limit": 100})
+            q = reservation_query(pid, "")
+            raw = self._get("/reviews", {"filters": q["filters"], "limit": 100})
             page = raw.get("data")
             if not isinstance(page, list):
                 raise GuestyError("Guesty reviews have no data list")
-            rows = [normalize_review(review_row(r)) for r in page if isinstance(r, dict) and r.get("listingId") in (None, pid)]
+            rows = [normalize_review(review_row(r)) for r in page if isinstance(r, dict) and r.get("listingId") == pid]
             return {"data": rows, "total": len(rows), "complete": len(page) < 100}
         return self.client.fetch("pms.reviews", [self.connections.account_or("guesty"), pid], load)

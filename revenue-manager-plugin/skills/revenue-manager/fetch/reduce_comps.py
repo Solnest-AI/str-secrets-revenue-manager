@@ -74,7 +74,7 @@ def _read_env(path):
     out = {}
     p = os.path.expanduser(path)
     if os.path.isfile(p):
-        for line in open(p):
+        for line in open(p, encoding="utf-8-sig"):
             if "=" in line and not line.lstrip().startswith("#"):
                 k, v = line.split("=", 1)
                 out[k.strip()] = v.strip().strip('"').strip("'")
@@ -131,7 +131,7 @@ def load_or_fetch(params: dict, ttl_days: float, use_cache: bool) -> tuple[dict,
     path = cache_path(params)
     if use_cache and os.path.isfile(path):
         try:
-            blob = json.load(open(path))
+            blob = json.load(open(path, encoding="utf-8"))
             age = time.time() - datetime.fromisoformat(blob["pulled_at"]).timestamp()
             if age <= ttl_days * 86400:
                 return blob, "hit"
@@ -140,7 +140,7 @@ def load_or_fetch(params: dict, ttl_days: float, use_cache: bool) -> tuple[dict,
     blob = fetch(params, resolve_key())
     os.makedirs(CACHE_DIR, exist_ok=True)
     tmp = path + ".tmp"
-    json.dump(blob, open(tmp, "w"))
+    json.dump(blob, open(tmp, "w", encoding="utf-8"))
     os.replace(tmp, path)
     return blob, "miss"
 

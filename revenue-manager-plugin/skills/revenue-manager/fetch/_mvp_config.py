@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 from _mvp_store import CannotAnalyze, identity
@@ -31,12 +32,83 @@ KEYS = {
 PROVIDERS = ("hospitable", "pricelabs", "airroi", "rankbreeze", "guesty", "ownerrez", "intellihost")
 
 
-def load_env(path):
+def read_text(path) -> str:
+    """Every local text file (.env, ~/.claude.json, settings) is read as UTF-8 and a Windows
+    BOM is dropped. Without this, Notepad's BOM glued itself to the first key name and that
+    key silently vanished, and the platform default (cp1252) mangled non-ASCII values."""
+    return Path(path).read_text(encoding="utf-8-sig")
+
+
+def utf8_console() -> None:
+    """Windows consoles default to cp1252, where printing a tick raises UnicodeEncodeError
+    AFTER the work is done. Every entry point calls this first."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+def _env_value(path, name):
+    try:
+        return load_env(Path(path), keys={name}).get(name)
+    except OSError:
+        return None
+
+
+def bundle_roots(servers, here=None) -> list:
+    """Where this bundle's own root `.env` can live, most specific last.
+
+    The connections kit's fan-out-env.sh merges keys into `$SKILL_PATH_REVENUE_MANAGER/.env`.
+    An installed plugin runs from ~/.claude/plugins/cache/<mkt>/revenue-manager/<ver>/..., so
+    `parents[4]` of this file is the cache, not the bundle: that path only counts when it
+    really is a checkout (it carries revenue-manager-plugin/). Otherwise the bundle is found
+    from SKILL_PATH_REVENUE_MANAGER in the environment, or in the kit's own .env, the kit
+    being located the same way server paths are: from each server's cwd/command/args in
+    ~/.claude.json, walking up to the folder holding fan-out-env.sh."""
+    here = Path(here or __file__).resolve()
+    roots = []
+    checkout = here.parents[4] if len(here.parents) > 4 else None
+    if checkout and (checkout / "revenue-manager-plugin").is_dir():
+        roots.append(checkout)
+    kits = []
+    for server in (servers or {}).values():
+        if not isinstance(server, dict):
+            continue
+        for value in [server.get("cwd", ""), server.get("command", ""), *(server.get("args") or [])]:
+            p = Path(str(value)).expanduser()
+            if not p.is_absolute():
+                continue
+            for d in [p, *list(p.parents)[:4]]:
+                if (d / "fan-out-env.sh").is_file():
+                    kits.append(d)
+                    break
+    for kit in dict.fromkeys(kits):
+        found = _env_value(kit / ".env", "SKILL_PATH_REVENUE_MANAGER")
+        if found:
+            roots.append(Path(found).expanduser())
+    if os.environ.get("SKILL_PATH_REVENUE_MANAGER"):
+        roots.append(Path(os.environ["SKILL_PATH_REVENUE_MANAGER"]).expanduser())
+    return [r for r in dict.fromkeys(roots) if r.is_dir()]
+
+
+def _bearer(server):
+    """An HTTP MCP server registered with a header (IntelliHost's fallback token) carries its
+    credential in headers.Authorization, not in env."""
+    headers = server.get("headers") if isinstance(server, dict) else None
+    auth = next((v for k, v in (headers or {}).items() if str(k).lower() == "authorization"), None)
+    if isinstance(auth, str) and auth.lower().startswith("bearer ") and auth[7:].strip():
+        return auth[7:].strip()
+    return None
+
+
+def load_env(path, keys=None):
+    keys = KEYS if keys is None else keys
     out = {}
     if path.is_file():
-        for line in path.read_text().splitlines():
+        for line in read_text(path).splitlines():
             match = re.match(r"\s*(?:export\s+)?([A-Z_]+)\s*=\s*(.*?)\s*$", line)
-            if match and match[1] in KEYS:
+            if match and match[1] in keys:
                 out[match[1]] = match[2].strip("\"'")
     return out
 
@@ -49,13 +121,13 @@ class Connections:
         path = Path(config_path).expanduser() if config_path else Path.home() / ".claude.json"
         if path.is_file():
             try:
-                self.servers = json.loads(path.read_text()).get("mcpServers", {})
+                self.servers = json.loads(read_text(path)).get("mcpServers", {})
             except (ValueError, OSError):
                 raise CannotAnalyze("Local MCP connection configuration is unreadable") from None
-        root = Path(__file__).resolve().parents[4]
+        roots = bundle_roots(self.servers)
         for provider in PROVIDERS:
             server = self.servers.get(provider, {})
-            dirs = [root / "mcp-servers" / provider, Path.home() / ".claude/mcp-servers" / provider]
+            dirs = [*(r / "mcp-servers" / provider for r in roots), Path.home() / ".claude/mcp-servers" / provider]
             for value in [
                 server.get("cwd", ""),
                 server.get("command", ""),
@@ -68,9 +140,12 @@ class Connections:
             for directory in reversed(self.paths[provider]):
                 self.values.update(load_env(directory / ".env"))
             self.values.update({k: v for k, v in server.get("env", {}).items() if k in KEYS})
+            if provider == "intellihost" and _bearer(server):
+                self.values["INTELLIHOST_MCP_TOKEN"] = _bearer(server)
         # The kit's fan-out-env.sh copies each attendee's keys into this bundle's root .env
         # on summit morning (SKILL_PATH_REVENUE_MANAGER), so read it before the cwd's.
-        self.values.update(load_env(root / ".env"))
+        for root in roots:
+            self.values.update(load_env(root / ".env"))
         self.values.update(load_env(Path.cwd() / ".env"))
         for path in env_files:
             self.values.update(load_env(Path(path).expanduser()))
@@ -78,8 +153,8 @@ class Connections:
         if not self.values.get("RANKBREEZE_SESSION"):
             for path in self.paths["rankbreeze"]:
                 p = path / "session.txt"
-                if p.is_file() and p.read_text().strip():
-                    self.values["RANKBREEZE_SESSION"] = p.read_text().strip()
+                if p.is_file() and read_text(p).strip():
+                    self.values["RANKBREEZE_SESSION"] = read_text(p).strip()
                     break
 
     def key(self, provider):
@@ -125,11 +200,15 @@ class Connections:
 def normalized_context(raw, property_id):
     rows = raw.get("config") or []
     if len(rows) != 1 or str(rows[0].get("property_id")) != property_id:
-        raise CannotAnalyze("No unique property configuration for this PMS property")
+        raise CannotAnalyze("No property_config row for this PMS property; run fetch/setup_properties.py "
+                            "first (with --pms guesty or --pms ownerrez if that is your PMS)")
     row = rows[0]
     settings = row.get("settings") or {}
     fields = (
+        "pms_source",
         "pms_name",
+        "pricing_gap",
+        "intellihost_property_id",
         "pricelabs_listing_id",
         "rankbreeze_listing_id",
         "airbnb_listing_id",
@@ -148,7 +227,7 @@ def normalized_context(raw, property_id):
 
 def read_context(client, connections, property_id, settings_file=None):
     if settings_file:
-        raw = json.loads(Path(settings_file).expanduser().read_text())
+        raw = json.loads(read_text(Path(settings_file).expanduser()))
         if str(raw.get("property_id")) != property_id:
             raise CannotAnalyze("Settings file belongs to another PMS property")
         return normalized_context({"config": [raw]}, property_id)

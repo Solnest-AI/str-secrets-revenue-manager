@@ -38,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _cache import cache_dir  # noqa: E402
-from _mvp_config import Connections  # noqa: E402
+from _mvp_config import Connections, utf8_console  # noqa: E402
 from _mvp_recommendations import CannotPersist, _ident, _lit  # noqa: E402
 from _mvp_store import CannotAnalyze  # noqa: E402
 from _mvp_write import (  # noqa: E402
@@ -125,7 +125,7 @@ def print_plans(envs: list, state: Path) -> None:
 
 
 def read_change(path: str) -> dict:
-    text = sys.stdin.read() if path == "-" else Path(path).read_text()
+    text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8-sig")
     try:
         spec = json.loads(text)
     except ValueError:
@@ -136,6 +136,7 @@ def read_change(path: str) -> dict:
 
 
 def main(argv=None) -> int:
+    utf8_console()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--env-file", action="append", default=[])
     sub = ap.add_subparsers(dest="cmd", required=True)

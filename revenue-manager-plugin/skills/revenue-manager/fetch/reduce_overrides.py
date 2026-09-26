@@ -57,7 +57,7 @@ def resolve_key() -> str:
     for path in ENV_CANDIDATES:
         p = os.path.expanduser(path)
         if os.path.isfile(p):
-            for line in open(p):
+            for line in open(p, encoding="utf-8-sig"):
                 m = re.match(r"\s*(PRICELABS_API_KEY|PRICELABS_KEY)\s*=\s*(.+?)\s*$", line)
                 if m:
                     return m.group(2).strip('"').strip("'")
