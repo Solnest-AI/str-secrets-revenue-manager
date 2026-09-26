@@ -24,26 +24,26 @@ def health_check() -> dict:
 
 @mcp.tool()
 def get_estimate(bedrooms: int, baths: float, guests: int,
-                 address: str = "", lat: float = 0.0, lng: float = 0.0,
+                 address: str = "", lat: float | None = None, lng: float | None = None,
                  currency: str = "native") -> dict:
     """Revenue estimate for a property: annual revenue, ADR, occupancy, percentiles,
     monthly distribution, and comparable_listings. Provide EITHER address OR lat+lng.
     AirROI returns each market's native local currency by default (currency=native)."""
     return ar.get_estimate(bedrooms=bedrooms, baths=baths, guests=guests,
-                           address=address or None, lat=lat or None, lng=lng or None,
+                           address=address or None, lat=lat, lng=lng,
                            currency=currency)
 
 
 @mcp.tool()
 def get_comparables(bedrooms: int, baths: float, guests: int,
-                    address: str = "", latitude: float = 0.0, longitude: float = 0.0,
+                    address: str = "", latitude: float | None = None, longitude: float | None = None,
                     radius: int = 0, currency: str = "native") -> dict:
     """Up to 25 NAMED competitor listings near a location — each with TTM revenue, ADR,
     occupancy, ratings, amenities and description. Provide EITHER address OR
     latitude+longitude. radius (miles) optionally widens thin markets. Returns native local currency by default (currency=native)."""
     return ar.get_comparables(bedrooms=bedrooms, baths=baths, guests=guests,
-                              address=address or None, latitude=latitude or None,
-                              longitude=longitude or None, radius=radius or None,
+                              address=address or None, latitude=latitude,
+                              longitude=longitude, radius=radius or None,
                               currency=currency)
 
 
@@ -56,8 +56,8 @@ def get_listing(listing_id: int, currency: str = "native") -> dict:
 
 @mcp.tool()
 def get_listing_metrics(listing_id: int, num_months: int = 12, currency: str = "native") -> dict:
-    """Monthly time-series for one listing: occupancy / ADR / revenue / RevPAR at the
-    p25-p90 percentiles over num_months. Returns native local currency by default (currency=native)."""
+    """Monthly time-series for one listing: occupancy, ADR, revenue, RevPAR, and
+    minimum nights over num_months. Returns native local currency by default (currency=native)."""
     return ar.get_listing_metrics(listing_id, num_months, currency)
 
 
