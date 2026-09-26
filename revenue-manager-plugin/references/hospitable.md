@@ -124,3 +124,31 @@ get_quote                    → all-in guest price (nightly × nights + cleanin
 ```
 
 **Remember:** calendar `price.amount` is the ASK in **cents** and **equals** the PriceLabs pushed price; the calendar is ground truth; `user_price` in PriceLabs is stale; track ask (calendar) *and* cleared (ADR from reservations) separately; markup is what the operator states, per channel.
+
+---
+
+## Calendar write target (`fetch/_pms_hospitable.py`, `HospitableCalendarTarget`)
+
+Every PMS price write goes through `apply_change.py plan|apply|rollback --target hospitable`
+and the `_calendar_write` core (docs/WRITE-TARGETS.md), never through the raw MCP tool.
+Endpoints below were read from Hospitable's published OpenAPI (Stoplight project
+`hospitable-eng/public-api-docs`) on **2026-09-25**.
+
+| Call | Doc | Status |
+|---|---|---|
+| `GET https://public.api.hospitable.com/v2/properties/{uuid}/calendar?start_date&end_date` | https://developer.hospitable.com/docs/public-api-docs/d97fb82987ff6-get-property-calendar | **VERIFIED-LIVE 2026-09-25**: one read-only call through the target, one property, 7 days: 7 contiguous days, one currency (CAD), `price.amount` integer minor units parsed to major, `min_stay` integer, `status.available` boolean. Scopes `property:read`, `calendar:read`; rate limit 1000/min. |
+| `PUT https://public.api.hospitable.com/v2/properties/{uuid}/calendar` | https://developer.hospitable.com/docs/public-api-docs/lziaxr9e1j27m-update-property-calendar | **DOCS-ONLY** (never written live). Body `{"dates": [{"date": "YYYY-MM-DD", "price": {"amount": <integer, base units, e.g. cents for USD/EUR>}, "min_stay": <int>, "available"?, "closed_for_checkin"?, "closed_for_checkout"?, "note"?}]}`. Success is **202 `{"status": "accepted"}`**. Scopes `property:read`, `calendar:write`. Up to 1,095 days ahead. **"Calendar updates are processed asynchronously, so successful writes may not appear in the read endpoint immediately"**: the core re-READS at 0/5/15/30/60 s and never resends. 422 causes documented: calendar restricted, or "Hospitable Dynamic Pricing is enabled, therefore prices cannot be updated via the API". |
+| `GET https://public.api.hospitable.com/v2/properties/{uuid}` | https://developer.hospitable.com/docs/public-api-docs/7fu6aoxy7h0o4-get-property-by-uuid (Property model `yxkt0gu4kdw8u`) | **DOCS-ONLY**. `calendar_restricted: true` = "its calendar will not be able to be updated using the Update Property Calendar endpoint"; the target refuses to plan. See https://developer.hospitable.com/docs/public-api-docs/hriol5oneuh9u-calendar-restriction |
+
+Units: https://developer.hospitable.com/docs/public-api-docs/ofr9ft9to2ata-currencies (read
+2026-09-25): money is an integer in the currency's smallest unit; JPY and VND have zero
+decimals. The target converts with ISO 4217 minor units (USD 150.25 -> 15025, JPY 15000 ->
+15000, KWD 150.25 -> 150250). NOTE (open finding, not fixed here): the runner's read path
+keeps Hospitable's `price.amount` as `price_cents` and `_mvp_analysis.py` divides it by 100 for
+every currency (the /100 rule above), which is 100x off for a JPY or VND Hospitable property.
+The writer does not share that path.
+
+Floor: the Property model has no min-price field, so `floor()` is None and the core uses
+`property_config.settings.min_price` (set with `setup_properties.py --min-price`); with neither,
+price cuts are refused. Pricing owner: the API exposes no dynamic-pricing flag, so
+`pricing_managed()` is None and `property_config.settings.pricing_tool` decides.
