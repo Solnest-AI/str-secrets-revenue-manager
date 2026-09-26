@@ -1,4 +1,4 @@
-> **Standalone setup, not used at the summit.** At the summit, the STR Secrets connections kit plus `../SETUP.md` replace this file. Paths below are relative to the bundle root (the folder above this one).
+> **LEGACY, NOT FOR THE SUMMIT.** This is the old all-in-one setup, kept for reference. At STR Secrets Summit 2.0, use the STR Secrets connections kit plus `../SETUP.md` instead. Paths below are relative to the bundle root (the folder above this one).
 
 # Solnest Revenue Manager — your STR pricing brain, in one folder
 
@@ -156,9 +156,9 @@ For any of the five bundled tools, the flow is the same — and Claude does it w
 2. Build it:
    - **Node** tools (`hospitable`, `pricelabs`): `npm install` then `npm run build`.
    - **Python — Turno:** `uv sync` (Turno uses `uv`).
-   - **Python — RankBreeze and AirROI:** `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
+   - **Python, AirROI:** `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
    - (The `uv` path and the `venv` + `pip` path are not interchangeable — use the one listed for that tool.)
-3. `cp .env.example .env` and paste **your own key** into the `.env`. (RankBreeze is the one exception — it has no API key. Copy `session.txt.example` to `session.txt` and paste your `_godzilla_session` cookie value in there, or set `RANKBREEZE_SESSION` in the `.env` instead. RankBreeze ships `session.txt.example`, not a ready-made `session.txt`, so you create `session.txt` by copying it first.)
+3. `cp .env.example .env` and paste **your own key** into the `.env`. (RankBreeze uses its own hosted MCP now (the old browser-cookie connector in `mcp-servers/rankbreeze/` is retired). In RankBreeze: Settings > MCP Access > Remote MCP > + Add URL > Copy URL. That URL is the secret: paste it into the root `.env` as `RANKBREEZE_MCP_URL=` (never the chat), then register it with `set -a; . ./.env; set +a; claude mcp add --transport http --scope user rankbreeze "$RANKBREEZE_MCP_URL"` and fully restart Claude Code.)
 4. Register the connector with Claude Code: `claude mcp add <tool> --scope user -- …`, then **fully restart Claude Code**. The path you pass to `claude mcp add` must be the **absolute path** to wherever the connector folder actually sits on your disk — if you ran it in place, that's this bundle folder. (This is load-bearing: get the path wrong and the connector won't register.)
 5. Verify the tools show up.
 
@@ -186,7 +186,7 @@ You supply your own keys, locally, during setup. See the note below.
 Read this part. It matters.
 
 - **Nothing in this repo is a secret.** It's setup markdown, five connector source folders, the plugin skill, the database migrations, and reference docs. That's it.
-- **Every operator supplies their own keys, on their own machine.** Your PMS key, your pricing-tool key, your Supabase key, your RankBreeze cookie — they go into your local `.env` / `session.txt` during setup. They **never** touch this repo, never get committed, never get shared.
+- **Every operator supplies their own keys, on their own machine.** Your PMS key, your pricing-tool key, your Supabase key, your RankBreeze MCP URL: they go into your local `.env` during setup. They **never** touch this repo, never get committed, never get shared.
 - The `.gitignore` keeps `.env` files, `session.txt`, and the like out of git automatically. Claude will never ask you to paste a key into the chat — keys only ever go into your local config, and only ever travel to that tool's own API.
 
 If you ever fork or share this: same rule. No keys, ever. **Before you push or share, run `git status` and confirm no `.env` or `session.txt` is staged** — that's the one-second check that keeps the gitignore honest.

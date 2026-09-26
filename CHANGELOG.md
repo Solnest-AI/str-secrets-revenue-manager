@@ -1,5 +1,31 @@
 # Changelog
 
+## 5.0.1
+
+- **Update your installed copy.** Claude Code only refreshes an installed plugin when its
+  version number changes, so a copy installed from 5.0.0 keeps the old skill until you
+  update it. Put the new files in the same folder you installed from (unzip the new zip over
+  it, or `git pull` if you cloned it), then run
+  `claude plugin marketplace update str-secrets-revenue-manager` and
+  `claude plugin update revenue-manager@str-secrets-revenue-manager` (or just ask Claude to
+  "update the revenue manager plugin"). New copy in a different folder? Run step 2 of
+  `SETUP.md` from there instead. Then fully quit and reopen Claude Code.
+- **The zip and the GitHub copy are now the same files.** Both are built from the same
+  commit, and a check refuses to ship a zip that differs by a single byte.
+- **Markup is what you tell it.** The skill asks what markup you add per channel and stores
+  exactly that. It never works a markup out from a gap between your PMS and PriceLabs.
+- **Every price change goes through the safe writer** (plan, apply on a yes, re-read,
+  rollback). A tool the writer can't reach yet gets the change as exact steps to do by hand,
+  never a raw write.
+- **RankBreeze uses its hosted MCP tool names**, and IntelliHost has its own short guide.
+- **Setup works for Guesty and OwnerRez** as well as Hospitable (`--pms guesty|ownerrez`),
+  and the commands use `uv run --python 3.13 python`, same as the connections kit.
+- **A shorter skill.** PMS notes and the long framework moved into `references/`. Every rule
+  is still there.
+- **Cleaner docs.** Setup order is install, fully quit and reopen, then first run. Example
+  addresses and figures are neutral public examples. The old `standalone/` setup is marked
+  legacy and no longer walks through the retired RankBreeze browser cookie.
+
 ## 5.0.0 (STR Secrets Summit 2.0)
 
 - **The flywheel runs on every call.** Every property card opens with Visibility, Bookings,
@@ -18,6 +44,16 @@
   property for you and tells you about any it can't.
 - **Evening runs work.** After 5pm Pacific, PriceLabs' market data has already moved to
   tomorrow; the run now starts tomorrow and says so, instead of stopping.
+- **Guesty and OwnerRez get the tested runner too.** The runner picks the connected PMS on
+  its own, and each one was tested read-only on a real account.
+- **IntelliHost as a ranking source.** Visibility and Ranking can come from IntelliHost when
+  RankBreeze isn't there. A property without IntelliHost Premium gets a named gap, not a
+  failure.
+- **RankBreeze through its hosted MCP.** The funnel and rankings come from RankBreeze's
+  official MCP, the one on every listing plan. No browser cookie.
+- **No-rates mode.** If a PMS never exposes nightly prices, the run still checks bookings and
+  availability and says it priced without the PMS rate. A PMS that drops only SOME prices is
+  still refused.
 - **Setup is the STR Secrets connections kit** plus a short `SETUP.md`. The old all-in-one
   setup lives in `standalone/`.
 

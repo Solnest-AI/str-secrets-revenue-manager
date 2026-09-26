@@ -19,9 +19,14 @@ Open Claude Code in this folder and say:
 
 > **Set up the revenue manager.**
 
-Claude follows `SETUP.md`: checks your connections, installs the plugin, asks you one
-question (what markup you add per channel), and runs your first check. Then quit and
-reopen Claude Code once, and you're in.
+Claude follows `SETUP.md`, in this order:
+
+1. Checks your connections.
+2. Installs the plugin.
+3. You fully quit and reopen Claude Code (Cmd+Q on Mac, not just closing the window). The
+   skill only loads on a fresh start.
+4. You say "finish the revenue manager setup". Claude asks you one question (what markup you
+   add per channel) and runs your first check.
 
 ## Using it
 
@@ -41,13 +46,20 @@ far-out, day-of-week, seasonality) is actually helping, against the market.
 
 ## What's tested, straight up
 
-- **Hospitable + PriceLabs:** the full tested runner. Setup maps every property for you
-  and tells you about any it can't map.
-- **Other PMSs (Hostaway, Guesty, OwnerRez, Lodgify, Uplisting, Smoobu, Hostfully):** the
-  skill works from whatever the connections kit connected, same rules and same cards.
-- **Beyond:** reads work. Price changes go through the Beyond connector the kit builds on
-  your machine, and the skill reads every change back to make sure it took.
-- **RankBreeze, IntelliHost, AirROI, PriceLabs Market Research:** optional. If you have
+- **Hospitable, Guesty or OwnerRez, plus PriceLabs:** the full tested runner. Setup maps
+  every property for you and tells you about any it can't map.
+- **Hostaway, Lodgify, Uplisting, Smoobu, Hostfully:** no tested runner yet. Claude pulls
+  the data through the tools the connections kit connected and applies the same safety
+  layer and the same card layout itself. It works, but it leans on Claude doing more by
+  hand, so check the numbers on your first run.
+- **Price changes:** every PMS and both pricing tools (PriceLabs, Beyond) can take changes.
+  Every change goes through one safe writer: it checks nothing moved since the card, applies
+  on your yes, reads it back, and can undo it. If the writer can't reach your tool yet, you
+  get the exact change to make by hand instead. It never pushes a change any other way.
+- **Beyond:** reads work. Writes go through the same safe writer. Reading each Beyond change
+  back is coming with the writer's Beyond support; until then you get the exact change to
+  make in Beyond yourself.
+- **RankBreeze, IntelliHost, AirROI, Turno, Breezeway:** optional and read-only. If you have
   them, they make the cards sharper. If not, it tells you what's missing and keeps going.
 
 ## What's in this folder
@@ -56,7 +68,8 @@ far-out, day-of-week, seasonality) is actually helping, against the market.
 SETUP.md                  the setup Claude follows
 revenue-manager-plugin/   the Revenue Manager itself (skill, database tables, references)
 mcp-servers/              connectors, if you ever run this without the connections kit
-standalone/               the old all-in-one setup, for use without the connections kit
+standalone/               the old all-in-one setup (legacy, not for the summit)
+scripts/                  release checks (you won't need these)
 ```
 
 ## Your keys stay yours

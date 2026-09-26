@@ -7,9 +7,9 @@ PriceLabs does not see every booking. Off-platform reservations and bookings mad
 under a channel account that is not wired into the PriceLabs sync are returned as
 plainly AVAILABLE (`booking_status: ""`, `unbookable: 0`), not as blocks.
 
-Measured live on 2026-09-12 against the Solnest Stays portfolio, forward 180 days:
-53 booked nights with a calendar-price total of CA$92,798 were invisible to PriceLabs across 4 of 7 synced
-listings. One listing (a ski chalet) showed Dec 0% / Jan 0% occupancy in PriceLabs
+Measured live on 2026-09-12 against a real operator portfolio, forward 180 days:
+dozens of booked nights, worth tens of thousands in calendar price, were invisible to PriceLabs
+across more than half of the synced listings. One listing (a ski chalet) showed Dec 0% / Jan 0% occupancy in PriceLabs
 while the PMS had it at 71% / 84% booked over Christmas and New Year.
 
 That is not a cosmetic reporting gap. The revenue framework's own red-flag table
