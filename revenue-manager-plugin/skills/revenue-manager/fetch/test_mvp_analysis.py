@@ -342,6 +342,18 @@ class AnalysisIntegrationTests(unittest.TestCase):
         bundle["inputs"]["funnel"]["visibility_row"]["period"] = "2031-07"
         self.assert_degraded(bundle, "visibility")
 
+    def test_rejected_ok_funnel_names_its_date_not_its_success_reason(self):
+        # Live 2026-09-25: an "ok" funnel rejected as not current printed "visibility: unreadable,
+        # IntelliHost funnel, last 30 days vs comp set", its own success reason, hiding the cause.
+        bundle = synthetic_bundle()
+        funnel = bundle["inputs"]["funnel"]
+        day = (START + timedelta(days=1)).isoformat()
+        funnel.update(last_sync_date=day, reason="fresh funnel with peer comparisons (official MCP)")
+        result = compute(bundle)
+        detail = result["flywheel"]["spokes"]["visibility"]["detail"]
+        self.assertIn(day, detail)
+        self.assertNotIn("fresh funnel", detail)
+
     def test_rankings_must_be_current_not_stale_or_future(self):
         # A stale or future-dated ranking row is not evidence of today's position, so
         # the spoke fails. Under D12 that degrades the run and is named first.

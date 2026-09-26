@@ -326,7 +326,13 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
     vis = flywheel.spoke_visibility(
         funnel.get("visibility_row") if funnel.get("status") == "ok" and fresh_funnel else None
     )
-    if not vis["ok"] and funnel.get("reason"):
+    if not vis["ok"] and funnel.get("status") == "ok" and not fresh_funnel:
+        # An "ok" funnel carries its SUCCESS reason; printing that under "unreadable" hid why it
+        # was rejected (live 2026-09-25: "visibility: unreadable, IntelliHost funnel, last 30 days
+        # vs comp set"). Name the date instead.
+        vis["detail"] = (f"funnel data is dated {funnel.get('last_sync_date')}, not current for a run "
+                         f"starting {start}")
+    elif not vis["ok"] and funnel.get("reason") and funnel.get("status") != "ok":
         vis["detail"] = funnel["reason"]
     canonical = [
         {"date": r["date"], "status": {"reason": r["status_reason"], "available": r["available"]}}

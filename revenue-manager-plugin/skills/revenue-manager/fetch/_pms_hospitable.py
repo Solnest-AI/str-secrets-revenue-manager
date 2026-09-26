@@ -40,6 +40,9 @@ EXPLAIN = {
 class HospitableCalendarTarget:
     name = "hospitable"
     label = "Hospitable"
+    # Written live 2026-09-25 (The Urban Nest, 2026-12-04, 126 -> 127 CAD, 202 then re-read
+    # verified; undo applied and verified), so cards drop the "first live write" line.
+    LIVE_WRITE_VERIFIED = True
     host = HOST
     ALLOWED = (
         ("GET", re.compile(rf"/v2/properties/{_SEG}/calendar")),

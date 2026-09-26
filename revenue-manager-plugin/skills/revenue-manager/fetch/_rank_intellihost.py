@@ -20,15 +20,18 @@ from __future__ import annotations
 import itertools
 import json
 import threading
-from datetime import date
+from datetime import date, timedelta
 
 from _mvp_store import CannotAnalyze, identity
 
 URL = "https://clients.intellihost.co/api/mcp"
 UA = "claude-code (revenue-manager)"
 RANK_MAX_AGE_DAYS = 7
-FUNNEL_MAX_AGE_DAYS = 7
+# Same limit as _mvp_analysis.build()'s fresh-funnel check (3 days). At 7, a 4-7 day old funnel
+# passed here as "ok" and build() then printed it as unreadable under this module's SUCCESS reason.
+FUNNEL_MAX_AGE_DAYS = 3
 FUNNEL_DAYS = 30
+LIST_LIMIT = 200  # list-properties-tool's maximum; it has no offset, so 200 is the ceiling
 PREMIUM_GAP = "IntelliHost is connected, but this property needs IntelliHost Premium to read its data"
 STAGES = ["first_page_impressions", "click_through_rate", "booking_rate"]
 
@@ -60,12 +63,24 @@ def funnel_from_dashboard(payload: dict, start: date) -> dict:
         # as "ok". Old data is a named gap with its own date, never the current funnel.
         return {**base, "reason": f"IntelliHost funnel data ends {ended.isoformat()}, {age} days old "
                                   f"(limit {FUNNEL_MAX_AGE_DAYS}); IntelliHost has stopped syncing this listing"}
+    # Live 2026-09-25 (Outliers, 3 Premium listings): the raw comp rates are NOT the benchmark.
+    # IntelliHost's own note: click rate and click-to-book fall as impressions rise, and own booking
+    # rate carries a 0.68x level offset against the comp series. Raw comp read two listings at 2.1x
+    # and 1.6x of par on click rate as a click_through_rate BREAK. step_benchmarks.<step>.expected_rate
+    # is the comp-set rate adjusted to this listing's visibility; a missing one is a named gap
+    # (funnel_diagnosis -> unknown), never a fallback to the raw comp rate.
+    sb = payload.get("step_benchmarks") if isinstance(payload.get("step_benchmarks"), dict) else {}
+
+    def expected(step):
+        row = sb.get(step)
+        return row.get("expected_rate") if isinstance(row, dict) else None
     comparison = {
         "first_page_impressions": _pair(f.get("first_page_search_impressions"), f.get("comp_first_page_search_impressions")),
-        "click_through_rate": _pair(f.get("click_rate"), f.get("comp_click_rate")),
-        "booking_rate": _pair(f.get("click_to_book_rate"), f.get("comp_click_to_book_rate")),
+        "click_through_rate": _pair(f.get("click_rate"), expected("ctr")),
+        "booking_rate": _pair(f.get("click_to_book_rate"), expected("book")),
     }
-    return {**base, "status": "ok", "reason": f"IntelliHost funnel, last {FUNNEL_DAYS} days vs comp set",
+    return {**base, "status": "ok",
+            "reason": f"IntelliHost funnel, last {FUNNEL_DAYS} days vs its visibility-adjusted comp-set benchmark",
             "last_sync_date": str(to)[:10],
             "visibility_row": {"integration_status": "active", "date": str(to)[:10], "period": start.strftime("%Y-%m"),
                                "source": "intellihost", "stages": STAGES, "similar_listings_comparison": comparison}}
@@ -173,19 +188,26 @@ class IntelliHostSource:
         def load():
             out = {}
             for inactive in (False, True):
-                rows = self._tool("list-properties-tool", {"include_inactive": inactive, "limit": 100}).get("properties") or []
+                # Live 2026-09-25: limit 100 dropped 10 of Outliers' 110 ACTIVE listings (2 of its 5
+                # Premium ones) from setup's mapping, silently. Active first, so they win the ceiling.
+                rows = self._tool("list-properties-tool", {"include_inactive": inactive, "limit": LIST_LIMIT}).get("properties") or []
                 for p in rows:
                     lid = str(p.get("listing_id") or "")
                     if lid.isdigit() and p.get("id") is not None:
                         out.setdefault(lid, str(p["id"]))
             return out
-        return self.client.fetch("intellihost.map", [identity(["intellihost", self._token])], load, ttl_seconds=86400)
+        # v2: a map cached by the limit-100 build must not be served for another 24 hours
+        return self.client.fetch("intellihost.map.v2", [identity(["intellihost", self._token])], load, ttl_seconds=86400)
 
     def funnel(self, ih_id, start):
         def load():
             try:
-                payload = self._tool("get-funnel-dashboard", {"property_id": int(ih_id), "days": FUNNEL_DAYS,
-                                                              "end_date": start.isoformat(), "include_daily": False})
+                # Live 2026-09-25: end_date WITHOUT start_date is ignored; the window ended on IntelliHost's
+                # UTC today, a day after the property-local start every US evening, so build() read the
+                # funnel as not current and every card said "visibility: unreadable". Both dates pin it.
+                payload = self._tool("get-funnel-dashboard", {
+                    "property_id": int(ih_id), "start_date": (start - timedelta(days=FUNNEL_DAYS - 1)).isoformat(),
+                    "end_date": start.isoformat(), "include_daily": False})
             except CannotAnalyze as exc:
                 return {"status": "skipped", "reason": str(exc), "current_month": start.strftime("%Y-%m"),
                         "last_sync_date": None, "visibility_row": None}
