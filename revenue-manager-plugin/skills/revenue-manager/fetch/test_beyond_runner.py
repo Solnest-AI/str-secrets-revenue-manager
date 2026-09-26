@@ -74,7 +74,7 @@ class Router:
         raise AssertionError(f"unexpected network call to {host}")
 
 
-def pms_stub(fake, *, min_stay=2, price_off=None):
+def pms_stub(fake, *, min_stay=2, price_off=()):
     """A PMS that agrees with Beyond: same quoted price per night, booked where Beyond is."""
     class Stub:
         def __init__(self, client, connections, pms="hospitable"):
@@ -94,7 +94,7 @@ def pms_stub(fake, *, min_stay=2, price_off=None):
             for i in range(days):
                 d = (start + timedelta(days=i)).isoformat()
                 price = fake.entry(d)["attributes"]["price-posted"]
-                if d == price_off:
+                if d in price_off:
                     price += 7
                 booked = d in fake.booked
                 rows.append({"date": d, "price_cents": price * 100, "currency": "USD", "min_stay": min_stay,
@@ -193,17 +193,21 @@ class Card(unittest.TestCase):
         self.assertNotIn("PriceLabs calculated", brief)
         # the flywheel's own degraded spokes still show (no RankBreeze here)
         self.assertIn("visibility: unreadable", brief)
-        # the min is an output: floor binds on 12 open nights and pace trails the benchmark
-        self.assertIn("Min price: current 150 -> recommended 135 (lower, -10%).", brief)
-        self.assertIn("pace behind (next-30-day occupancy", brief)
-        self.assertIn("comp reference: AirROI trailing-12-month ADR", brief)
-        rec = facts["min_recommendation"]
-        # 12 nights modeled under the floor; 2026-10-10 carries a fixed override, so 11 sit on it
-        self.assertEqual((rec["floor_pinned_open_nights"], rec["action"]), (11, "lower"))
-        # dated review scenarios are measured against a NAMED reference
-        self.assertTrue(facts["candidates"])
-        self.assertIn("vs Beyond benchmark avg 200", brief)
-        self.assertEqual({c["reference_source"] for c in facts["candidates"]}, {"beyond_benchmark_avg"})
+        # the min is an output, from the SAME rule as PriceLabs: 11 of 28 open nights sit on the
+        # floor (12 modeled under it; 2026-10-10 carries a fixed override) and pace lags, but
+        # the min is already under AirROI's ADR p25 (net), so the rule keeps it and says why
+        rec = facts["min_price"]
+        self.assertEqual((rec["floor_open_near"], rec["open_near"], rec["pace"], rec["action"]),
+                         (11, 28, "lags", "keep"))
+        self.assertIn("Recommended min price: keep at 150 net (currently 150). 11 of 28 open nights", brief)
+        self.assertIn("the lower quartile of AirROI trailing-12-month ADR", brief)
+        self.assertIn("Heads up: comps behind Beyond's benchmark: unknown", brief)
+        # dated review scenarios, cuts AND raises, each measured against a NAMED reference
+        by = {c["direction"]: c["reference_source"] for c in facts["candidates"]}
+        self.assertEqual(by, {"cut": "beyond_benchmark_avg", "raise": "airroi_adr_p25"})
+        self.assertIn("vs Beyond benchmark avg 200; review cut net 187-209", brief)
+        self.assertIn("vs AirROI ADR p25 200; review raise net", brief)
+        self.assertTrue(all(c["days_out"] < 14 for c in facts["candidates"] if c["direction"] == "cut"))
         # read-only, and only Beyond + AirROI were called
         self.assertEqual([r for r in fake.requests if r[0] != "GET"], [])
         self.assertEqual(set(run["metrics"]["by_provider"]), {"beyond", "airroi"})
@@ -230,7 +234,8 @@ class Card(unittest.TestCase):
         self.assertIn("market comparison unavailable in Beyond's API: its market insights are priced in "
                       "your billing currency EUR, your listing in USD", brief)
         self.assertIn("is the only market reference on this card", brief)
-        self.assertEqual({c["reference_source"] for c in run["facts"]["candidates"]}, {"airroi_adr_p75"})
+        by = {c["direction"]: c["reference_source"] for c in run["facts"]["candidates"]}
+        self.assertEqual(by, {"cut": "airroi_adr_p75", "raise": "airroi_adr_p25"})
 
     def test_unreadable_market_is_a_named_gap_not_a_crash(self):
         fake = beyond_fake()
@@ -253,9 +258,17 @@ class Card(unittest.TestCase):
         code, brief, run = self.run_card(fake, airroi=False)
         self.assertEqual(code, 0, brief)
         self.assertIn("No comp source: AirROI is not connected", brief)
+        self.assertIn(BR.GAP_NO_RAISE, brief)
         self.assertEqual(run["facts"]["candidates"], [])
-        self.assertIn("comp reference: none available.", brief)
-        self.assertIn("Min price: current 150 -> recommended", brief)
+        self.assertIn("Recommended min price: keep at 150 net (currently 150)", brief)
+        self.assertIn("pace vs the market is unreadable", brief)
+
+    def test_the_min_lowers_by_the_same_rule_when_no_comp_quartile_holds_it(self):
+        code, brief, run = self.run_card(beyond_fake(), airroi=False)
+        self.assertEqual(code, 0, brief)
+        self.assertIn("Recommended min price: lower to 128 net (currently 150). 11 of 28 open nights in "
+                      "the next 30 days sit at your min and your next 30 nights are 7% booked vs the "
+                      "market's 60%; comp lower quartile unavailable, so the step is the cap", brief)
 
     def test_a_ceiling_when_beyond_has_one_is_shown_not_gapped(self):
         fake = FakeBeyond()  # max 400
@@ -266,14 +279,25 @@ class Card(unittest.TestCase):
 
     # ------------------------------------------------------------------ sync check and refusals
 
-    def test_min_stay_half_is_skipped_but_a_price_mismatch_still_blocks(self):
+    def test_min_stay_half_is_skipped_and_a_price_mismatch_is_scoped_to_its_date(self):
         fake = beyond_fake()
         code, brief, run = self.run_card(fake, pms=pms_stub(fake, min_stay=5))
         self.assertEqual(run["facts"]["reconciliation"]["mismatches"], [])  # min stay not compared
-        code, brief, run = self.run_card(fake, pms=pms_stub(fake, price_off="2026-10-05"))
+        code, brief, run = self.run_card(fake, pms=pms_stub(fake, price_off={"2026-10-05"}))
+        self.assertEqual((code, run["facts"]["status"]), (0, "degraded"))
+        self.assertIn("SYNC MISMATCH on 1 date(s), pricing withheld on those dates only: 2026-10-05. "
+                      "PMS and Beyond disagree", brief)
+        self.assertIn("2026-10-05: PMS and Beyond disagree on price; fix the sync", brief)
+        self.assertNotIn("2026-10-05", {c["date"] for c in run["facts"]["candidates"]})
+        self.assertTrue(run["facts"]["candidates"])  # the rest of the run is still priced
+
+    def test_mismatches_on_more_than_a_fifth_of_open_nights_block_the_run(self):
+        fake = beyond_fake()
+        off = {(TODAY + timedelta(days=i)).isoformat() for i in range(3, 25)}  # 22 of 88 open
+        code, brief, run = self.run_card(fake, pms=pms_stub(fake, price_off=off))
         self.assertEqual((code, run["facts"]["status"]), (2, "blocked"))
-        self.assertIn("Unexplained PMS/Beyond price or booking mismatch", brief)
-        self.assertIn("[provisional: a required gate failed]", brief)
+        self.assertIn("PMS/Beyond price or booking mismatches on 22 dates, more than 20% of the 88 open "
+                      "nights", brief)
 
     def test_an_unreadable_beyond_calendar_blocks_by_name(self):
         class NotClustered(FakeBeyond):
@@ -300,48 +324,31 @@ class Card(unittest.TestCase):
         self.assertEqual(fake.requests, [])
 
 
-# ------------------------------------------------------------------ the min, unit by unit
+# ------------------------------------------------------------------ the one min rule, Beyond-shaped
 
-class MinRecommendation(unittest.TestCase):
-    B = {"min": 150.0, "base": 200.0, "max": None}
+class MinPriceOnBeyondRows(unittest.TestCase):
+    """_mvp_analysis.min_price_recommendation is the only min rule; Beyond rows carry no p25."""
 
-    def w(self, open_n=20, pinned=8, occ=30.0, mocc=60.0):
-        return {"open": open_n, "floor_open": pinned, "occupancy_pct": occ, "market_occupancy_pct": mocc}
+    def rows(self, pinned=10, open_n=20, booked=0, occ=60.0, sold_at_floor=0):
+        out = []
+        for i in range(30):
+            status = "open" if i < open_n else "confirmed_paid" if i < open_n + booked else "blocked"
+            at_floor = (i < pinned) if status == "open" else (i - open_n < sold_at_floor)
+            out.append({"days_out": i, "status": status, "at_floor": at_floor, "market_occ": occ, "p25": None})
+        return out
 
-    def test_binds_and_behind_lowers_ten_percent(self):
-        r = BR.recommend_min(self.B, self.w(), None, None, None, 1.15)
-        self.assertEqual((r["action"], r["recommended"], r["move_pct"]), ("lower", 135.0, -10.0))
+    def test_a_borrowed_comp_quartile_is_named_and_never_undercut(self):
+        from _mvp_analysis import min_price_recommendation
+        mp = min_price_recommendation({"min": 150.0, "base": 200.0, "max": None}, self.rows(), 1.15, 0.15,
+                                      comp_p25=161.0, comp_source="AirROI trailing-12-month ADR, 5 comps")
+        self.assertEqual((mp["action"], mp["recommended"], mp["comp_p25_net"]), ("lower", 140, 140.0))
+        self.assertIn("the lower quartile of AirROI trailing-12-month ADR, 5 comps is 140 net", mp["reason"])
 
-    def test_binds_and_ahead_raises_but_never_past_base(self):
-        r = BR.recommend_min(self.B, self.w(occ=80), None, None, None, 1.15)
-        self.assertEqual((r["action"], r["recommended"]), ("raise", 165.0))
-        r = BR.recommend_min({"min": 190.0, "base": 200.0, "max": None}, self.w(occ=80), None, None, None, 1.15)
-        self.assertEqual((r["action"], r["recommended"]), ("raise", 200.0))
-        r = BR.recommend_min({"min": 200.0, "base": 200.0, "max": None}, self.w(occ=80), None, None, None, 1.15)
-        self.assertEqual(r["action"], "hold")
-
-    def test_rarely_binding_or_no_open_nights_or_level_pace_holds(self):
-        self.assertEqual(BR.recommend_min(self.B, self.w(pinned=2), None, None, None, 1.15)["action"], "hold")
-        self.assertIn("no open nights", BR.recommend_min(self.B, self.w(open_n=0, pinned=0), None, None,
-                                                         None, 1.15)["why"])
-        self.assertEqual(BR.recommend_min(self.B, self.w(occ=58), None, None, None, 1.15)["pace"], "level")
-
-    def test_pace_falls_back_to_same_lead_history_and_says_so(self):
-        lead = {"current": {"reconstructed_accepted_nights": 3, "unknown_status_records": 0},
-                "prior_same_calendar": {"reconstructed_accepted_nights": 9, "unknown_status_records": 1}}
-        r = BR.recommend_min(self.B, self.w(mocc=None), lead, None, None, 1.15)
-        self.assertEqual(r["pace"], "behind")
-        self.assertIn("same-lead, partial", r["pace_detail"])
-        r = BR.recommend_min(self.B, self.w(mocc=None), None, None, None, 1.15)
-        self.assertEqual(r["pace"], "unknown")
-
-    def test_the_comp_reference_is_shown_in_net_and_airbnb_terms(self):
-        ref = {"source": "AirROI x", "adr_p25": 230.0}
-        r = BR.recommend_min(self.B, self.w(), None, ref, 999.0, 1.15)
-        self.assertEqual(r["comp_reference"], {"source": "AirROI x, 25th percentile", "airbnb": 230.0,
-                                               "net": 200.0})
-        r = BR.recommend_min(self.B, self.w(), None, None, 230.0, 1.15)
-        self.assertIn("Beyond benchmark average", r["comp_reference"]["source"])
+    def test_no_ceiling_is_never_read_and_the_raise_stops_at_base(self):
+        from _mvp_analysis import min_price_recommendation
+        rows = self.rows(pinned=0, open_n=5, booked=20, occ=20.0, sold_at_floor=5)
+        mp = min_price_recommendation({"min": 190.0, "base": 200.0, "max": None}, rows, 1.15, 0.15)
+        self.assertEqual((mp["action"], mp["recommended"]), ("raise", 200))
 
 
 class Market(unittest.TestCase):
@@ -397,12 +404,67 @@ class SetupMapping(unittest.TestCase):
         gap = build_settings("pms-1", None, None, {"airbnb": 1.0}, now, pricelabs=False)
         self.assertEqual(gap["pricing_tool"], None)
         self.assertIn("PriceLabs or Beyond", gap["pricing_gap"])
+        # Beyond sets the prices but is not readable yet: still Beyond-owned, with a named gap
+        stated = build_settings("pms-1", None, None, {"airbnb": 1.0}, now, pricelabs=False, pricing_tool="beyond")
+        self.assertEqual(stated["pricing_tool"], "beyond")
+        self.assertIn("BEYOND_TOKEN is not connected", stated["pricing_gap"])
+        unmapped = build_settings("pms-1", None, None, {"airbnb": 1.0}, now, pricelabs=False,
+                                  pricing_tool="beyond", gap="could not be matched")
+        self.assertEqual((unmapped["pricing_tool"], unmapped["pricing_gap"]), ("beyond", "could not be matched"))
+        self.assertEqual(build_settings("p", None, None, {"airbnb": 1.0}, now, min_price=140,
+                                        pricelabs=False, beyond="9")["min_price"], 140.0)
 
     def test_the_runner_context_keeps_the_mapping(self):
         from _mvp_config import normalized_context
         ctx = normalized_context({"config": [{"property_id": "p", "settings": {
             "pricing_tool": "beyond", "beyond_listing_id": "48213", "secret": "x"}}]}, "p")
         self.assertEqual(ctx["settings"], {"pricing_tool": "beyond", "beyond_listing_id": "48213"})
+
+
+class CliThroughTheRealWriter(unittest.TestCase):
+    """apply_change.py's own Beyond routing, driving the REAL _beyond_write (integrate's routing
+    tests use a stand-in module): plan, apply on a yes, undo, apply the undo."""
+
+    def test_plan_apply_rollback_apply(self):
+        import os
+
+        import apply_change
+        from _mvp_config import Connections
+        fake = FakeBeyond()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            env = tmp / "keys.env"
+            env.write_text(f"BEYOND_TOKEN={TOKEN}\n")
+            change = tmp / "change.json"
+            change.write_text(json.dumps({"listing_id": LID, "pms": "beyond", "reason": "test base",
+                                          "listing_prices": {"base": 210}}))
+
+            def cli(*argv):
+                out, err = StringIO(), StringIO()
+                with patch.dict(os.environ, {"RC_CACHE_DIR": str(tmp / "cache")}), \
+                        patch.object(apply_change, "Connections",
+                                     lambda env_files=(): Connections(env_files, config_path=tmp / "none.json")), \
+                        patch("_beyond_write.urllib.request.build_opener", lambda *h: fake), \
+                        redirect_stdout(out), patch("sys.stderr", err):
+                    code = apply_change.main(["--env-file", str(env), *argv])
+                return code, out.getvalue() + err.getvalue()
+
+            code, out = cli("plan", "--change", str(change))
+            self.assertEqual(code, 0, out)
+            self.assertIn("First live write for Beyond", out)
+            pid = re.search(r"--target beyond --plan ([0-9a-f]{12})", out).group(1)
+            self.assertEqual([r for r in fake.requests if r[0] != "GET"], [])
+            code, out = cli("apply", "--plan", pid, "--no-audit")
+            self.assertEqual(code, 0, out)
+            self.assertIn("APPLIED AND VERIFIED", out)
+            self.assertEqual(fake.cust["base-price"]["base-price"], 210)
+            journal = re.search(r"rollback --target beyond --journal (\S+\.json)", out).group(1)
+            code, out = cli("rollback", "--journal", journal)
+            self.assertEqual(code, 0, out)
+            undo = re.search(r"--plan ([0-9a-f]{12})", out).group(1)
+            code, out = cli("apply", "--plan", undo, "--no-audit")
+            self.assertEqual(code, 0, out)
+            self.assertEqual(fake.cust["base-price"]["base-price"], 200)
 
 
 class Audit(unittest.TestCase):
@@ -416,8 +478,18 @@ class Audit(unittest.TestCase):
                                                                                       "price": 230.0}}]}
         sql = audit_statement({"envelope": env, "plan_id": "abc", "journal_path": "/x/j.json",
                                "status": "verified"})
-        self.assertIn("'listing_min_stay', 'min_stay', '2', '3'", sql)
-        self.assertIn("'override_set', '2026-10-05'", sql)
+        self.assertIn("'beyond_listing_min_stay', 'min_stay', '2', '3'", sql)
+        self.assertIn("'beyond_override_set', '2026-10-05'", sql)
+
+    def test_a_null_max_is_recorded_as_null_not_deleted(self):
+        from apply_change import audit_statement
+        env = {"target": {"listing_id": LID, "pms": "beyond", "currency": "USD"}, "listing_name": "Cabin",
+               "reason": "undo", "operations": [
+                   {"kind": "listing_price", "field": "max", "before": 400.0, "after": None}]}
+        sql = audit_statement({"envelope": env, "plan_id": "abc", "journal_path": "/x/j.json",
+                               "status": "verified"})
+        self.assertIn("'beyond_listing_price', 'max', '400.0', 'null'", sql)
+        self.assertNotIn("deleted", sql)
 
 
 if __name__ == "__main__":

@@ -41,6 +41,6 @@ called on real properties. Structure only; no account data is recorded here.
 | Listing | get-listing-details, get-optimization-audit, get-listing-optimization (regenerate=false), get-change-tracker, get-reviews | Airbnb listing facts; audit with $ attribution and ranked recommendations; AI title/description with scores; dated changes with funnel-rate deltas and estimated revenue impact; reviews with ratings |
 | Portfolio | get-portfolio-health, get-action-items, get-market-data, get-forecast-budget, get-forecast-variance | rating/setup triage; alert feed; saved market studies; budgets (empty if none set) |
 | Not working | get-revenue-indicator | "Helix forecasting job is not currently running", on every property |
-| **Writes (never called in testing)** | set-property-price-override, set-price-thresholds, set-auto-sync, upsert-pricing-rule, copy-pricing-rules, delete-pricing-rules, resolve-action-item, refresh-audit | change live pricing or state. The revenue manager may only use them behind the plain-yes card, with a fresh read before and a re-read after |
+| **Writes (never called)** | set-property-price-override, set-price-thresholds, set-auto-sync, upsert-pricing-rule, copy-pricing-rules, delete-pricing-rules, resolve-action-item, refresh-audit | change live pricing or state. **IntelliHost is read-only for the revenue manager: never call these.** Price changes go through the PMS or pricing tool, via `fetch/apply_change.py` |
 
 Reservations and reviews carry guest names: never print, store or cache them.

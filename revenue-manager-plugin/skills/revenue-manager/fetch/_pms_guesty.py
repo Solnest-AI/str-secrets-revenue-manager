@@ -1,4 +1,5 @@
-"""Guesty (Open API v1) as a PMS source for the runner. Read-only.
+"""Guesty (Open API v1) as a PMS source for the runner, plus GuestyCalendarTarget (the calendar
+WRITE target for _calendar_write, at the bottom; endpoints cited in references/guesty.md).
 
 Measured live 2026-09-24 on a real account (read-only):
   - prices are WHOLE currency units (151 = $151), so they become cents here
@@ -21,6 +22,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -282,3 +284,100 @@ class GuestySource:
             rows = [normalize_review(review_row(r)) for r in page if isinstance(r, dict) and r.get("listingId") == pid]
             return {"data": rows, "total": len(rows), "complete": len(page) < 100}
         return self.client.fetch("pms.reviews", [self.connections.account_or("guesty"), pid], load)
+
+
+# ------------------------------------------------------------------------------ write target
+
+class GuestyCalendarTarget:
+    """Guesty calendar writes for _calendar_write (references/guesty.md).
+
+      GET /v1/availability-pricing/api/calendar/listings/{id}?startDate&endDate
+          data.days[]: date, listingId, currency, price (WHOLE units, measured), minNights, status
+      PUT /v1/availability-pricing/api/calendar/listings
+          [{"listingId", "startDate", "endDate", "price"?, "minNights"?}, ...] -> 200 "ok"
+          One request, one listing, one period per date: Guesty's docs say to send a single
+          listing per request and never update one listing in parallel.
+
+    Prices are sent in whole currency units only (price_step): every price read live on a real
+    account was whole, and Guesty documents only "a number in the listing's currency". A
+    fractional price is refused at plan time instead of being guessed at.
+    """
+
+    name = "guesty"
+    label = "Guesty"
+    host = "open-api.guesty.com"
+    ALLOWED = (
+        ("GET", re.compile(r"/v1/availability-pricing/api/calendar/listings/[A-Za-z0-9._:-]{1,128}")),
+        ("PUT", re.compile(r"/v1/availability-pricing/api/calendar/listings")),
+    )
+    LIVE_WRITE_VERIFIED = False
+    SETTLE_SECONDS = (0, 5, 15)  # no documented lag; two extra READS cover a slow commit
+    EXPLAIN = {401: "the Guesty token is invalid or expired", 403: "the Guesty token cannot write calendars",
+               404: "Guesty has no listing with this id", 422: "Guesty rejected the request as invalid",
+               429: "Guesty rate limit (15/s, 120/min, 5000/hr account-wide)"}
+
+    def __init__(self, connections, opener=None, max_calls: int = 30):
+        from _calendar_write import CalendarHTTP
+        self.connections, self._token = connections, None
+        self.http = CalendarHTTP(self.label, self.host, self.ALLOWED, self._auth, opener, max_calls,
+                                 self.EXPLAIN)
+
+    def _auth(self):
+        from _mvp_write import CannotWrite
+        if not self._token:
+            try:
+                self._token = get_token(self.connections)  # cached token first; mints only if none
+            except CannotAnalyze as exc:
+                raise CannotWrite(str(exc)) from None
+        return {"Authorization": "Bearer " + self._token}
+
+    def read_calendar(self, listing_id, start, end) -> dict:
+        from _mvp_write import CannotWrite, _num
+        raw = self.http.request(
+            "GET", "/v1/availability-pricing/api/calendar/listings/" + urllib.parse.quote(str(listing_id), safe=""),
+            {"startDate": start.isoformat(), "endDate": end.isoformat()})
+        rows = ((raw or {}).get("data") or {}).get("days") if isinstance(raw, dict) else None
+        if not isinstance(rows, list):
+            raise CannotWrite("Guesty calendar has no day rows")
+        days, currencies = {}, set()
+        for r in rows:
+            if not isinstance(r, dict) or not isinstance(r.get("date"), str):
+                raise CannotWrite("Guesty calendar has an unreadable day")
+            if r.get("listingId") not in (None, listing_id):
+                raise CannotWrite("Guesty calendar belongs to another listing")
+            if r["date"] in days:
+                raise CannotWrite(f"Guesty returned {r['date']} twice")
+            if r.get("currency"):
+                currencies.add(str(r["currency"]).upper())
+            price, mn = r.get("price"), r.get("minNights")
+            status = str(r.get("status") or "").lower()
+            days[r["date"]] = {
+                "price": None if price is None else _num(price, f"Guesty price on {r['date']}"),
+                "min_stay": mn if isinstance(mn, int) and not isinstance(mn, bool) else None,
+                "available": True if status == "available" else
+                             False if status in ("unavailable", "booked", "reserved", "blocked") else None,
+            }
+        if len(currencies) != 1:
+            raise CannotWrite("Guesty calendar does not carry exactly one currency")
+        return {"currency": currencies.pop(), "days": days}
+
+    def write_calendar(self, listing_id, changes: dict, currency: str) -> None:
+        periods = []
+        for d in sorted(changes):
+            c, row = changes[d], {"listingId": listing_id, "startDate": d, "endDate": d}
+            if "price" in c:
+                p = float(c["price"])
+                row["price"] = int(p) if p == int(p) else p
+            if "min_stay" in c:
+                row["minNights"] = int(c["min_stay"])
+            periods.append(row)
+        self.http.request("PUT", "/v1/availability-pricing/api/calendar/listings", body=periods)
+
+    def price_step(self, currency):
+        return 1  # whole currency units (see the class docstring)
+
+    def floor(self, listing_id):
+        return None  # no documented listing min price is read here; property_config min_price applies
+
+    def pricing_managed(self, listing_id):
+        return None  # the Open API documents no dynamic-pricing owner flag; property_config decides

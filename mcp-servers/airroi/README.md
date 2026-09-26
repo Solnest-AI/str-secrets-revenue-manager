@@ -28,7 +28,7 @@ Verify it works:
 claude mcp add airroi --scope user -- "<this-folder>/.venv/bin/python" "<this-folder>/server.py"
 ```
 Fully restart Claude Code (quit + reopen), then try: *"AirROI health check"* or
-*"Pull AirROI comps for a 3BR in Sun Peaks, BC."*
+*"Pull AirROI comps for a 3BR in Whistler, BC."*
 
 ## Tools
 | Tool | Returns |

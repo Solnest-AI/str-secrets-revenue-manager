@@ -16,8 +16,11 @@ runner does instead, each said on the card:
   max price           may be blank: treated as no ceiling, never invented.
   suggestions pile    none like PriceLabs' actions/nudges: skipped.
 
-The min price is still an OUTPUT (SKILL.md 2.1): recommend_min() below states what the min
-should be from Beyond's current min, how often the floor binds, pace and the comp source.
+The min price is still an OUTPUT (SKILL.md 2.1), from the SAME rule as PriceLabs
+(_mvp_analysis.min_price_recommendation): Beyond's current min, nights at the floor, pace
+against Beyond's benchmark occupancy, and AirROI's ADR p25 as the named lower quartile.
+Review scenarios: a CUT is measured against Beyond's benchmark average (else AirROI ADR p75);
+a RAISE needs a lower reference, which only AirROI's ADR p25 is (an average is not one).
 """
 
 from __future__ import annotations
@@ -41,9 +44,8 @@ GAP_PILE = ("Beyond has no suggestions list like PriceLabs' actions and nudges; 
             "(Beyond's base-price recommendations are not read by this runner).")
 GAP_CEILING = "No max price is set in Beyond: treated as no ceiling. None was invented."
 GAP_NO_MARKET = "market comparison unavailable in Beyond's API"
-PINNED_SHARE = 0.25     # the floor "binds" when this share of open nights sits on it
-PACE_POINTS = 5.0       # occupancy points either side of the benchmark that count as behind/ahead
-STEP = 0.10             # a min move, inside the 15% scrutiny line (D8)
+GAP_NO_RAISE = ("No raise scenarios: they need a lower reference and Beyond gives averages, not a "
+                "lower quartile; AirROI's ADR p25 would supply one when connected.")
 
 
 # ------------------------------------------------------------------------------ adapters
@@ -156,6 +158,8 @@ def gaps(market, listing, prices, comps) -> list:
     elif market["status"] != "ok":
         out.append("No comp source: AirROI is not connected or returned no usable comps, so no night is "
                    "compared with a market and no dated price review is emitted.")
+    if not (ref and ref.get("adr_p25") is not None):
+        out.append(GAP_NO_RAISE)
     out.append(GAP_RULES)
     out.append(GAP_MIN_STAY)
     out.append(f"Freshness: Beyond gives no price-calculation time; prices are as read at "
@@ -169,6 +173,14 @@ def gaps(market, listing, prices, comps) -> list:
     return out
 
 
+def low_reference(comps_ref):
+    """(value in Airbnb terms, source code) that a RAISE scenario is measured against: AirROI's
+    ADR p25 only. Beyond's benchmark is an average, which is not a lower bound of anything."""
+    if comps_ref and comps_ref.get("adr_p25") is not None:
+        return comps_ref["adr_p25"], "airroi_adr_p25"
+    return None, None
+
+
 def reference_for(date_key, market_map, comps_ref, multiplier):
     """(value in Airbnb terms, source code) for one night: Beyond's benchmark average posted
     rate on that date, else AirROI's ADR p75 (flat), else (None, None). Both are guest-facing
@@ -179,86 +191,6 @@ def reference_for(date_key, market_map, comps_ref, multiplier):
     if comps_ref and comps_ref.get("adr_p75") is not None:
         return comps_ref["adr_p75"], "airroi_adr_p75"
     return None, None
-
-
-# ------------------------------------------------------------------------------ the min
-
-def _pace(window30, same_lead30):
-    occ, mocc = window30.get("occupancy_pct"), window30.get("market_occupancy_pct")
-    if occ is not None and mocc is not None:
-        diff = occ - mocc
-        word = "behind" if diff <= -PACE_POINTS else "ahead" if diff >= PACE_POINTS else "level"
-        return word, (f"next-30-day occupancy {occ:g}% vs Beyond's benchmark {mocc:g}% "
-                      f"({diff:+.1f} points)")
-    if same_lead30:
-        cur = same_lead30["current"]
-        prior = same_lead30["prior_same_calendar"]
-        now, then = cur.get("reconstructed_accepted_nights"), prior.get("reconstructed_accepted_nights")
-        partial = cur.get("unknown_status_records") or prior.get("unknown_status_records")
-        if now is not None and then is not None and (now or then):
-            word = "behind" if now < then else "ahead" if now > then else "level"
-            return word, (f"{now} nights on the books for the next 30 days vs {then} at this point last "
-                          f"year (same-lead{', partial' if partial else ''}; no market benchmark)")
-    return "unknown", "no market benchmark and no same-lead history to judge pace"
-
-
-def recommend_min(bounds, window30, same_lead30, comps_ref, market_avg_30, multiplier) -> dict:
-    """What the min SHOULD be (SKILL.md 2.1), from four named inputs. A rule of thumb shown for
-    review, never applied on its own:
-
-      floor binds (>= 25% of the next 30 days' open nights sit on it) and pace BEHIND
-          -> lower 10%: the floor is holding nights that are not selling.
-      floor binds and pace AHEAD
-          -> raise 10% (never past base): nights sell even at the floor, so it is too low.
-      otherwise -> hold, and say which input decided it.
-
-    The comp reference (AirROI ADR p25, else Beyond's benchmark average) is shown beside it in
-    both net and Airbnb terms; it informs, it does not set the number."""
-    current = bounds["min"]
-    open_n, pinned = window30.get("open") or 0, window30.get("floor_open") or 0
-    pace, pace_why = _pace(window30, same_lead30)
-    if comps_ref and comps_ref.get("adr_p25") is not None:
-        ref = {"source": comps_ref["source"] + ", 25th percentile", "airbnb": comps_ref["adr_p25"]}
-    elif market_avg_30 is not None:
-        ref = {"source": "Beyond benchmark average posted rate, open nights in the next 30 days",
-               "airbnb": market_avg_30}
-    else:
-        ref = None
-    if ref:
-        ref["net"] = round(ref["airbnb"] / multiplier, 2)
-    share = pinned / open_n if open_n else None
-    action, rec = "hold", current
-    if not open_n:
-        why = "no open nights in the next 30 days, so nothing shows whether the floor binds"
-    elif share >= PINNED_SHARE and pace == "behind":
-        action, rec = "lower", max(5.0, float(round(current * (1 - STEP))))
-        why = (f"the floor binds on {pinned} of {open_n} open nights and pace is behind, so the floor "
-               "is holding nights that are not selling")
-    elif share >= PINNED_SHARE and pace == "ahead":
-        rec = min(float(round(current * (1 + STEP))), bounds["base"])
-        if rec > current:
-            action = "raise"
-            why = (f"the floor binds on {pinned} of {open_n} open nights yet pace is ahead: those "
-                   "nights sell even at the floor, so it is set too low")
-        else:
-            rec = current
-            why = "the floor binds and pace is ahead, but a higher min would pass your base"
-    elif share >= PINNED_SHARE:
-        why = (f"the floor binds on {pinned} of {open_n} open nights but pace is {pace}, so there is "
-               "no evidence either way")
-    else:
-        why = (f"the floor binds on only {pinned} of {open_n} open nights, so the min is not what is "
-               "holding price")
-    return {
-        "current": current, "recommended": rec, "action": action,
-        "move_pct": round((rec - current) / current * 100, 1) if current else None,
-        "why": why, "pace": pace, "pace_detail": pace_why,
-        "floor_pinned_open_nights": pinned, "open_nights": open_n,
-        "comp_reference": ref,
-        "method": ("rule of thumb: floor-pinned share of the next 30 days' open nights plus pace; "
-                   f"moves are {int(STEP * 100)}%, inside the 15% scrutiny line; a scenario for review, "
-                   "applied only through apply_change.py on a yes"),
-    }
 
 
 # ------------------------------------------------------------------------------ live jobs

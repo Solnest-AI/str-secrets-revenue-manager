@@ -56,6 +56,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _calendar import local_today  # noqa: E402
 from _cache import cache_dir, cache_name, listing_matches, read_json, write_json  # noqa: E402
 from factcheck import (  # noqa: E402
     NB_DAILY_COLUMNS, NB_KPI_COLUMNS, NB_KPI_SERIES, NB_MONTHLY_COLUMNS, NB_PCT_SERIES,
@@ -140,8 +141,15 @@ def main() -> int:
     ap.add_argument("--ttl-days", type=float, default=1, help="cache lifetime (default 1: percentiles move daily)")
     ap.add_argument("--no-cache", action="store_true")
     ap.add_argument("--today", default=None, help=argparse.SUPPRESS)  # window start; tests pin it
+    ap.add_argument("--tz", help="property timezone (IANA name or +HH:MM); 'today' is the "
+                                 "property's date, not this computer's. Default: local clock")
     a = ap.parse_args()
-    today = a.today or __import__("datetime").date.today().isoformat()
+    today = a.today
+    try:
+        today = today or local_today(a.tz).isoformat()
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     blob, how, ckey = load_or_fetch(a.listing, a.pms, a.lat, a.lng, a.ttl_days, not a.no_cache)
     d = blob["data"]

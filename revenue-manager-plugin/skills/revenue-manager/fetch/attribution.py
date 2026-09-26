@@ -331,6 +331,98 @@ def _market_occ(rows: list[dict]) -> float | None:
     return sum(vals) / len(vals) if vals else None
 
 
+def _verdict(delta: float) -> str:
+    """SKILL 6.1b: within EFFECT_TOLERANCE_PP either way is neutral, not "working"."""
+    if delta > EFFECT_TOLERANCE_PP:
+        return "working"
+    if delta < -EFFECT_TOLERANCE_PP:
+        return "underperforming"
+    return "neutral"
+
+
+def _judge(inside: list[dict], outside: list[dict], where: str = "the window") -> dict:
+    """Grade one set of dates against another, each measured against the market."""
+    out = {"inside_dates": len(inside), "outside_dates": len(outside)}
+    if len(inside) < MIN_DATES_PER_SIDE or len(outside) < MIN_DATES_PER_SIDE:
+        out.update(verdict="unknown",
+                   why=f"only {len(inside)} dates inside {where} and "
+                       f"{len(outside)} outside; fewer than {MIN_DATES_PER_SIDE} on a "
+                       "side is a coin flip, not a verdict")
+        return out
+    occ_in, occ_out = _occ(inside), _occ(outside)
+    mkt_in, mkt_out = _market_occ(inside), _market_occ(outside)
+    out.update(occ_inside=occ_in, occ_outside=occ_out,
+               market_inside=mkt_in, market_outside=mkt_out)
+    if occ_in is None or occ_out is None:
+        out.update(verdict="unknown", why="no bookable nights on one side")
+        return out
+    if mkt_in is not None and mkt_out is not None:
+        gap_in, gap_out = occ_in - mkt_in, occ_out - mkt_out
+        out.update(gap_to_market_inside=round(gap_in, 1),
+                   gap_to_market_outside=round(gap_out, 1), yardstick="market")
+        delta = gap_in - gap_out
+        basis = (f"vs the market on the same dates: inside {where} the listing runs "
+                 f"{gap_in:+.1f} pts, outside {gap_out:+.1f} pts")
+    else:
+        delta = occ_in - occ_out
+        out.update(yardstick="raw (confounded by lead time)")
+        basis = (f"raw occupancy {occ_in:.1f}% inside vs {occ_out:.1f}% outside; NO market "
+                 "yardstick, so lead time is not controlled for")
+    verdict = _verdict(delta)
+    out["verdict"] = verdict
+    out["why"] = {
+        "working": f"{where} is beating the rest by {delta:.1f} pts. {basis}",
+        "underperforming": f"{where} trails by {abs(delta):.1f} pts. {basis}",
+        "neutral": f"{where} is within {EFFECT_TOLERANCE_PP:g} pts of the rest "
+                   f"({delta:+.1f}). {basis}",
+    }[verdict]
+    return out
+
+
+_DOW_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def _dow_sides(cfg: dict, daily: list[dict]) -> dict:
+    """Discount days and premium days are opposite bets, so grade them apart. Lumped
+    together, a Mon/Tue discount that fills and a Fri/Sat premium that empties average
+    out to "working" and hide the broken half."""
+    values = [to_setting(cfg.get(k)) or 0.0 for k in DOW_KEYS]
+    sides = {}
+    for side, pick in (("discount_days", lambda v: v < 0), ("premium_days", lambda v: v > 0)):
+        days = [i for i, v in enumerate(values) if pick(v)]
+        if not days:
+            continue
+        label = ", ".join(_DOW_NAMES[i] for i in days)
+        inside = [r for r in daily if r["dow"] in days]
+        outside = [r for r in daily if r["dow"] not in days]
+        sides[side] = {"days": label,
+                       **_judge(inside, outside, f"the {side.replace('_', ' ')} ({label})")}
+    return sides
+
+
+def _by_month(daily: list[dict]) -> list[dict]:
+    """Seasonality has no date window, so grade each month against the market instead."""
+    months: dict[str, list[dict]] = {}
+    for r in daily:
+        months.setdefault(str(r["date"])[:7], []).append(r)
+    out = []
+    for month in sorted(months):
+        rows = months[month]
+        bookable = [r for r in rows if not r.get("blocked")]
+        occ, mkt = _occ(rows), _market_occ(rows)
+        if len(bookable) < MIN_DATES_PER_SIDE or occ is None or mkt is None:
+            out.append({"month": month, "verdict": "not-enough-data",
+                        "bookable_dates": len(bookable),
+                        "why": f"{len(bookable)} bookable dates"
+                               + ("" if mkt is not None else ", no market occupancy")})
+            continue
+        gap = occ - mkt
+        out.append({"month": month, "verdict": _verdict(gap), "gap_to_market": round(gap, 1),
+                    "bookable_dates": len(bookable),
+                    "why": f"{occ:.1f}% vs market {mkt:.1f}% ({gap:+.1f} pts)"})
+    return out
+
+
 def rule_effectiveness(rules: dict, daily: list[dict]) -> list[dict]:
     """Is each configured rule doing its job? One verdict per rule, never a percentage.
 
@@ -345,12 +437,15 @@ def rule_effectiveness(rules: dict, daily: list[dict]) -> list[dict]:
     framework.md 5.5: "Compare occupancy inside the window against outside it. If those
     dates are booking fine, the rule is working."
 
-    Verdicts:
-      working        the window is holding up as well as, or better than, the rest
+    Verdicts (SKILL 6.1b):
+      working         the window beats the rest by more than EFFECT_TOLERANCE_PP
+      neutral         within EFFECT_TOLERANCE_PP either way
       underperforming the window trails the rest by more than EFFECT_TOLERANCE_PP
-      off            the rule is toggled off and hands its dates to the market default
-      no_window      the rule has no date window (whole-horizon rules), nothing to split
-      unknown        too few dates on one side, or no readable occupancy
+      off             the rule is toggled off and hands its dates to the market default
+      by_month        seasonality: each month graded against the market (`months`)
+      by_side         day-of-week: discount days and premium days graded apart
+      no_window       the rule has no date window (demand factor, profiles)
+      unknown         too few dates on one side, or no readable occupancy
     """
     out = []
     for rule, cfg in rules.items():
@@ -369,7 +464,27 @@ def rule_effectiveness(rules: dict, daily: list[dict]) -> list[dict]:
                              "which is still an effect but not one this rule owns")
             out.append(entry)
             continue
-        if rule not in ("day_of_week_adjustment", "last_minute_prices", "far_out_premium"):
+        if rule == "seasonality":
+            months = _by_month(daily)
+            entry.update(verdict="by_month", months=months,
+                         why="; ".join(f"{m['month']} {m['verdict']} ({m['why']})"
+                                       for m in months) or "no dates")
+            out.append(entry)
+            continue
+        if rule == "day_of_week_adjustment":
+            sides = _dow_sides(cfg, daily)
+            if not sides:
+                entry.update(verdict="no_window", why="every weekday is set to 0%")
+                out.append(entry)
+                continue
+            entry.update(sides)
+            verdicts = {v["verdict"] for v in sides.values()}
+            entry["verdict"] = verdicts.pop() if len(verdicts) == 1 else "by_side"
+            entry["why"] = "; ".join(f"{k.replace('_', ' ')} ({v['days']}): {v['verdict']}. "
+                                     f"{v['why']}" for k, v in sides.items())
+            out.append(entry)
+            continue
+        if rule not in ("last_minute_prices", "far_out_premium"):
             entry.update(verdict="no_window",
                          why="applies across the whole horizon; there is no inside/outside "
                              "to compare. Judge it from the attribution and the market curve.")
@@ -377,39 +492,6 @@ def rule_effectiveness(rules: dict, daily: list[dict]) -> list[dict]:
             continue
         inside = [r for r in daily if rule_covers(rule, cfg, r)]
         outside = [r for r in daily if not rule_covers(rule, cfg, r)]
-        entry.update(inside_dates=len(inside), outside_dates=len(outside))
-        if len(inside) < MIN_DATES_PER_SIDE or len(outside) < MIN_DATES_PER_SIDE:
-            entry.update(verdict="unknown",
-                         why=f"only {len(inside)} dates inside the window and "
-                             f"{len(outside)} outside; fewer than {MIN_DATES_PER_SIDE} on a "
-                             "side is a coin flip, not a verdict")
-            out.append(entry)
-            continue
-        occ_in, occ_out = _occ(inside), _occ(outside)
-        mkt_in, mkt_out = _market_occ(inside), _market_occ(outside)
-        entry.update(occ_inside=occ_in, occ_outside=occ_out,
-                     market_inside=mkt_in, market_outside=mkt_out)
-        if occ_in is None or occ_out is None:
-            entry.update(verdict="unknown", why="no bookable nights on one side")
-            out.append(entry)
-            continue
-        if mkt_in is not None and mkt_out is not None:
-            gap_in, gap_out = occ_in - mkt_in, occ_out - mkt_out
-            entry.update(gap_to_market_inside=round(gap_in, 1),
-                         gap_to_market_outside=round(gap_out, 1), yardstick="market")
-            delta = gap_in - gap_out
-            basis = (f"vs the market on the same dates: inside the window the listing runs "
-                     f"{gap_in:+.1f} pts, outside {gap_out:+.1f} pts")
-        else:
-            delta = occ_in - occ_out
-            entry.update(yardstick="raw (confounded by lead time)")
-            basis = (f"raw occupancy {occ_in:.1f}% inside vs {occ_out:.1f}% outside; NO market "
-                     "yardstick, so lead time is not controlled for")
-        if delta < -EFFECT_TOLERANCE_PP:
-            entry.update(verdict="underperforming",
-                         why=f"the window trails by {abs(delta):.1f} pts. {basis}")
-        else:
-            entry.update(verdict="working",
-                         why=f"the window is holding ({delta:+.1f} pts). {basis}")
+        entry.update(_judge(inside, outside))
         out.append(entry)
     return out

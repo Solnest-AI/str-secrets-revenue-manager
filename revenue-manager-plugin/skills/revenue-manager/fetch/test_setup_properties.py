@@ -10,9 +10,11 @@ from setup_properties import (
     SetupError,
     airbnb_id,
     build_settings,
+    match_min_prices,
     match_rankbreeze,
     migration_files,
     parse_markups,
+    parse_min_prices,
     upsert_statement,
 )
 
@@ -82,6 +84,35 @@ class Settings(unittest.TestCase):
         s = build_settings("prop-0001", None, None, {"airbnb": 16.0}, NOW)
         self.assertNotIn("rankbreeze_listing_id", s)
         self.assertNotIn("airbnb_listing_id", s)
+
+
+class PricingOwnerAndFloor(unittest.TestCase):
+    PROPS = [{"id": "prop-0001", "name": "Lake House"}, {"id": "prop-0002", "name": "Loft"}]
+
+    def test_pricing_tool_is_pricelabs_when_mapped_beyond_when_stated_else_null(self):
+        self.assertEqual(build_settings("p", None, None, {"airbnb": 0.0}, NOW)["pricing_tool"], "pricelabs")
+        self.assertEqual(build_settings("p", None, None, {"airbnb": 0.0}, NOW, pricelabs=False,
+                                        pricing_tool="beyond")["pricing_tool"], "beyond")
+        s = build_settings("p", None, None, {"airbnb": 0.0}, NOW, pricelabs=False)
+        self.assertIn("pricing_tool", s)  # always written, so a re-run clears a stale value
+        self.assertIsNone(s["pricing_tool"])
+
+    def test_min_price_is_stored_only_when_given(self):
+        self.assertEqual(build_settings("p", None, None, {"airbnb": 0.0}, NOW, min_price=140)["min_price"], 140.0)
+        self.assertNotIn("min_price", build_settings("p", None, None, {"airbnb": 0.0}, NOW))
+
+    def test_min_prices_parse_per_property(self):
+        self.assertEqual(parse_min_prices(["Lake House=140", "prop-0002=99.5"]),
+                         {"Lake House": 140.0, "prop-0002": 99.5})
+        for bad in (["140"], ["=140"], ["Loft=abc"], ["Loft=0"], ["Loft=-5"], ["Loft=nan"], ["Loft=1", "loft=2"]):
+            with self.subTest(bad=bad), self.assertRaises(SetupError):
+                parse_min_prices(bad)
+
+    def test_min_prices_must_each_land_on_exactly_one_property(self):
+        self.assertEqual(match_min_prices({"lake house": 140.0, "prop-0002": 99.0}, self.PROPS),
+                         {"prop-0001": 140.0, "prop-0002": 99.0})
+        with self.assertRaisesRegex(SetupError, "matches 0"):
+            match_min_prices({"Cabin": 140.0}, self.PROPS)
 
 
 class Sql(unittest.TestCase):

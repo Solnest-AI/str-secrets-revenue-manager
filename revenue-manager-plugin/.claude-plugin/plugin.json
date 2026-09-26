@@ -1,7 +1,7 @@
 {
   "name": "revenue-manager",
-  "version": "5.0.0",
-  "description": "Hardened STR revenue management skill. Required core: one PMS MCP (Hostaway, Guesty, Hostfully, Hospitable, OwnerRez, Lodgify, Uplisting, Smoobu) plus PriceLabs. Optionally detects and uses RankBreeze, ops tools (Turno/Breezeway/Operto), AirROI, and other pricing tools (Wheelhouse/Beyond) when present. Uses the live PMS calendar as ground truth, computes markup empirically, and tracks both ask and cleared (ADR) rates. Every recommendation runs through a safety layer (per-listing floor/ceiling, 15% max-delta, thin-comp transparency, currency gate, explanatory confidence, freshness), walks the Revenue Flywheel on every call, and writes only on a plain yes — never an auto-write. Logs every approved decision and change to four Supabase audit tables for compounding historical analysis.",
+  "version": "5.0.1",
+  "description": "Hardened STR revenue management skill. Required core: one PMS (Hospitable, Guesty, OwnerRez, Hostaway, Lodgify, Uplisting, Smoobu, Hostfully) plus a pricing tool (PriceLabs or Beyond). Optionally uses RankBreeze or IntelliHost for ranking, AirROI for named comps, and Turno/Breezeway for ops, all read-only. Uses the live PMS calendar as ground truth, uses the operator-stated per-channel markup (never inferred), and tracks both ask and cleared (ADR) rates. Every recommendation runs through a safety layer (per-listing floor/ceiling, 15% max-delta, thin-comp transparency, currency gate, explanatory confidence, freshness), walks the Revenue Flywheel on every call, and changes prices only on a plain yes, through a safe writer that plans, applies, re-reads and can roll back. Logs every approved change to Supabase audit tables.",
   "author": {
     "name": "Solnest AI"
   },

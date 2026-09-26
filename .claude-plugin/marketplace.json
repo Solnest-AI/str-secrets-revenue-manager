@@ -6,7 +6,7 @@
     {
       "name": "revenue-manager",
       "description": "STR revenue manager: walks the Revenue Flywheel on every call, prices with a safety layer, and changes prices only on a plain yes.",
-      "version": "5.0.0",
+      "version": "5.0.1",
       "source": "./revenue-manager-plugin",
       "author": { "name": "Solnest AI" }
     }

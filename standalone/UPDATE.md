@@ -1,3 +1,5 @@
+> **LEGACY, NOT FOR THE SUMMIT.** This is the old all-in-one setup, kept for reference. At STR Secrets Summit 2.0, use the STR Secrets connections kit plus `../SETUP.md` instead. Paths below are relative to the bundle root (the folder above this one).
+
 # UPDATE — Solnest Revenue Manager (Claude reads this)
 
 **You are Claude. The user pasted this repo's link and asked you to update their Solnest Revenue Manager. Do it FOR them, safely, in plain language.**
@@ -31,7 +33,6 @@ Back these up to a temp folder before touching anything. These are **theirs**:
 | Path | What it is |
 |---|---|
 | `mcp-servers/*/.env` | **Their API keys.** All five. Irreplaceable without re-fetching each one. |
-| `mcp-servers/rankbreeze/session.txt` | Their RankBreeze session cookie. |
 | Any `.venv/` or `node_modules/` in the server folders | Installed dependencies. Keep them so they don't have to reinstall. |
 | Their `~/.claude.json` MCP entries | The registration. **Do not rewrite this file.** |
 

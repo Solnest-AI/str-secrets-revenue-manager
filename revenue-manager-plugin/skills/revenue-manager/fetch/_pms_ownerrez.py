@@ -1,4 +1,5 @@
-"""OwnerRez (API v2) as a PMS source for the runner. Read-only.
+"""OwnerRez (API v2) as a PMS source for the runner, plus OwnerRezCalendarTarget (the calendar
+WRITE target for _calendar_write, at the bottom; endpoints cited in references/ownerrez.md).
 
 Measured live 2026-09-24 on a real account (read-only):
   - HTTP Basic (login email + `pt_` token) and a User-Agent, or OwnerRez answers 403
@@ -24,6 +25,7 @@ Measured live 2026-09-24 on a real account (read-only):
 from __future__ import annotations
 
 import base64
+import re
 import urllib.parse
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -211,3 +213,101 @@ class OwnerRezSource:
             mine = [normalize_review(review_row(r)) for r in rows if str(r.get("property_id")) == str(pid)]
             return {"data": mine, "total": len(mine), "complete": True}
         return self.client.fetch("pms.reviews", [self.connections.account("ownerrez"), pid], load)
+
+
+# ------------------------------------------------------------------------------ write target
+
+class OwnerRezCalendarTarget:
+    """OwnerRez calendar writes for _calendar_write (references/ownerrez.md).
+
+      GET   /v2/calendar/{property_id}?from&to   days[]: status, rate.rent (MAJOR units, the base
+            seasonal or spot rate), rules.min_nights; currency_code. Nights with no data are
+            omitted (documented), and the core refuses any planned night that is missing.
+      PATCH /v2/spotrates   [{"property_id": int, "date", "amount": decimal MAJOR units,
+            "currency", "min_nights"?}] -> 200, the updated spot rates. "Create and/or partially
+            update": a field left out keeps its current value; the re-read proves it.
+    OwnerRez documents that the calendar "can lag a short time behind live changes", so the
+    core re-READS on SETTLE_SECONDS; the PATCH is never repeated. A spot rate is what the calendar
+    reports as rate.rent, which is what this target reads back.
+    """
+
+    name = "ownerrez"
+    label = "OwnerRez"
+    host = "api.ownerrez.com"
+    ALLOWED = (
+        ("GET", re.compile(r"/v2/calendar/[0-9]{1,10}")),
+        ("PATCH", re.compile(r"/v2/spotrates")),
+    )
+    LIVE_WRITE_VERIFIED = False
+    APPLIES_ASYNC = True  # documented: the calendar "can lag a short time behind live changes"
+    SETTLE_SECONDS = (0, 5, 15, 30)
+    EXPLAIN = {401: "the OwnerRez login email or token is wrong", 403: "OwnerRez refused the token or the "
+               "missing User-Agent", 404: "OwnerRez has no property with this id",
+               422: "OwnerRez rejected the spot rate (the currency must match the property's)",
+               429: "OwnerRez rate limit"}
+
+    def __init__(self, connections, opener=None, max_calls: int = 30):
+        from _calendar_write import CalendarHTTP
+        from _mvp_write import CannotWrite
+        email, token = connections.values.get("OWNERREZ_EMAIL"), connections.values.get("OWNERREZ_TOKEN")
+        if not email or not token:
+            raise CannotWrite("OWNERREZ_EMAIL and OWNERREZ_TOKEN are required to write to OwnerRez")
+        auth = "Basic " + base64.b64encode(f"{email}:{token}".encode()).decode()
+        self.http = CalendarHTTP(self.label, self.host, self.ALLOWED,
+                                 {"Authorization": auth, "User-Agent": UA}, opener, max_calls, self.EXPLAIN)
+
+    @staticmethod
+    def _pid(listing_id) -> int:
+        from _mvp_write import CannotWrite
+        if not re.fullmatch(r"[0-9]{1,10}", str(listing_id)):
+            raise CannotWrite(f"OwnerRez property ids are whole numbers, not {listing_id!r}")
+        return int(listing_id)
+
+    def read_calendar(self, listing_id, start, end) -> dict:
+        from _mvp_write import CannotWrite, _num
+        pid = self._pid(listing_id)
+        raw = self.http.request("GET", f"/v2/calendar/{pid}", {"from": start.isoformat(), "to": end.isoformat()})
+        if not isinstance(raw, dict) or str(raw.get("property_id")) != str(pid):
+            raise CannotWrite("OwnerRez calendar belongs to another property")
+        currency = raw.get("currency_code")
+        if not isinstance(currency, str) or len(currency) != 3:
+            raise CannotWrite("OwnerRez calendar carries no currency")
+        nights = raw.get("days", [])  # documented: omitted when no nights exist in the range
+        if not isinstance(nights, list):
+            raise CannotWrite("OwnerRez calendar days is not a list")
+        days = {}
+        for n in nights:
+            if not isinstance(n, dict) or not isinstance(n.get("date"), str):
+                raise CannotWrite("OwnerRez calendar has an unreadable night")
+            d = n["date"][:10]
+            if d in days:
+                raise CannotWrite(f"OwnerRez returned {d} twice")
+            rate, rules = n.get("rate") or {}, n.get("rules") or {}
+            rent, mn = rate.get("rent"), rules.get("min_nights")
+            status = str(n.get("status") or "").lower()
+            available = (status in ("available", "gap") and rules.get("is_stay_disallowed") is not True
+                         if status in ("available", "gap", "booked", "blocked", "unavailable") else None)
+            days[d] = {"price": None if rent is None else _num(rent, f"OwnerRez rent on {d}"),
+                       "min_stay": mn if isinstance(mn, int) and not isinstance(mn, bool) else None,
+                       "available": available}
+        return {"currency": currency.upper(), "days": days}
+
+    def write_calendar(self, listing_id, changes: dict, currency: str) -> None:
+        from _calendar_write import _exact
+        pid = self._pid(listing_id)
+        rates = []
+        for d in sorted(changes):
+            c, row = changes[d], {"property_id": pid, "date": d, "currency": currency}
+            if "price" in c:
+                row["amount"] = float(_exact(c["price"], currency))
+            if "min_stay" in c:
+                row["min_nights"] = int(c["min_stay"])
+            rates.append(row)
+        self.http.request("PATCH", "/v2/spotrates", body=rates)
+
+    def floor(self, listing_id):
+        return None  # no documented property min rate is read here; property_config min_price applies
+
+    def pricing_managed(self, listing_id):
+        # is_spot_rate is NOT evidence of a pricing tool: an operator's own spot rate looks the same.
+        return None

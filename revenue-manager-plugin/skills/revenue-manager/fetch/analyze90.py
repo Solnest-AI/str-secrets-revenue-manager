@@ -96,6 +96,12 @@ def compute(inputs, as_of, start, days):
     pms["reviews"]["all_time_coverage_verified"] = reviews_in.get("complete", False)
     pms["reviews"]["total_reported"] = reviews_in.get("total")
     pms["reviews"]["unreadable_sample"] = reviews_unreadable
+    # days_out counts from the PROPERTY-LOCAL today, which after the evening rollover is
+    # the day before `start`. Derived from as_of, so a replay reproduces it exactly.
+    try:
+        today = local_date(inputs["property"], as_of)
+    except CannotAnalyze:
+        today = start
     result = build(
         pms,
         inputs["listing"],
@@ -108,6 +114,7 @@ def compute(inputs, as_of, start, days):
         inputs["context"],
         as_of,
         pile=inputs.get("pile"),
+        today=min(today, start),
         **({"pricing": "beyond", "comps": inputs.get("comps")} if beyond else {}),
     )
     result["named_comps"] = inputs.get("comps", {"status": "unavailable"})
@@ -324,9 +331,9 @@ def parser():
         "--inputs", type=Path, help="Offline normalized fixture bundle, including as_of and start"
     )
     ap.add_argument("--days", type=int, default=90, help="Forward calendar days, default 90 (7-90)")
-    ap.add_argument("--pms", default="auto", help="auto (the one connected), hospitable, guesty or ownerrez")
     ap.add_argument("--pricing", default="auto", choices=("auto", "pricelabs", "beyond"),
                     help="auto (the property's setup), pricelabs or beyond")
+    ap.add_argument("--pms", default="auto", help="auto (the one connected), hospitable, guesty or ownerrez")
     ap.add_argument("--start", help="Assert property local current date, YYYY-MM-DD")
     default_cache = Path(
         os.environ.get("RC_CACHE_DIR", str(Path.home() / ".cache/revenue-manager"))

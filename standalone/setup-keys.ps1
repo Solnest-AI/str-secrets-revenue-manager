@@ -46,7 +46,4 @@ Write-Host ""
 foreach ($s in @("pricelabs","hospitable","turno","airroi","rankbreeze")) {
   if (Test-Path "mcp-servers/$s") { Copy-Item ".env" "mcp-servers/$s/.env" -Force; Write-Host "  [OK] $s configured" -ForegroundColor Green }
 }
-if ($env:RANKBREEZE_SESSION -and (Test-Path "mcp-servers/rankbreeze")) {
-  [IO.File]::WriteAllText("mcp-servers/rankbreeze/session.txt", $env:RANKBREEZE_SESSION)
-}
 Write-Host ""; Write-Host "Done. Now FULLY QUIT AND REOPEN Claude Code so it picks up your keys."

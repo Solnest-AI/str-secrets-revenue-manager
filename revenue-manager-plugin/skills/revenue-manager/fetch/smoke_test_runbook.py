@@ -87,6 +87,11 @@ def script_of(cmd: str) -> str | None:
 def long_flags(cmd: str) -> list[str]:
     # strip anything after a shell comment or a redirect before reading flags
     body = cmd.split("#")[0].split(">")[0]
+    # Only the script's own flags: a launcher prefix like `uv run --python 3.13 python x.py`
+    # carries flags that belong to uv, not to the script.
+    m = re.search(r"(?:python3|python)\s+\S+\.py", body)
+    if m:
+        body = body[m.end():]
     return sorted(set(re.findall(r"(?<!\w)--[a-z][a-z0-9-]+", body)))
 
 

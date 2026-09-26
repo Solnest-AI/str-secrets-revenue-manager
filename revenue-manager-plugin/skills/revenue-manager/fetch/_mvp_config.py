@@ -12,8 +12,8 @@ from _mvp_store import CannotAnalyze, identity
 
 # The SUMMIT build reads the connection the STR Secrets connections kit registers on
 # every attendee machine (str-secrets-connections, connectors/db-supabase.md), pointed at
-# their `str-secrets-summit` project. Ryan's own Solnest Stays build reads a different
-# name (`supabase-solnest-stays`) so the two can never overwrite each other. No fallback.
+# their `str-secrets-summit` project. A private build of this engine reads a different
+# connection name so the two can never overwrite each other. No fallback.
 SUPABASE_SERVER = "supabase-revenue-manager"
 
 KEYS = {
@@ -28,10 +28,18 @@ KEYS = {
     "OWNERREZ_EMAIL",
     "OWNERREZ_TOKEN",
     "INTELLIHOST_MCP_TOKEN",
+    "HOSTAWAY_ACCOUNT_ID",
+    "HOSTAWAY_API_KEY",
+    "LODGIFY_API_KEY",
+    "UPLISTING_API_KEY",
+    "SMOOBU_API_KEY",
+    "SMOOBU_API_SECRET",
+    "HOSTFULLY_API_KEY",
+    "HOSTFULLY_AGENCY_UID",
     "BEYOND_TOKEN",
 }
 PROVIDERS = ("hospitable", "pricelabs", "airroi", "rankbreeze", "guesty", "ownerrez", "intellihost",
-             "beyond")
+             "hostaway", "lodgify", "uplisting", "smoobu", "hostfully", "beyond")
 
 
 def read_text(path) -> str:
@@ -168,6 +176,11 @@ class Connections:
             "guesty": ("GUESTY_CLIENT_ID",),
             "ownerrez": ("OWNERREZ_TOKEN",),
             "intellihost": ("INTELLIHOST_MCP_TOKEN",),
+            "hostaway": ("HOSTAWAY_ACCOUNT_ID",),
+            "lodgify": ("LODGIFY_API_KEY",),
+            "uplisting": ("UPLISTING_API_KEY",),
+            "smoobu": ("SMOOBU_API_KEY",),
+            "hostfully": ("HOSTFULLY_API_KEY",),
             "beyond": ("BEYOND_TOKEN",),
         }[provider]
         key = next((self.values[n] for n in names if self.values.get(n)), None)
@@ -219,11 +232,20 @@ def normalized_context(raw, property_id):
         "channel_markup_source",
         "max_delta_pct",
         "pricing_tool",
+        "min_price",
         "beyond_listing_id",
     )
+    out = {k: settings[k] for k in fields if k in settings}
+    # Which pricing tool owns this listing's prices: "pricelabs" / "beyond" / None (the PMS does).
+    # Rows written before setup stored the key follow the same rule setup uses today: mapped to
+    # a PriceLabs listing means PriceLabs owns the prices.
+    if "pricing_tool" not in out and settings.get("pricelabs_listing_id"):
+        out["pricing_tool"] = "pricelabs"
+    if out.get("pricing_tool") is not None:
+        out["pricing_tool"] = str(out["pricing_tool"]).strip().lower() or None
     return {
         "property_id": property_id,
-        "settings": {k: settings[k] for k in fields if k in settings},
+        "settings": out,
         "updated_at": row.get("updated_at"),
         "changes": raw.get("changes") or [],
         "decisions": raw.get("decisions") or [],

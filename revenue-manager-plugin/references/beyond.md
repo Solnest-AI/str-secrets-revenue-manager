@@ -133,10 +133,17 @@ Reconciliation compares the PMS nightly price with Beyond's `price-posted` (what
 docs tip), falling back to `price`. A night is "at the floor" when Beyond's modeled `price`
 sits on that night's `effective-min-price`.
 
-The min is still an output: current min, open nights pinned at the floor (next 30 days), pace
-(own occupancy vs Beyond's benchmark, else same-lead history) and the comp reference (AirROI
-ADR p25, else Beyond's average). Floor binds on 25%+ of open nights and pace behind: lower 10%;
-binds and pace ahead: raise 10% (never past base); otherwise hold, with the deciding input.
+The min is still an output, from the SAME rule as PriceLabs
+(`_mvp_analysis.min_price_recommendation`), printed as the same "Recommended min price: lower
+to / raise to / keep at X net (currently Y)." line: nights at the floor (a night is "at the
+floor" when Beyond's modeled `price` sits on its `effective-min-price`), pace against Beyond's
+benchmark occupancy, and AirROI's ADR p25 as the named lower quartile when connected. Moves are
+capped at the property's max_delta_pct; a raise never passes base; a blank max is never read.
+
+Review scenarios follow the shared engine too (scoped mismatches, cuts AND raises capped at
+max_delta_pct, days_out from the property-local today). A CUT is measured against Beyond's
+benchmark average (else AirROI ADR p75); a RAISE needs a lower reference, which only AirROI's
+ADR p25 is, so without AirROI the card says there are no raise scenarios.
 
 | # | Method + path | operationId | Used for | Doc section | Status |
 |---|---|---|---|---|---|
@@ -146,4 +153,7 @@ Setup (`setup_properties.py --pricing beyond`, or auto when Beyond is the only p
 connected) maps each PMS property to a Beyond listing through `channel-listings` (R1): the PMS
 id on a channel named for the PMS, else the Airbnb room id on an `airbnb` channel, else the
 exact title. A tier with two candidates stops ("not guessed"). It stores
-`settings.pricing_tool = "beyond"` and `settings.beyond_listing_id`.
+`settings.pricing_tool = "beyond"` and `settings.beyond_listing_id`. `--pricing-tool beyond` is
+the same flag. A property Beyond prices that cannot be mapped, or a Beyond user with no
+BEYOND_TOKEN, is still written with `pricing_tool = "beyond"` and a named `pricing_gap`, so the
+PMS calendar writer keeps refusing PMS price writes for it.

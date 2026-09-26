@@ -11,6 +11,7 @@ import re
 import statistics
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import _money
 from _calendar import validate_calendar
 
 
@@ -48,6 +49,16 @@ _DETAIL_TYPES = {
     "overall",
 }
 
+
+
+def _two_decimal_or_refuse(currency) -> None:
+    """Hospitable money arrives in the currency's own minor unit; the engine's *_cents are
+    hundredths. They agree only for two-decimal currencies, so the rest are refused, never
+    shown 100x (JPY) or 10x (KWD) off."""
+    places = _money.decimals(currency)
+    if places is not None and places != 2:
+        raise ValueError(f"{str(currency).upper()} has {places} decimal places; Hospitable prices in this "
+                         "currency are not supported by this version yet")
 
 def _integer(value):
     return value if isinstance(value, int) and not isinstance(value, bool) else None
@@ -242,6 +253,8 @@ def normalize_calendar(raw):
             seen.add(row["date"])
             status, price = _object(row.get("status")), _object(row.get("price"))
             reason = row.get("status_reason", status.get("reason"))
+            if "price_cents" not in row and price.get("amount") is not None:
+                _two_decimal_or_refuse(row.get("currency", price.get("currency")))
             result.append(
                 {
                     "date": when.isoformat(),
@@ -296,6 +309,8 @@ def normalize_reservation(raw):
         "guest_total_cents": (guest, "total_price"),
     }
     clean = {"currency": _currency(financials.get("currency"))}
+    if not normalized:
+        _two_decimal_or_refuse(financials.get("currency"))
     for key, (parent, field) in money_fields.items():
         value = financials.get(key) if normalized else _object(parent.get(field)).get("amount")
         clean[key] = _integer(value)
@@ -583,6 +598,13 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
     rates_exposed = any(row["price_cents"] is not None or row["min_stay"] is not None for row in rows)
     if not rates_exposed:
         warnings["pms_does_not_expose_nightly_rates"] += 1
+    # Same rule for check-in / check-out day restrictions (Lodgify and Smoobu document none per
+    # night): only when NO night carries either flag do they become optional, and the card says so.
+    # A PMS that sends the flags on some nights and drops them on others is still refused per night.
+    restrictions_exposed = any(isinstance(row["closed_for_checkin"], bool)
+                               or isinstance(row["closed_for_checkout"], bool) for row in rows)
+    if not restrictions_exposed:
+        warnings["pms_does_not_expose_arrival_rules"] += 1
     for calendar in rows:
         day = calendar["date"]
         group = inventory.get(day, [])
@@ -595,8 +617,13 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
                 and calendar["price_cents"] >= 0
                 and calendar["min_stay"] is not None
                 and calendar["min_stay"] >= 1
-                and isinstance(calendar["closed_for_checkin"], bool)
-                and isinstance(calendar["closed_for_checkout"], bool)
+                and (
+                    not restrictions_exposed
+                    or (
+                        isinstance(calendar["closed_for_checkin"], bool)
+                        and isinstance(calendar["closed_for_checkout"], bool)
+                    )
+                )
             )
         )
         if not calendar_ok:
@@ -642,6 +669,10 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
         clean = not sum(counts[key] for key in ("unknown", "accepted_unknown_value", "conflict"))
         clean = clean and len(group) == calendar_count and reservation_source_trusted
         known_revenue = sum(row["accommodation_cents"] for row in paid)
+        # Occupancy is over BOOKABLE nights. An owner-blocked night is not a night the
+        # market failed to buy: 21 blocked + 2 booked of 30 is 2 of 9 (22.2%), not 6.7%.
+        # Same denominator as attribution._occ and reduce_prices.tier_b.
+        bookable = calendar_count - counts["blocked"]
         return {
             "start_date": period_start.isoformat(),
             "end_date_exclusive": period_end.isoformat(),
@@ -653,9 +684,10 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
             "accepted_unknown_value_nights": counts["accepted_unknown_value"],
             "open_nights": counts["open"],
             "blocked_nights": counts["blocked"],
+            "bookable_nights": bookable,
             "unknown_nights": counts["unknown"],
             "conflict_nights": counts["conflict"],
-            "confirmed_occupancy_pct": _pct(counts["confirmed_paid"], calendar_count)
+            "confirmed_occupancy_pct": _pct(counts["confirmed_paid"], bookable)
             if clean
             else None,
             "on_books_accommodation_cents": known_revenue if clean else None,
@@ -999,6 +1031,7 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
         "coverage": {
             "calendar_complete": True,
             "pms_rates_exposed": rates_exposed,
+            "pms_arrival_rules_exposed": restrictions_exposed,
             "calendar_days": len(rows),
             "calendar_rows_outside_horizon": len(normalized_days) - len(rows),
             "reservation_source_records": len(reservations),

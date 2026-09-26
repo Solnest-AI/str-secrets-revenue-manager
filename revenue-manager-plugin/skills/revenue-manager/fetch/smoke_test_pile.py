@@ -113,11 +113,16 @@ RULES = {"last_minute_prices": {"last_min_factor_on": True, "last_min_factor_typ
          "demand_factor": {"tone_demand_factor_on": True, "tone_demand_factor": "recommended"}}
 
 eff = {e["rule"]: e for e in at.rule_effectiveness(RULES, horizon(lambda i: i % 4 == 0,
-                                                                   lambda i: i % 3 == 0))}
+                                                                   lambda i: i % 2 == 0))}
 check("a last-minute window booking far below the market is UNDERPERFORMING",
       eff["last_minute_prices"]["verdict"] == "underperforming", str(eff["last_minute_prices"]))
-check("a far-out window holding at market is WORKING",
+check("a far-out window beating the market is WORKING",
       eff["far_out_premium"]["verdict"] == "working", str(eff["far_out_premium"]))
+# SKILL 6.1b: within 5 pts of the rest either way is NEUTRAL, not "working".
+flat = horizon(lambda i: i % 2 == 0, lambda i: i % 2 == 0, mkt_lm=50.0, mkt_far=50.0)
+eff_n = {e["rule"]: e for e in at.rule_effectiveness(RULES, flat)}
+check("a window level with the rest (0 pts) is NEUTRAL",
+      eff_n["far_out_premium"]["verdict"] == "neutral", str(eff_n["far_out_premium"]))
 check("the yardstick is the market, so lead time is controlled for",
       eff["far_out_premium"]["yardstick"] == "market")
 check("a rule toggled off (even as a string) is reported OFF, not judged",

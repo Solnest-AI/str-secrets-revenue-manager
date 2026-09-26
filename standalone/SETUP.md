@@ -1,4 +1,4 @@
-> **Standalone setup, not used at the summit.** At the summit, the STR Secrets connections kit plus `../SETUP.md` replace this file. Paths below are relative to the bundle root (the folder above this one).
+> **LEGACY, NOT FOR THE SUMMIT.** This is the old all-in-one setup, kept for reference. At STR Secrets Summit 2.0, use the STR Secrets connections kit plus `../SETUP.md` instead. Paths below are relative to the bundle root (the folder above this one).
 
 <!--
   PUBLISHER NOTE — Skool link + Loom walkthrough are both filled in. No remaining placeholders.
@@ -37,7 +37,7 @@ You'll grab each key live, click-by-click — and you'll paste it **into a file 
 4. A login for **PriceLabs** (or Wheelhouse / Beyond).
 5. A **Supabase** account — free tier is fine. If you don't have one, Claude walks you through creating it during Phase 3. (supabase.com)
 
-> 🔒 **How your keys are handled (read once, it's important):** Your API keys live **only** on your own computer — in a local `.env` file (or, for RankBreeze, a `session.txt`) right next to each connector. **You never paste a key into the chat.** Instead, Claude **creates a `.env` file and OPENS it for you**; you paste your key into that file and save — never into the chat. Your keys are **never committed** (this folder ships with **zero** secrets, and every connector folder has a `.gitignore` that blocks `.env`), and they are **never sent anywhere except the tool they belong to** (your PMS, PriceLabs, Supabase).
+> 🔒 **How your keys are handled (read once, it's important):** Your API keys live **only** on your own computer — in a local `.env` file right next to each connector. **You never paste a key into the chat.** Instead, Claude **creates a `.env` file and OPENS it for you**; you paste your key into that file and save — never into the chat. Your keys are **never committed** (this folder ships with **zero** secrets, and every connector folder has a `.gitignore` that blocks `.env`), and they are **never sent anywhere except the tool they belong to** (your PMS, PriceLabs, Supabase).
 >
 > Because nothing is ever typed into the chat, nothing sensitive ever lands in the transcript. Claude verifies that each key works by *sourcing the file* (loading it into the environment without printing it) and making one real test call — your key stays on your machine the whole time. **The one hard rule: never `git add` or commit a `.env` (or a `session.txt`).** Claude double-checks the `.gitignore` that protects you before you paste anything.
 
@@ -72,7 +72,7 @@ You are the **lead setup engineer** for the Revenue Manager. The person who just
 
 **The flow — do this for every credential:**
 
-1. **CREATE the file:** `cp .env.example .env` (RankBreeze cookie: `cp session.txt.example session.txt`).
+1. **CREATE the file:** `cp .env.example .env`.
 2. **OPEN the file for them** so they can paste into it — run the OS-appropriate command so it pops open in their editor:
    - macOS: `open -e "<path>/.env"`
    - Windows: `notepad "<path>\.env"`  (or `start "" "<path>\.env"`)
@@ -134,15 +134,15 @@ Some platforms ship **pre-built** in `mcp-servers/`. Others you **build fresh** 
 1. `cd mcp-servers/<name>`
 2. **Build it:**
    - Node (hospitable, pricelabs): `npm install` then `npm run build` (compiles to `dist/index.js`).
-   - Python venv (rankbreeze, airroi): `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
+   - Python venv (airroi): `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
    - Turno: `uv sync` (uv is the project's tool — needs **Python 3.11+**). If `uv` isn't installed, fall back to `python3 -m venv .venv && .venv/bin/pip install -e .`.
 3. **Add the key — follow the [Credential handling contract](#credential-handling--never-in-the-chat-the-3-sanity-checks) exactly:** `cp .env.example .env`, **open** that `.env` for the operator, walk them to their key, have them paste it **into the file** (never the chat), and run the **3 sanity checks** (SAFE → FILLED → WORKS).
-   - RankBreeze is the exception only in *what* the credential is — it has **no API key**. Auth is the `_godzilla_session` browser cookie, which goes into `session.txt`: `cp session.txt.example session.txt`, **open** the file for them, and they paste the cookie value **into the file** (or set `RANKBREEZE_SESSION` in `.env`). Same contract, same 3 sanity checks. The connector's own `README.md`/`session.txt.example` says exactly where to find the cookie.
+   - RankBreeze: no local server to build. RankBreeze uses its own hosted MCP now (the old browser-cookie connector in `mcp-servers/rankbreeze/` is retired). In RankBreeze: Settings > MCP Access > Remote MCP > + Add URL > Copy URL. That URL is the secret: paste it into the root `.env` as `RANKBREEZE_MCP_URL=` (never the chat), then register it with `set -a; . ./.env; set +a; claude mcp add --transport http --scope user rankbreeze "$RANKBREEZE_MCP_URL"` and fully restart Claude Code.
 4. **Register it** (user scope, absolute paths):
    ```bash
    # Node servers (hospitable, pricelabs):
    claude mcp add <name> --scope user -- node <ABS_PATH>/mcp-servers/<name>/dist/index.js
-   # Python venv servers that have a top-level server.py (rankbreeze, airroi):
+   # Python venv servers that have a top-level server.py (airroi):
    claude mcp add <name> --scope user -- <ABS_PATH>/mcp-servers/<name>/.venv/bin/python <ABS_PATH>/mcp-servers/<name>/server.py
    # Turno via uv (preferred — works straight off `uv sync`):
    claude mcp add turno --scope user -- uv --directory <ABS_PATH>/mcp-servers/turno run turno-mcp
@@ -232,7 +232,7 @@ Run `node -v`. Need **18+**.
 
 **Step 0.3 — Protect secrets (quick pass).**
 
-Each connector folder ships its own `.gitignore` that blocks `.env` (and RankBreeze blocks `session.txt`), and the folder root has one too. You don't need to create these — just **confirm one exists before you ever create or open a `.env`.** This is **SANITY CHECK 1 — SAFE**, and you'll run it again at each credential step: glance at that folder's `.gitignore` and make sure it covers `.env`. If you ever build a fresh connector from research, include a `.gitignore` with at least:
+Each connector folder ships its own `.gitignore` that blocks `.env`, and the folder root has one too. You don't need to create these — just **confirm one exists before you ever create or open a `.env`.** This is **SANITY CHECK 1 — SAFE**, and you'll run it again at each credential step: glance at that folder's `.gitignore` and make sure it covers `.env`. If you ever build a fresh connector from research, include a `.gitignore` with at least:
 ```
 .env
 .env.*
@@ -512,7 +512,7 @@ The MCP path is smoother and safer — **prefer it, and only fall here if the op
 - If **skip** → acknowledge, note they can add it any time later (the skill auto-detects it on the next run), and move to the next one.
 
 **1️⃣ RankBreeze — ranking / visibility** *(pre-built)* — the visibility spoke of the flywheel (search rank + page-view signal); without it, ranking stays a manual check.
-`cd mcp-servers/rankbreeze` → `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`. **No API key** — auth is the `_godzilla_session` browser cookie in `session.txt`. Contract: `cp session.txt.example session.txt`, **open** it (`open -e session.txt` / `notepad session.txt` / `xdg-open session.txt`), the operator pastes the cookie value **into the file** (never the chat), save. 3 sanity checks (SAFE: `.gitignore` blocks `session.txt`; FILLED: `grep -q '.\+' session.txt`; WORKS: register + a real `health_check`/list call). Its README / `session.txt.example` says where to find the cookie. Register the venv interpreter pointed at `server.py`, restart.
+RankBreeze uses its own hosted MCP now (the old browser-cookie connector in `mcp-servers/rankbreeze/` is retired). In RankBreeze: Settings > MCP Access > Remote MCP > + Add URL > Copy URL. That URL is the secret: paste it into the root `.env` as `RANKBREEZE_MCP_URL=` (never the chat), then register it with `set -a; . ./.env; set +a; claude mcp add --transport http --scope user rankbreeze "$RANKBREEZE_MCP_URL"` and fully restart Claude Code. Proof after the restart: ask Claude "RankBreeze, look up my account" (it calls `lookup_current_user`).
 
 **2️⃣ Turno — cleaning / ops** *(pre-built, needs Python 3.11+)* — turnover-cost signal; flags margin leaks from too many 1-night stays.
 First check `python3 --version` is **3.11+** (Turno's `pyproject.toml` requires it). `cd mcp-servers/turno` → `uv sync` (or, no uv, `python3 -m venv .venv && .venv/bin/pip install -e .`). Contract: `cp .env.example .env`, **open** it, the operator pastes **into the file** — `TURNO_API_TOKEN` (the JWT starting `eyJ`) + `TURNO_PARTNER_ID` (the UUID), and keep `TURNO_ENV=sandbox`. **Turno's API is partner-gated** — if they don't have access yet, tell them to email `support@turno.com` to enable External API v2 and **skip for now** (they can add it later). 3 sanity checks (FILLED via `grep` per var; WORKS via `turno_check_connection`). Register: uv → `uv --directory <ABS>/mcp-servers/turno run turno-mcp`; pip-venv fallback → `<ABS>/mcp-servers/turno/.venv/bin/turno-mcp` (console script — Turno is a package, no top-level `server.py`). Restart.

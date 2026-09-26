@@ -20,13 +20,13 @@ These govern every pricing read on a Hospitable stack. They override generic ass
 6. **Ask vs cleared are different numbers — track BOTH.**
    - **Ask** (listed nightly) = Hospitable `get_property_calendar` price = PriceLabs forward curve. What you're *asking*.
    - **Cleared/realized ADR** = computed from `list_reservations` (and/or PriceLabs listing-prices ADR field). What you actually *got*. Cleared runs materially **higher** than ask in healthy markets (low-ask dates sell first, premium dates clear at premium).
-7. **Markup is EMPIRICAL, per property — do not assume.** Compute the PMS-calendar ÷ PriceLabs ratio from paired dates. For many Hospitable listings it is **1.0 (no markup)** because PriceLabs pushes the exact price and cleaning + channel fees are added *at the channel* (Airbnb/VRBO), not baked into the nightly calendar value. Never "correct" a difference that is just the configured markup; equally, never assume a markup exists.
+7. **Markup is what the operator says, per channel.** Store it in `property_config.settings.channel_markup_pct`. Never infer it from the PMS calendar vs PriceLabs: for many Hospitable listings the two match exactly (PriceLabs pushes the exact price, fees are added at the channel), and a gap between them is a sync finding, not a markup. Never "correct" a difference that is just the stated markup.
 
 ---
 
 ## Tool surface — what each returns and the revenue need it serves
 
-All tools are read-only except `update_property_calendar`, `create_reservation`, `update_reservation`, `respond_to_review`, and `send_message`. The skill **reads** freely and **never writes** to the calendar/reservations until the operator says yes to the card.
+All tools are read-only except `update_property_calendar`, `create_reservation`, `update_reservation`, `respond_to_review`, and `send_message`. The skill **reads** freely and **never calls a write tool directly**: price changes go through the safe writer (`fetch/apply_change.py`) on a plain yes.
 
 ### Property structure
 
@@ -40,15 +40,15 @@ All tools are read-only except `update_property_calendar`, `create_reservation`,
 
 | Tool | Returns | Revenue-management need it serves |
 |---|---|---|
-| `hospitable_get_property_calendar` | `data.days[]` — one object per date: `date`, `min_stay`, `status` (with `status.reason` = `AVAILABLE` / `RESERVED`), and `price.amount` (**CENTS** → ÷100) in **native currency**. | **The core forward read.** This is GROUND TRUTH for the listed ASK nightly price and the listed min-stay. Pull the next **365 days** for: forward occupancy by rolling window (7/30/60/90d), the ask-price curve to lay against the PriceLabs forward curve, min-stay audit by season, orphan-day detection (single `AVAILABLE` night between two `RESERVED`), and the empirical markup ratio (calendar ÷ PriceLabs). **Recency:** note how fresh the calendar is and surface it (freshness gate). |
-| `hospitable_update_property_calendar` | Writes nightly price / availability / min-stay for date(s). | **The ONLY price-mutation path on Hospitable.** The skill proposes a change on a card showing current→recommended, nearest floor/ceiling, comp count, currency, reasoning — and only on a plain yes does it call this. Most pushes go through PriceLabs (which then syncs to this calendar); this tool is the direct-to-PMS override path for date-specific moves. Every successful write → Supabase audit row. |
+| `hospitable_get_property_calendar` | `data.days[]` — one object per date: `date`, `min_stay`, `status` (with `status.reason` = `AVAILABLE` / `RESERVED`), and `price.amount` (**CENTS** → ÷100) in **native currency**. | **The core forward read.** This is GROUND TRUTH for the listed ASK nightly price and the listed min-stay. Pull the next **365 days** for: forward occupancy by rolling window (7/30/60/90d), the ask-price curve to lay against the PriceLabs forward curve, min-stay audit by season, orphan-day detection (single `AVAILABLE` night between two `RESERVED`), and the calendar vs PriceLabs sync check (a gap is a sync finding, never a markup). **Recency:** note how fresh the calendar is and surface it (freshness gate). |
+| `hospitable_update_property_calendar` | Writes nightly price / availability / min-stay for date(s). | **Never called directly by the skill.** Price changes go through `fetch/apply_change.py plan/apply/rollback` on a plain yes. If the writer cannot reach this path yet, give the operator the exact change to make by hand (the Hospitable dashboard takes dollars, not cents). |
 
 ### Historical demand — occupancy, ADR, LOS, lead-time, channel mix
 
 | Tool | Returns | Revenue-management need it serves |
 |---|---|---|
 | `hospitable_list_reservations` | All reservations the account exposes (aim 2+ yrs back): check-in/out dates, nights, total/payout amounts, channel/source, status, guest. | **The cleared-rate + demand-history engine.** Computes: booked nights by month (this year / last year / two back) for **pace vs STLY**; **realized ADR** (the cleared rate — track against ask); **LOS distribution** (1/2/3/4+ nights); **lead-time distribution** (same-day, 1–7d, 8–30d, 30–90d, 90+d — feeds the Lead-Time Pricing table); **channel mix** (Airbnb/VRBO/direct — drives whether channel fees explain any calendar-vs-PriceLabs gap). |
-| `hospitable_get_reservation` | One reservation in full: financial breakdown, fees, guest, dates, status. | Drill-down when a single booking looks anomalous (e.g., a date that "booked within hours" → was underpriced; framework red flag). Confirms fee structure feeding the empirical-markup question. |
+| `hospitable_get_reservation` | One reservation in full: financial breakdown, fees, guest, dates, status. | Drill-down when a single booking looks anomalous (e.g., a date that "booked within hours" → was underpriced; framework red flag). Shows the fee structure (useful context when the operator states their markup). |
 | `hospitable_create_reservation` | Creates a reservation (block/owner-stay/manual booking). | Not a pricing read. Out of scope for pricing; never called by the analysis path. Listed for completeness. |
 | `hospitable_update_reservation` | Modifies an existing reservation. | Same — not in the pricing critical path. Completeness only. |
 
@@ -89,7 +89,7 @@ All tools are read-only except `update_property_calendar`, `create_reservation`,
 - **Step 0 (detection):** `mcp__hospitable__` present → PMS = Hospitable; map to PriceLabs as **`smartbnb`**.
 - **Parallel PMS pull (Agent 1):** `list_properties` → per-property `get_property_calendar` (365d forward) + `list_reservations` (all history) + `list_reviews` (≤100) + `list_transactions` (≥12mo). Parse `data.days[]`, **÷100 on `price.amount`**, carry native `currency`.
 - **Cross-reference vs PriceLabs:** lay the Hospitable ASK curve (calendar) against the PriceLabs forward curve (also ASK). They should match where PriceLabs pushes. **Calendar wins on any disagreement; ignore PriceLabs `user_price` (stale).**
-- **Empirical markup:** `median(hospitable_calendar_price ÷ pricelabs_price)` over paired forward dates. Often **1.0**. Store per property in `property_config.settings`. If stdev is high, flag a sync/config issue.
+- **Markup:** operator-stated, per channel, in `property_config.settings.channel_markup_pct`. If the calendar and PriceLabs disagree by more than that, flag a sync/config issue.
 - **Cleared vs ask:** ADR from `list_reservations` (cleared) tracked separately from the calendar (ask). Report both.
 
 ---
@@ -101,7 +101,7 @@ All tools are read-only except `update_property_calendar`, `create_reservation`,
 3. **Thin-comp transparency** — always produce a number; when comp count < ~20, show the count and flag lower confidence in plain language. No hard refusal.
 4. **Currency hard gate** — auto-detect the property's native currency (e.g. CAD) from `list_properties`/calendar. Never let a foreign-currency figure (e.g. an AirROI comp whose echoed currency differs from the property's) enter a recommendation without explicit conversion; on mismatch, convert or clearly flag.
 5. **Explanatory confidence** — every rec states its inputs in plain language ("based on 23 comps (8 same-bedroom); market median $X; your forward occupancy Y%"), not a bare badge.
-6. **The yes** — no silent write to `update_property_calendar` or PriceLabs; a plain yes in chat applies it, no codes. The gate shows current price, recommended price, nearest bound, comp count, currency, and reasoning; flags anomalies.
+6. **The yes**: no silent write to the calendar or PriceLabs; a plain yes in chat applies it through `apply_change.py`, no codes. The gate shows current price, recommended price, nearest bound, comp count, currency, and reasoning; flags anomalies.
 7. **Freshness** — surface PriceLabs `last_refreshed_at` and Hospitable calendar recency; never present a rec on stale/unknown data without saying so.
 8. **Audit** — on a real change only, write the existing 4 Supabase tables; `pricing_decisions` now carries the 3 nullable outcome columns (`booked_at`, `lead_time_days`, `price_delta_from_rec`) for the future learning loop.
 
@@ -123,4 +123,32 @@ list_reviews[]               → rating, text, date, response
 get_quote                    → all-in guest price (nightly × nights + cleaning + channel fees)
 ```
 
-**Remember:** calendar `price.amount` is the ASK in **cents** and **equals** the PriceLabs pushed price; the calendar is ground truth; `user_price` in PriceLabs is stale; track ask (calendar) *and* cleared (ADR from reservations) separately; markup is empirical (often 1.0).
+**Remember:** calendar `price.amount` is the ASK in **cents** and **equals** the PriceLabs pushed price; the calendar is ground truth; `user_price` in PriceLabs is stale; track ask (calendar) *and* cleared (ADR from reservations) separately; markup is what the operator states, per channel.
+
+---
+
+## Calendar write target (`fetch/_pms_hospitable.py`, `HospitableCalendarTarget`)
+
+Every PMS price write goes through `apply_change.py plan|apply|rollback --target hospitable`
+and the `_calendar_write` core (docs/WRITE-TARGETS.md), never through the raw MCP tool.
+Endpoints below were read from Hospitable's published OpenAPI (Stoplight project
+`hospitable-eng/public-api-docs`) on **2026-09-25**.
+
+| Call | Doc | Status |
+|---|---|---|
+| `GET https://public.api.hospitable.com/v2/properties/{uuid}/calendar?start_date&end_date` | https://developer.hospitable.com/docs/public-api-docs/d97fb82987ff6-get-property-calendar | **VERIFIED-LIVE 2026-09-25**: one read-only call through the target, one property, 7 days: 7 contiguous days, one currency (CAD), `price.amount` integer minor units parsed to major, `min_stay` integer, `status.available` boolean. Scopes `property:read`, `calendar:read`; rate limit 1000/min. |
+| `PUT https://public.api.hospitable.com/v2/properties/{uuid}/calendar` | https://developer.hospitable.com/docs/public-api-docs/lziaxr9e1j27m-update-property-calendar | **DOCS-ONLY** (never written live). Body `{"dates": [{"date": "YYYY-MM-DD", "price": {"amount": <integer, base units, e.g. cents for USD/EUR>}, "min_stay": <int>, "available"?, "closed_for_checkin"?, "closed_for_checkout"?, "note"?}]}`. Success is **202 `{"status": "accepted"}`**. Scopes `property:read`, `calendar:write`. Up to 1,095 days ahead. **"Calendar updates are processed asynchronously, so successful writes may not appear in the read endpoint immediately"**: the core re-READS at 0/5/15/30/60 s and never resends. 422 causes documented: calendar restricted, or "Hospitable Dynamic Pricing is enabled, therefore prices cannot be updated via the API". |
+| `GET https://public.api.hospitable.com/v2/properties/{uuid}` | https://developer.hospitable.com/docs/public-api-docs/7fu6aoxy7h0o4-get-property-by-uuid (Property model `yxkt0gu4kdw8u`) | **DOCS-ONLY**. `calendar_restricted: true` = "its calendar will not be able to be updated using the Update Property Calendar endpoint"; the target refuses to plan. See https://developer.hospitable.com/docs/public-api-docs/hriol5oneuh9u-calendar-restriction |
+
+Units: https://developer.hospitable.com/docs/public-api-docs/ofr9ft9to2ata-currencies (read
+2026-09-25): money is an integer in the currency's smallest unit; JPY and VND have zero
+decimals. The target converts with ISO 4217 minor units (USD 150.25 -> 15025, JPY 15000 ->
+15000, KWD 150.25 -> 150250). NOTE (open finding, not fixed here): the runner's read path
+keeps Hospitable's `price.amount` as `price_cents` and `_mvp_analysis.py` divides it by 100 for
+every currency (the /100 rule above), which is 100x off for a JPY or VND Hospitable property.
+The writer does not share that path.
+
+Floor: the Property model has no min-price field, so `floor()` is None and the core uses
+`property_config.settings.min_price` (set with `setup_properties.py --min-price`); with neither,
+price cuts are refused. Pricing owner: the API exposes no dynamic-pricing flag, so
+`pricing_managed()` is None and `property_config.settings.pricing_tool` decides.
