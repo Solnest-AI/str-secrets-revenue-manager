@@ -161,7 +161,7 @@ data['data']['Market KPI']['Category']                 # monthly booking window,
 - Ask the operator what markup they add per channel. Store exactly that in `property_config.settings.channel_markup_pct` (e.g. `{"airbnb": 16, "vrbo": 20}`; "no markup" is 0).
 - Never infer it from the PMS calendar vs `recommended`. If those two disagree by more than the stated markup, that is a sync or configuration finding: report it, don't turn it into a markup.
 - **Never recommend a change to "fix" a difference that matches the stated markup.** That's the markup working.
-- **Do NOT use `user_price` for any comparison** against the live calendar; it's stale. Pair `recommended` against the live PMS calendar.
+- **Do NOT use `user_price` as the price that is live**; it's stale. Pair `recommended` against the live PMS calendar. The one use the runner makes of it: when the PMS matches `user_price` to the cent but not the fresh `price`, PriceLabs has recalculated and not pushed yet, so that night is withheld as a pending push and named on the card, not reported as a broken sync.
 
 ---
 

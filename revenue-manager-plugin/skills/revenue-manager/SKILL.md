@@ -241,7 +241,7 @@ Then ask plainly: *"Apply these?"* A plain yes applies them; one yes can cover e
 
 ### 2.8 Audit columns
 
-The four Supabase tables ship with migration 001; migration 002 adds three nullable outcome columns on `pricing_decisions` (`booked_at`, `lead_time_days`, `price_delta_from_rec`) that seed a future learning loop (do NOT build the loop). They stay null. Writes fire only on real, approved changes, never on read-only analysis.
+The four Supabase tables ship with migration 001; migration 002 adds three nullable outcome columns on `pricing_decisions` (`booked_at`, `lead_time_days`, `price_delta_from_rec`) that seed a future learning loop (do NOT build the loop). They stay null. Audit writes fire only on real, approved changes. The one write a read-only run makes is the PriceLabs suggestions pile (`pricelabs_recommendations`, latest wins), stored every run as one input among many.
 
 ## Step 3: Schema bootstrap + historical read (runs every time)
 
@@ -431,7 +431,7 @@ Follow `audit.md`: one `pricelabs_change_log` row per field/date change (the wri
 - All prices in the property's native currency unless explicitly converted.
 - Occupancy >85% at 30 nights → likely underpriced. <30% at 30 nights → check market (and ranking) before assuming overpriced.
 - Zero forward bookings + strong market occupancy → listing-quality/visibility problem, not pricing: check ranking FIRST.
-- **Never write to Supabase on read-only analysis.** Outcome columns seed null.
+- **No audit writes on read-only analysis** (change log, decisions, snapshots). The runner's only read-time write is the PriceLabs suggestions pile. Outcome columns seed null.
 - Read all 4 audit tables at the start of every run: history is the feature.
 
 ## Fallback: partial failures
