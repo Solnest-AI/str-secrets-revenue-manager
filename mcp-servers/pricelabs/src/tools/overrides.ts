@@ -9,22 +9,22 @@ export function registerOverrideTools(server: McpServer): void {
     description: "Get all date-specific overrides (DSOs) for a listing — custom prices, min stays, min/max price overrides, and check-in/check-out restrictions by date.",
     inputSchema: {
       listing_id: z.string().describe("Listing ID"),
-      pms: z.string().describe("PMS name (e.g. 'airbnb', 'hospitable')"),
+      pms: z.string().describe("PMS name from list_listings (e.g. 'airbnb'; Hospitable uses 'smartbnb')"),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, async ({ listing_id, pms }) => {
     try {
       const res = await getPriceLabs().get(`/v1/listings/${listing_id}/overrides`, { params: { pms } });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 
   server.registerTool("pricelabs_set_overrides", {
     title: "Set Date-Specific Overrides",
-    description: "Create or update date-specific overrides (DSOs) for a listing — set custom prices (fixed or percent), min stays, min/max price bounds, and check-in/check-out day restrictions.",
+    description: "Create or update date-specific overrides (DSOs) for a listing — set custom prices (fixed or percent), min stays, min/max price bounds, and check-in/check-out day restrictions. Applies to this listing only (update_children is always sent as false).",
     inputSchema: {
       listing_id: z.string().describe("Listing ID"),
-      pms: z.string().describe("PMS name (e.g. 'airbnb', 'hospitable')"),
+      pms: z.string().describe("PMS name from list_listings (e.g. 'airbnb'; Hospitable uses 'smartbnb')"),
       overrides: z.array(z.object({
         date: z.string().describe("Date (YYYY-MM-DD)"),
         price: z.number().optional().describe("Override price"),
@@ -48,9 +48,11 @@ export function registerOverrideTools(server: McpServer): void {
       const res = await getPriceLabs().post(`/v1/listings/${listing_id}/overrides`, {
         overrides,
         pms,
+        // Always explicit: never let a DSO silently cascade to child listings.
+        update_children: false,
       });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 
   server.registerTool("pricelabs_delete_overrides", {
@@ -58,7 +60,7 @@ export function registerOverrideTools(server: McpServer): void {
     description: "Remove date-specific overrides (DSOs) for specific dates. Optionally cascade deletion to child listings.",
     inputSchema: {
       listing_id: z.string().describe("Listing ID"),
-      pms: z.string().describe("PMS name (e.g. 'airbnb', 'hospitable')"),
+      pms: z.string().describe("PMS name from list_listings (e.g. 'airbnb'; Hospitable uses 'smartbnb')"),
       overrides: z.array(z.object({
         date: z.string().describe("Date to remove override for (YYYY-MM-DD)"),
       })).describe("Array of dates to delete overrides for"),
@@ -71,6 +73,6 @@ export function registerOverrideTools(server: McpServer): void {
         data: { overrides, pms, update_children: update_children || false },
       });
       return { content: [{ type: "text", text: res.status === 204 ? "Overrides deleted successfully." : formatResponse(res.data) }] };
-    } catch (e) { return { content: [{ type: "text", text: handleError(e) }] }; }
+    } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 }
