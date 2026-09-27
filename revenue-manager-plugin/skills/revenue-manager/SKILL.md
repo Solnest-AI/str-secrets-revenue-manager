@@ -266,7 +266,7 @@ The four Supabase tables ship with migration 001; migration 002 adds three nulla
 
 ### 3.1 Historical read
 
-Run in parallel:
+**The runner does this read for every property on every run** and prints it on the card as one `History` line: how many PriceLabs changes, pricing decisions and market snapshots are logged, each with its latest date, and when the settings were last updated ("Nothing logged yet: this run is the baseline" when all are empty; "not read ... unknown, not zero" when there is no Supabase). Quote that line in every property's Data part (7.0). You do not need to run the four queries yourself; run them only when you need more than the card gives, such as the prior-year week for a YoY comparison:
 
 ```sql
 SELECT property_id, decision_date, base_price, final_price, strategy,
@@ -488,14 +488,14 @@ Include: gross revenue, ADR (cleared), occupancy, bookings, comp comparison, and
 
 Give every property the runner analysed its own block, in this order, taken from its card. A portfolio summary may come first, but it never replaces the blocks, and nothing in a block is dropped to save space.
 
-1. **Header:** name, currency and the card's status (`analysable` / `degraded` / `blocked`). A degraded or blocked card's gaps go right under it, first. A `QUESTION FOR THE HOST, $0 BOOKING` block goes next: ask it in plain words, naming each booking and its dates. Never assume the answer, and never call it missing revenue or an owner stay on your own. Until the host answers, the card's numbers stand as shown and each part that the card's `If it was paid` line changes says so. When the host answers, use that reading: paid outside the PMS means the `If it was paid` pace, funnel verdict and min price, and revenue figures that leave out the amount; an owner, friends or comp stay means the numbers as shown.
+1. **Header:** name, currency and the card's status (`analysable` / `degraded` / `blocked`). A degraded or blocked card's gaps go right under it, first. A `QUESTION FOR THE HOST, $0 BOOKING` block goes next: ask it in plain words, naming each booking and its dates. Never assume the answer, and never call it missing revenue or an owner stay on your own. Until the host answers, the card's numbers stand as shown and each part that the card's `If it was paid` line changes says so. A DSO suggestion or rule change that line names (held by the booking guard, or opening up) depends on the answer: present it as conditional and do not ask to apply it until the host has answered. When the host answers, use that reading: paid outside the PMS means the `If it was paid` pace, funnel verdict, min price and changes, and revenue figures that leave out the amount; an owner, friends or comp stay means the card as shown.
 2. **Flywheel:** one line with all four spokes as the card prints them, in order: Visibility, Bookings, Reviews, Ranking (ok or BREAK and the number that shows it), then the card's diagnosis.
-3. **Data:** how old the PriceLabs numbers are (a `STALE PRICELABS DATA` warning goes first), the comp count N, and the markups line with the channel the market comparison used.
+3. **Data:** how old the PriceLabs numbers are (a `STALE PRICELABS DATA` warning goes first), the comp count N, the markups line with the channel the market comparison used, and the card's `History` line (3.1).
 4. **Min price:** the card's `Recommended min price` line with its number, even when it says keep.
 5. **Next 30 days:** occupancy vs the market, and the open Airbnb price vs the matched p50/p90, from the card's table. That is the ask side. The runner does not print a realized (cleared) ADR yet: say so if asked, and never work one out by hand.
 6. **Changes:** rule changes first, then DSO suggestions, then flagged existing DSOs (7.1), each with its comp count and % move; or "none".
 
-**Before you send, check:** every `QUESTION FOR THE HOST` on a card is asked; every change names its framework reason (6.4's questions, the 6.3 lead-time band or a 6.7 red flag); every analysed property has a block with all six parts; every change shows N comps, its % move and a `⚠️ large move, confirm` label when it passes the cap; a delete is asked separately; the message ends with the plain question (2.6) and the spreadsheet offer (7.5). Anything missing: fix the message first.
+**Before you send, check:** every `QUESTION FOR THE HOST` on a card is asked; every change names its framework reason (6.4's questions, the 6.3 lead-time band or a 6.7 red flag); every analysed property has a block with all six parts, its Data part quoting the card's `History` line; every change shows N comps, its % move and a `⚠️ large move, confirm` label when it passes the cap; a delete is asked separately; the message ends with the plain question (2.6) and the spreadsheet offer (7.5). Anything missing: fix the message first.
 
 ```
 Property:        <name>  (<currency>)

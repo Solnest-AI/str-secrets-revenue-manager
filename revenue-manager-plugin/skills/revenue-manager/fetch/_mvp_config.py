@@ -252,6 +252,10 @@ def normalized_context(raw, property_id):
         "updated_at": row.get("updated_at"),
         "changes": raw.get("changes") or [],
         "decisions": raw.get("decisions") or [],
+        "snapshots": raw.get("snapshots") or [],
+        # counts and latest dates across all four audit tables (SKILL 3.1); None = not read
+        # (a --settings file, or a cached context from before the runner read it)
+        "history": raw.get("history") if isinstance(raw.get("history"), dict) else None,
     }
 
 
@@ -269,15 +273,33 @@ def read_context(client, connections, property_id, settings_file=None):
     project, token = connection
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", property_id):
         raise CannotAnalyze("Invalid PMS property ID")
+    # SKILL 3.1's historical read, done here so it runs every time: in 8 of 9 headless runs
+    # (2026-09-26) the model skipped at least one of the four tables, market_snapshots in 8.
+    # The change log is keyed by the PriceLabs listing id, which is the PMS property id on
+    # Hospitable but need not be elsewhere, so both are matched.
+    log = (f"listing_id IN ('{property_id}', COALESCE((SELECT settings->>'pricelabs_listing_id' "
+           f"FROM property_config WHERE property_id='{property_id}' LIMIT 1), '{property_id}'))")
     query = f"""SELECT json_build_object(
         'config',(SELECT json_agg(x) FROM (SELECT property_id,settings,updated_at
             FROM property_config WHERE property_id='{property_id}') x),
         'changes',(SELECT json_agg(x) FROM (SELECT change_type,field_changed,
             old_value,new_value,created_at FROM pricelabs_change_log
-            WHERE listing_id='{property_id}' ORDER BY created_at DESC LIMIT 20) x),
+            WHERE {log} ORDER BY created_at DESC LIMIT 20) x),
         'decisions',(SELECT json_agg(x) FROM (SELECT decision_date,strategy,
             base_price,final_price,outcome FROM pricing_decisions
-            WHERE property_id='{property_id}' ORDER BY decision_date DESC LIMIT 5) x)
+            WHERE property_id='{property_id}' ORDER BY decision_date DESC LIMIT 5) x),
+        'snapshots',(SELECT json_agg(x) FROM (SELECT snapshot_date,occupancy_pct,
+            avg_comp_rate,demand_score FROM market_snapshots
+            WHERE property_id='{property_id}' ORDER BY snapshot_date DESC LIMIT 30) x),
+        'history',json_build_object(
+            'changes',(SELECT count(*) FROM pricelabs_change_log WHERE {log}),
+            'changes_latest',(SELECT max(created_at) FROM pricelabs_change_log WHERE {log}),
+            'decisions',(SELECT count(*) FROM pricing_decisions WHERE property_id='{property_id}'),
+            'decisions_latest',(SELECT max(decision_date) FROM pricing_decisions
+                WHERE property_id='{property_id}'),
+            'snapshots',(SELECT count(*) FROM market_snapshots WHERE property_id='{property_id}'),
+            'snapshots_latest',(SELECT max(snapshot_date) FROM market_snapshots
+                WHERE property_id='{property_id}'))
         ) AS context"""
 
     def load():

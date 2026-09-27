@@ -34,7 +34,15 @@
   and min price as shown and as if paid. Stays the PMS marks as owner or maintenance stays
   are not asked about. Each booking is named by the code the host sees (Hospitable's code,
   Guesty's confirmation code); a PMS that sends none gets its booking named by site and
-  dates, never by an internal id.
+  dates, never by an internal id. The booking guards read the same occupancy, so the card
+  also names the DSO suggestions and rule changes that depend on the answer (live: Boho's
+  Oct 2 and Oct 9 cuts are held if the stay was paid), and the skill presents those as
+  conditional until the host answers.
+- **The history read can no longer be skipped.** The skill told the model to read four audit
+  tables before every analysis; in 8 of 9 test runs it skipped at least one. The runner now
+  reads all four for every property and prints one History line on the card (changes,
+  decisions and market snapshots logged, each with its latest date, or "this run is the
+  baseline"). The change log is matched on the PriceLabs listing id as well as the PMS id.
 - **Big portfolios no longer block on PriceLabs' 60-calls-a-minute limit.** A property run
   makes 7-8 PriceLabs calls, so 8 or more back to back hit it and the card was blocked. A
   rate-limited read now waits out the minute (at most two retries); writes never retry.

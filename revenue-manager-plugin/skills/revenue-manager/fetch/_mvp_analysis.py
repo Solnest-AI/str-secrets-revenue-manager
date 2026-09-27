@@ -236,7 +236,8 @@ def _visibility_verdict(wheel):
     return (((wheel.get("spokes") or {}).get("visibility") or {}).get("diagnosis") or {}).get("verdict")
 
 
-def zero_value_question(zero_stays, rows, lead, pre_pace_wheel, wheel, min_price, min_price_for):
+def zero_value_question(zero_stays, rows, lead, pre_pace_wheel, wheel, min_price, min_price_for,
+                        change_plan=None):
     """The $0 bookings the card asks the host about, with the numbers read both ways.
 
     An accepted stay at $0 counts as neither booked nor open. That is right for an owner or
@@ -245,8 +246,11 @@ def zero_value_question(zero_stays, rows, lead, pre_pace_wheel, wheel, min_price
     showed 28.57% booked (really 100%) and the 30-night pace 33.33% (really 50%). The engine
     cannot tell which it is, so it never guesses (Ryan 2026-09-26: "flag it on the card and ask
     the user about it"): it names each stay and shows pace, funnel verdict and min price as
-    shown and as if paid. A stay the PMS marks as an owner or maintenance stay is not asked
-    about. Returns None when there is nothing to ask."""
+    shown and as if paid. The booking guards read the same occupancy, so the DSO suggestions and
+    rule changes are read both ways too (`change_plan(day_rows)` -> (DSO dates, rule changes)):
+    live Boho, read as paid, the first 30 nights sell 7.67 points over the market and the guard
+    holds the Oct 2 and Oct 9 cuts. A stay the PMS marks as an owner or maintenance stay is not
+    asked about. Returns None when there is nothing to ask."""
     ask = [s for s in zero_stays
            if not (s.get("owner_stay") or s.get("stay_type") in ("owner_stay", "maintenance"))]
     if not ask:
@@ -254,7 +258,8 @@ def zero_value_question(zero_stays, rows, lead, pre_pace_wheel, wheel, min_price
     paid_dates = {d for s in ask for d in s["dates"]}
     alt_rows = [dict(r, status="confirmed_paid") if r["date"] in paid_dates else r for r in rows]
     if_paid = {"window_days": None, "occupancy_pct": None, "as_shown_pct": None, "market_pct": None,
-               "funnel": None, "funnel_as_shown": None, "min_price": None}
+               "funnel": None, "funnel_as_shown": None, "min_price": None,
+               "dso_dropped": [], "dso_added": [], "rule_changes": None}
     if lead and lead.get("occupancy_pct") is not None and lead.get("bookable"):
         k = sum(1 for r in rows[: lead["days"]] if r["date"] in paid_dates)
         alt_occ = rounded(100.0 * (lead["confirmed"] + k) / lead["bookable"])
@@ -271,6 +276,13 @@ def zero_value_question(zero_stays, rows, lead, pre_pace_wheel, wheel, min_price
         if_paid["min_price"] = {"action": alt_min["action"], "recommended": alt_min["recommended"],
                                 "pace": alt_min["pace"], "as_shown_action": min_price["action"],
                                 "as_shown_recommended": min_price["recommended"]}
+    if change_plan is not None:
+        shown_dso, shown_rules = change_plan(rows)
+        alt_dso, alt_rules = change_plan(alt_rows)
+        if_paid["dso_dropped"] = sorted(shown_dso - alt_dso)
+        if_paid["dso_added"] = sorted(alt_dso - shown_dso)
+        if shown_rules != alt_rules:
+            if_paid["rule_changes"] = {"if_paid": alt_rules, "as_shown": shown_rules}
     return {
         # `code` is the reference the host sees (None when the PMS sends none: the card then names
         # the booking by site and dates, never by an internal id the host cannot look up)
@@ -729,6 +741,25 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
                 "matched_open_p90": average(r["p90"] for r in opened),
             }
         )
+    index_by_date = {r["date"]: i for i, r in enumerate(rows)}
+
+    def change_plan(day_rows):
+        """The DSO dates and rule changes the card offers for these day rows. Both booking guards
+        (dso_booking_guard and the rule layer's) read occupancy, so a $0 stay read as paid can move
+        them. Pure: works on copies."""
+        if blockers:
+            return set(), []
+        day_rows = copy.deepcopy(day_rows)
+        kept = [copy.deepcopy(c) for c in candidates
+                if not dso_booking_guard(day_rows, index_by_date[c["date"]], c.get("direction") or "cut")]
+        if beyond:
+            return {c["date"] for c in kept}, []
+        plan = rules_first.recommend(day_rows, kept, rules.get("raw") or {}, rules.get("levels") or {},
+                                     rule_effect, bounds, max_delta, overrides, today_date)
+        return (set(plan["dso_dates"]),
+                [f"{rules_first.LABEL.get(p['rule'], p['rule'])} {p.get('direction') or ''}".strip()
+                 for p in plan["rule_changes"]])
+
     def min_price_for(day_rows):
         return min_price_recommendation(
             bounds, day_rows, multiplier, max_delta,
@@ -736,7 +767,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
                 "comp_source": (comps_ref or {}).get("source")} if beyond else {}))
     min_price = min_price_for(rows)
     zero_question = zero_value_question(pms.get("zero_value_stays") or [], rows, lead,
-                                        pre_pace_wheel, wheel, min_price, min_price_for)
+                                        pre_pace_wheel, wheel, min_price, min_price_for, change_plan)
     result = {
         # D12: "degraded" is a real top-level state. It prices, and it says what it
         # priced without. It is not "blocked" and it is not silently "analysable".
@@ -799,6 +830,9 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         },
         "recent_decisions": context.get("decisions", []),
         "recent_changes": context.get("changes", []),
+        "recent_snapshots": context.get("snapshots", []),
+        "history": context.get("history"),
+        "settings_updated_at": context.get("updated_at"),
         "market_base_percentiles": market.get("base_percentiles"),
         "limitations": [
             "Airbnb asks apply confirmed markup only. Cleaning, taxes, guest fees and "
@@ -1015,6 +1049,15 @@ def render_zero_value_question(q, currency=None):
                      f"(as shown: {p['as_shown_pct']:g}%)")
     if p.get("funnel"):
         parts.append(f"funnel verdict {p['funnel']} (as shown: {p['funnel_as_shown']})")
+    if p.get("dso_dropped"):
+        parts.append("the booking guard holds the DSO suggestion" + ("s" if len(p["dso_dropped"]) > 1 else "")
+                     + " on " + ", ".join(p["dso_dropped"]) + " (selling ahead of the market, no cut)")
+    if p.get("dso_added"):
+        parts.append("DSO suggestions open up on " + ", ".join(p["dso_added"]))
+    if p.get("rule_changes"):
+        r = p["rule_changes"]
+        parts.append(f"rule changes {', '.join(r['if_paid']) or 'none'} (as shown: "
+                     f"{', '.join(r['as_shown']) or 'none'})")
     if p.get("min_price"):
         m = p["min_price"]
         verb = {"lower": "lower to", "raise": "raise to", "keep": "keep at"}
@@ -1025,9 +1068,30 @@ def render_zero_value_question(q, currency=None):
         lines.append(f"  If {paid} paid: " + "; ".join(parts) + ". Revenue figures still leave out "
                      "the amount paid outside the PMS.")
     else:
-        lines.append("  Paid or not, the next-30-night pace, funnel verdict and min price below do not "
-                     "change.")
+        lines.append("  Paid or not, the next-30-night pace, funnel verdict, min price and suggested "
+                     "changes below do not change.")
     return lines
+
+
+def render_history(h, config_updated=None):
+    """One card line for SKILL 3.1's historical read of the four audit tables."""
+    if not h:
+        return ("History: not read this run (no Supabase connection, or a --settings file). Prior "
+                "changes, decisions and market snapshots are unknown, not zero.")
+    def part(n, latest, one, many):
+        n = n or 0
+        label = one if n == 1 else many
+        return f"{n} {label}" + (f" (latest {str(latest)[:10]})" if n and latest else "")
+    parts = [part(h.get("changes"), h.get("changes_latest"), "PriceLabs change logged",
+                  "PriceLabs changes logged"),
+             part(h.get("decisions"), h.get("decisions_latest"), "pricing decision", "pricing decisions"),
+             part(h.get("snapshots"), h.get("snapshots_latest"), "market snapshot", "market snapshots")]
+    line = "History (Supabase, all four audit tables): " + ", ".join(parts)
+    if config_updated:
+        line += f"; settings last updated {str(config_updated)[:10]}"
+    if not any(h.get(k) for k in ("changes", "decisions", "snapshots")):
+        line += ". Nothing logged yet: this run is the baseline"
+    return line + "."
 
 
 def render(pack, run_id, metrics):
@@ -1089,6 +1153,7 @@ def render(pack, run_id, metrics):
          + (f" (your PriceLabs custom comp set '{pack['custom_comp_set']}', not a bedroom bucket)"
             if pack.get("custom_comp_set") else "")
          + ". Full source timestamps are in --details."),
+        render_history(pack.get("history"), pack.get("settings_updated_at")),
     ]
     if beyond:
         # Beyond's benchmark reports no comp count; AirROI's count is the only one there is.
@@ -1238,11 +1303,6 @@ def render(pack, run_id, metrics):
         )
     else:
         lines.append("Named comps unavailable: " + comps.get("reason", "not loaded"))
-    if pack["recent_changes"]:
-        lines.append(
-            f"Prior audit: {len(pack['recent_changes'])} recent changes loaded; "
-            f"latest {pack['recent_changes'][0].get('created_at')}."
-        )
     lines.extend(
         [
             "",

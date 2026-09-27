@@ -121,6 +121,30 @@ class CardAsksAndShowsBothReadings(unittest.TestCase):
         self.assertEqual((m["action"], m["recommended"], m["pace"]), ("keep", 80, "even"))
         self.assertIn("min price keep at 80 (as shown: lower to 68)", render(pack, "run", METRICS))
 
+    def test_the_booking_guard_holds_dso_cuts_once_the_stay_is_read_as_paid(self):
+        # live Boho: read as paid the first 30 nights sell over the market, so the cuts go
+        bundle = with_zero_stay(synthetic_bundle(), 15, 15)
+        pack = direct_build(bundle)
+        self.assertEqual(pack["reconciliation"]["mismatches"], [])
+        shown = set(pack["rules_first"]["dso_dates"])
+        self.assertIn("2031-06-16", shown)  # as shown: 2 of 29 booked vs 50%, cuts offered
+        p = pack["zero_value_question"]["if_paid"]
+        self.assertEqual(p["occupancy_pct"], 58.62)  # (2 + 15) of 29 vs the market's 50%
+        self.assertEqual(p["dso_dropped"], sorted(shown))
+        self.assertEqual(p["dso_added"], [])
+        text = render(pack, "run", METRICS)
+        self.assertIn("the booking guard holds the DSO suggestions on 2031-06-14, 2031-06-16", text)
+        # the as-shown list itself is untouched until the host answers
+        self.assertIn("2) DSO suggestions: the nights no rule explains", text)
+
+    def test_a_rule_change_that_depends_on_the_answer_is_named(self):
+        from test_rules_first import CardOrder  # a bundle whose last-minute rule qualifies for a cut
+        pack = direct_build(with_zero_stay(CardOrder().bundle(), 15, 15))
+        self.assertEqual([r["rule"] for r in pack["rules_first"]["rule_changes"]], ["last_minute_prices"])
+        p = pack["zero_value_question"]["if_paid"]
+        self.assertEqual(p["rule_changes"], {"if_paid": [], "as_shown": ["last-minute cut"]})
+        self.assertIn("rule changes none (as shown: last-minute cut)", render(pack, "run", METRICS))
+
     def test_the_verdict_on_the_card_is_not_changed_by_the_question(self):
         # asking never rewrites the as-shown numbers: the host's answer does, in the reply
         bundle = with_zero_stay(synthetic_bundle(), 6, 13)
@@ -197,8 +221,8 @@ class CardAsksAndShowsBothReadings(unittest.TestCase):
         # a $0 night past the 30-night lead window moves neither the pace nor the min price
         bundle = with_zero_stay(synthetic_bundle(), 60, 2)
         text = render(direct_build(bundle), "run", METRICS)
-        self.assertIn("Paid or not, the next-30-night pace, funnel verdict and min price below do not "
-                      "change.", text)
+        self.assertIn("Paid or not, the next-30-night pace, funnel verdict, min price and suggested "
+                      "changes below do not change.", text)
         self.assertNotIn("If it was paid", text)
 
 
