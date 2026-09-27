@@ -26,8 +26,10 @@ Claude follows `SETUP.md`, in this order:
 
 1. Checks your connections.
 2. Installs the plugin.
-3. You fully quit and reopen Claude Code in that folder (Cmd+Q on Mac, not just closing the
-   window). The skill only loads on a fresh start.
+3. You fully quit and reopen Claude Code in that folder. The skill only loads on a fresh start.
+   - **Mac:** press Cmd+Q. Closing the window is not enough.
+   - **Windows:** close every Claude Code window. If a Claude icon is still in the system tray
+     (bottom right, near the clock), right-click it and quit.
 4. You say "finish the revenue manager setup". Claude asks which booking sites you list on and the markup you add on each
    one, then runs your first check.
 

@@ -37,8 +37,8 @@ CLAUDE_BIN="$(command -v claude)"; for c in ~/.local/bin/claude ~/.local/bin/cla
 Two lines start with ✔ when it worked.
 
 Then stop and tell the operator, in these words or close to them: **"Installed. Now fully
-quit Claude Code (Cmd+Q on Mac, or close every window and end it in the tray on Windows) and
-reopen it in this folder. Then say: finish the revenue manager setup."** The skill only
+quit Claude Code (on Mac press Cmd+Q; on Windows close every Claude Code window, and if a
+Claude icon is still in the system tray, right-click it and quit) and reopen it in this folder. Then say: finish the revenue manager setup."** The skill only
 loads on a fresh start, so step 3 cannot run in this session. Do not start step 3 here.
 
 ## 3. First run (after the restart)
