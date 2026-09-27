@@ -615,13 +615,18 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
         classification = "unknown"
         cents = None
         booked_at = None
+        # MEASURED LIVE 2026-09-26 (OwnerRez, 13 December nights on one of 23 properties): a
+        # night can carry a price and no min-stay rule at all. Its status is known, so it is
+        # classified; only its pricing opinion is withheld (min_stay_missing), instead of the
+        # unknown night blocking all 90. A missing PRICE, or a min stay below 1, still refuses.
+        stay_missing = (rates_exposed and calendar["min_stay"] is None
+                        and calendar["price_cents"] is not None)
         calendar_ok = calendar["currency"] == prop["currency"] and (
             not rates_exposed
             or (
                 calendar["price_cents"] is not None
                 and calendar["price_cents"] >= 0
-                and calendar["min_stay"] is not None
-                and calendar["min_stay"] >= 1
+                and (calendar["min_stay"] is None or calendar["min_stay"] >= 1)
                 and (
                     not restrictions_exposed
                     or (
@@ -631,6 +636,8 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
                 )
             )
         )
+        if calendar_ok and stay_missing:
+            warnings["calendar_min_stay_missing"] += 1
         if not calendar_ok:
             warnings["calendar_price_currency_or_restrictions_unknown"] += 1
         elif len(group) > 1 or (group and calendar["status_reason"] != "RESERVED"):
@@ -672,6 +679,7 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
                 "accommodation_cents": cents,
                 "reservation_count": len(group),
                 "booked_at": booked_at,
+                "min_stay_missing": bool(calendar_ok and stay_missing),
             }
         )
     warnings["calendar_reservation_conflict"] += sum(

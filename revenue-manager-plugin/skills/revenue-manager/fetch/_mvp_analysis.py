@@ -350,7 +350,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
     if len(override_map) != len(overrides):
         raise CannotAnalyze("Duplicate overrides prevent trustworthy attribution")
     blockers, notes, mismatches, held_gaps, rows = [], [], [], [], []
-    pending_pushes, unseen_bookings = [], []
+    pending_pushes, unseen_bookings, stay_missing_dates = [], [], []
     try:
         pl_refreshed = datetime.fromisoformat(str(prices.get("last_refreshed_at")).replace("Z", "+00:00"))
         pl_refreshed = pl_refreshed if pl_refreshed.tzinfo else None
@@ -563,6 +563,10 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             "flags": [],
             "demand": price.get("demand_desc"),
         }
+        if day.get("min_stay_missing") and opened:
+            stay_missing_dates.append(date)
+            row["withheld_reason"] = ("the PMS sends no min-stay rule for this night; set one there, "
+                                      "then rerun")
         if pending_push:
             row["withheld_reason"] = (
                 f"PriceLabs' newer price {net:g} is not in the PMS, which still shows PriceLabs' "
@@ -584,7 +588,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
                 row["flags"].append("above_market_reference")
             elif not beyond and row["airbnb"] > values["p90"]:
                 row["flags"].append("above_market_p90")
-            if mismatched or pending_push:
+            if mismatched or pending_push or day.get("min_stay_missing"):
                 row["action"] = "pricing_opinion_withheld"
             elif (
                 pl_status != "AVAILABLE"
@@ -797,6 +801,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             "mismatches": mismatches,
             "pending_push": pending_pushes,
             "booked_after_pricelabs_refresh": unseen_bookings,
+            "min_stay_missing": stay_missing_dates,
             "held_dates_absent_from_pl": held_gaps,
             "open_dates_checked": open_count,
             "whole_run_block_share": MISMATCH_BLOCK_SHARE,
@@ -1138,6 +1143,13 @@ def render(pack, run_id, metrics):
             f"dates only: {dates}. The PMS still shows PriceLabs' previous price. If a rerun after "
             "the next PriceLabs sync still shows this, check the PriceLabs to PMS connection."
         )
+    nostay = pack.get("reconciliation", {}).get("min_stay_missing") or []
+    if nostay:
+        dates = ", ".join(nostay[:8]) + (" ..." if len(nostay) > 8 else "")
+        lines.append(
+            f"NO MIN-STAY RULE IN THE PMS on {len(nostay)} night(s), pricing withheld on those nights "
+            f"only: {dates}. The PMS gives a price but no minimum stay there; set one in the PMS, "
+            "then rerun.")
     lines.extend(render_zero_value_question(pack.get("zero_value_question"), pack.get("currency")))
     lines += [
         f"Run {run_id}. Bounds min/base/max: {pack['bounds']['min']:g}/"

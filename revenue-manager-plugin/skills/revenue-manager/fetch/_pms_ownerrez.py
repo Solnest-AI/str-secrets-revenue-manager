@@ -110,6 +110,9 @@ def reservation_row(raw: dict) -> dict:
         nights = None
     return {
         "id": str(raw.get("id")) if raw.get("id") is not None else None, "platform": _site(raw.get("listing_site")),
+        # the channel's code the host sees (Airbnb's HM... code; measured live 2026-09-26: set on
+        # Airbnb bookings, absent on a VRBO one, which the card then names by site and dates)
+        "code": raw.get("platform_reservation_number"),
         "status": STATUS.get(str(raw.get("status") or "").lower(), "unknown"),
         "check_in": arrival, "check_out": departure, "nights": nights,
         "booking_date": raw.get("booked_utc") or raw.get("created_utc"),

@@ -38,6 +38,13 @@
   also names the DSO suggestions and rule changes that depend on the answer (live: Boho's
   Oct 2 and Oct 9 cuts are held if the stay was paid), and the skill presents those as
   conditional until the host answers.
+- **A night with a price but no min-stay rule no longer blocks the whole card.** Measured live
+  on an OwnerRez account (23 properties, read-only): one property's 13 December nights came
+  back with a price and no minimum stay, and the card refused all 90 nights. Those nights are
+  now classified, their pricing is withheld and named at the top of the card ("NO MIN-STAY
+  RULE IN THE PMS"), and the rest is priced. A missing price still refuses as before.
+  OwnerRez bookings are named by their channel code (Airbnb's HM code, VRBO's), measured on
+  240 of 252 recent bookings.
 - **The history read can no longer be skipped.** The skill told the model to read four audit
   tables before every analysis; in 8 of 9 test runs it skipped at least one. The runner now
   reads all four for every property and prints one History line on the card (changes,
