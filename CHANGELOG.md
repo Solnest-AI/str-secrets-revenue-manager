@@ -32,7 +32,9 @@
   stood that was not one). The card now names each $0 booking at the top, asks whether it
   was paid elsewhere or is an owner/comp stay, and shows the 30-night pace, funnel verdict
   and min price as shown and as if paid. Stays the PMS marks as owner or maintenance stays
-  are not asked about.
+  are not asked about. Each booking is named by the code the host sees (Hospitable's code,
+  Guesty's confirmation code); a PMS that sends none gets its booking named by site and
+  dates, never by an internal id.
 - **Big portfolios no longer block on PriceLabs' 60-calls-a-minute limit.** A property run
   makes 7-8 PriceLabs calls, so 8 or more back to back hit it and the card was blocked. A
   rate-limited read now waits out the minute (at most two retries); writes never retry.

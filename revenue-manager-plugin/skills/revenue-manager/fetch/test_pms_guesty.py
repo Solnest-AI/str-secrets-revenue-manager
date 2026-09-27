@@ -78,6 +78,12 @@ class Reservations(unittest.TestCase):
         self.assertEqual((r["check_in"], r["check_out"], r["nights"]), ("2026-10-05", "2026-10-08", 3))
         self.assertEqual(r["property_ids"], ["gst-listing-0001"])
         self.assertEqual(r["financials"]["host_accommodation_cents"], 43250)
+
+    def test_the_confirmation_code_is_the_booking_code(self):
+        # measured live 2026-09-26: Guesty returns confirmationCode (HMZDQXER55, HA-QGXbh7L)
+        r = normalize_reservation(reservation_row(dict(self.RAW, confirmationCode="HMZDQXER55")))
+        self.assertEqual(r["code"], "HMZDQXER55")
+        self.assertIsNone(normalize_reservation(reservation_row(self.RAW))["code"])
         self.assertEqual(r["financials"]["currency"], "USD")
         self.assertEqual(r["platform"], "airbnb")
         self.assertTrue(r["booking_date"].startswith("2026-09-01"))

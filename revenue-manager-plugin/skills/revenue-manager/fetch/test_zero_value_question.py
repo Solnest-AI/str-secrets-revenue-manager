@@ -129,6 +129,53 @@ class CardAsksAndShowsBothReadings(unittest.TestCase):
         lead = next(w for w in pack["windows"] if w["days"] == 30)
         self.assertEqual((lead["confirmed"], lead["zero_value"], lead["occupancy_pct"]), (2, 13, 6.9))
 
+    def test_a_booking_with_no_code_is_named_by_site_and_dates_not_an_internal_id(self):
+        text = render(direct_build(synthetic_bundle()), "run", METRICS)
+        self.assertIn("  - a booking the PMS gives no code for (airbnb): 2031-06-14 to 2031-06-15, 1 night(s)",
+                      text)
+        self.assertNotIn("fixture-zero", text)
+
+    def test_two_zero_stays_are_each_named_and_read_as_all_paid(self):
+        bundle = with_zero_stay(synthetic_bundle(), 6, 4, code="AAA111")
+        second = deepcopy(next(r for r in bundle["inputs"]["reservations"]["data"] if r["id"] == "fixture-zero"))
+        second.update(id="fixture-zero-2", code="BBB222",
+                      check_in=(START + timedelta(days=12)).isoformat() + "T16:00:00+00:00",
+                      check_out=(START + timedelta(days=15)).isoformat() + "T10:00:00+00:00", nights=3)
+        bundle["inputs"]["reservations"]["data"].append(second)
+        bundle["inputs"]["reservations"]["total"] += 1
+        for i in range(12, 15):
+            bundle["inputs"]["calendar"][i].update(status_reason="RESERVED", available=False)
+            bundle["inputs"]["prices"]["data"][i]["booking_status"] = "Booked"
+        pack = direct_build(bundle)
+        self.assertEqual(pack["reconciliation"]["mismatches"], [])
+        q = pack["zero_value_question"]
+        self.assertEqual([s["code"] for s in q["stays"]], ["AAA111", "BBB222"])
+        self.assertEqual(q["nights_in_window"], 7)
+        self.assertEqual(q["if_paid"]["occupancy_pct"], 31.03)  # (2 + 7) of 29
+        text = render(pack, "run", METRICS)
+        self.assertIn("QUESTION FOR THE HOST, $0 BOOKINGS (ask", text)
+        self.assertIn("Was each one paid outside the PMS", text)
+        self.assertIn("their 7 night(s) count as a $0 stay", text)
+        self.assertIn("If they were all paid: next 30 nights 31.03% booked", text)
+
+    def test_an_owner_stay_next_to_an_unknown_one_is_left_out(self):
+        bundle = with_zero_stay(synthetic_bundle(), 6, 4, code="AAA111")
+        owner = deepcopy(next(r for r in bundle["inputs"]["reservations"]["data"] if r["id"] == "fixture-zero"))
+        owner.update(id="fixture-owner", code="OWN1", stay_type="owner_stay",
+                     check_in=(START + timedelta(days=12)).isoformat() + "T16:00:00+00:00",
+                     check_out=(START + timedelta(days=15)).isoformat() + "T10:00:00+00:00", nights=3)
+        bundle["inputs"]["reservations"]["data"].append(owner)
+        bundle["inputs"]["reservations"]["total"] += 1
+        for i in range(12, 15):
+            bundle["inputs"]["calendar"][i].update(status_reason="RESERVED", available=False)
+            bundle["inputs"]["prices"]["data"][i]["booking_status"] = "Booked"
+        pack = direct_build(bundle)
+        self.assertEqual(len(pack["pms"]["zero_value_stays"]), 2)  # the engine sees both
+        q = pack["zero_value_question"]
+        self.assertEqual([s["code"] for s in q["stays"]], ["AAA111"])  # only the unknown is asked
+        self.assertEqual(q["if_paid"]["occupancy_pct"], 20.69)  # (2 + 4) of 29: the owner stay stays out
+        self.assertNotIn("OWN1", render(pack, "run", METRICS))
+
     def test_owner_and_maintenance_stays_are_not_asked_about(self):
         for extra in ({"stay_type": "owner_stay"}, {"owner_stay": True}, {"stay_type": "maintenance"}):
             with self.subTest(**extra):

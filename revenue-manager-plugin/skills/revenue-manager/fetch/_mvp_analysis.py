@@ -272,7 +272,9 @@ def zero_value_question(zero_stays, rows, lead, pre_pace_wheel, wheel, min_price
                                 "pace": alt_min["pace"], "as_shown_action": min_price["action"],
                                 "as_shown_recommended": min_price["recommended"]}
     return {
-        "stays": [{"code": s.get("code") or s["id"], "platform": s.get("platform"),
+        # `code` is the reference the host sees (None when the PMS sends none: the card then names
+        # the booking by site and dates, never by an internal id the host cannot look up)
+        "stays": [{"code": s.get("code"), "id": s["id"], "platform": s.get("platform"),
                    "check_in": s["check_in"], "check_out": s["check_out"], "nights": s["nights"],
                    "nights_in_window": len(s["dates"])} for s in ask],
         "nights_in_window": len(paid_dates),
@@ -996,9 +998,10 @@ def render_zero_value_question(q, currency=None):
              "or min price):"]
     for s in stays:
         where = f" ({s['platform']})" if s.get("platform") else ""
+        name = s["code"] or "a booking the PMS gives no code for"
         inside = ("" if s["nights_in_window"] == s["nights"]
                   else f", {s['nights_in_window']} of them in this window")
-        lines.append(f"  - {s['code']}{where}: {s['check_in']} to {s['check_out']}, {s['nights']} "
+        lines.append(f"  - {name}{where}: {s['check_in']} to {s['check_out']}, {s['nights']} "
                      f"night(s){inside}, $0 accommodation in the PMS.")
     lines.append(f"  Was {'it' if one else 'each one'} paid outside the PMS (Stripe, e-transfer, cash), or "
                  "an owner, friends or comp stay? Until the host answers, "

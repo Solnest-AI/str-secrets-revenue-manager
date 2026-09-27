@@ -106,6 +106,8 @@ def reservation_row(raw: dict) -> dict:
     status = STATUS.get(str(raw.get("status") or "").lower(), "unknown")
     return {
         "id": raw.get("_id"), "platform": _platform((raw.get("integration") or {}).get("platform")),
+        # the code the host sees in Guesty (measured live 2026-09-26: HMZDQXER55, HA-QGXbh7L)
+        "code": raw.get("confirmationCode"),
         "status": status, "check_in": raw.get("checkInDateLocalized"), "check_out": raw.get("checkOutDateLocalized"),
         "nights": raw.get("nightsCount"), "booking_date": raw.get("createdAt"),
         "property_ids": [raw["listingId"]] if isinstance(raw.get("listingId"), str) else [],
@@ -261,8 +263,9 @@ class GuestySource:
         return self.client.fetch("pms.calendar", [self.connections.account_or("guesty"), pid, start.isoformat(), days], load)
 
     def reservations(self, pid, start, days):
-        fields = ("_id status listingId checkInDateLocalized checkOutDateLocalized nightsCount createdAt "
-                  "confirmedAt integration.platform money.currency money.fareAccommodationAdjusted")
+        fields = ("_id confirmationCode status listingId checkInDateLocalized checkOutDateLocalized "
+                  "nightsCount createdAt confirmedAt integration.platform money.currency "
+                  "money.fareAccommodationAdjusted")
         def mapper(raw):
             row = normalize_reservation(reservation_row(raw))
             if row["property_ids"] != [pid]:
