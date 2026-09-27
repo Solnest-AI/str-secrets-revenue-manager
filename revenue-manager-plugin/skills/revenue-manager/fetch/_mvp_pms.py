@@ -278,6 +278,9 @@ def normalize_reservation(raw):
     if not isinstance(raw, dict):
         raise ValueError("PMS reservation source must be an object")
     result = {key: _text(raw.get(key)) for key in ("id", "platform")}
+    # The booking reference the host sees (Hospitable `code`, else the platform's id). Kept so a
+    # card can name a reservation it asks about; it identifies the booking, not the guest.
+    result["code"] = _text(raw.get("code") or raw.get("platform_id"), 40)
     result["status"] = _status(raw.get("status"))
     result["stay_type"] = (
         raw.get("stay_type")
@@ -605,6 +608,7 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
                                or isinstance(row["closed_for_checkout"], bool) for row in rows)
     if not restrictions_exposed:
         warnings["pms_does_not_expose_arrival_rules"] += 1
+    zero_stays = {}
     for calendar in rows:
         day = calendar["date"]
         group = inventory.get(day, [])
@@ -644,6 +648,19 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
                 )
                 cents = historical[day][0][1]
                 booked_at = record["_created"].isoformat() if record.get("_created") else None
+                if classification == "zero_value_accepted":
+                    stay = zero_stays.setdefault(record["id"], {
+                        "id": record["id"],
+                        "code": record.get("code"),
+                        "platform": record["platform"],
+                        "stay_type": record["stay_type"],
+                        "owner_stay": record["owner_stay"],
+                        "check_in": record["_start"].isoformat(),
+                        "check_out": record["_end"].isoformat(),
+                        "nights": record["_nights"],
+                        "dates": [],
+                    })
+                    stay["dates"].append(day)
         elif calendar["status_reason"] == "AVAILABLE":
             classification = "open"
         elif calendar["status_reason"] == "BLOCKED":
@@ -1047,6 +1064,9 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
             "allocation_methods": dict(allocation_modes),
             "overlap_days_excluded": len(overlap_dates),
         },
+        # Every accepted $0 stay in the window, by reservation, with the dates it covers. The
+        # engine cannot tell an owner or comp stay from one paid outside the PMS; the card asks.
+        "zero_value_stays": sorted(zero_stays.values(), key=lambda s: (s["check_in"], s["id"])),
         "definitions": {
             "money": "Integer cents in property currency. Host accommodation plus signed host "
             "discounts, before fees and taxes. No payout or profit claim.",

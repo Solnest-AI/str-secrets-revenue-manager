@@ -25,6 +25,14 @@
   on every install and the project's public key could read and change that table. The skill
   re-applies 003 and 004 on every run, so existing installs are fixed on their next run.
   `set_updated_at` gets a fixed search path (Supabase warning).
+- **A $0 booking is asked about, never assumed.** A reservation at $0 in the PMS counted as
+  neither booked nor open. That is right for an owner or comp stay and wrong for a guest who
+  paid outside the PMS (measured live: a Hospitable booking paid by Stripe read as 5 unsold
+  nights, so the next 7 nights showed 29% booked when they were full and a funnel "break"
+  stood that was not one). The card now names each $0 booking at the top, asks whether it
+  was paid elsewhere or is an owner/comp stay, and shows the 30-night pace, funnel verdict
+  and min price as shown and as if paid. Stays the PMS marks as owner or maintenance stays
+  are not asked about.
 - **Big portfolios no longer block on PriceLabs' 60-calls-a-minute limit.** A property run
   makes 7-8 PriceLabs calls, so 8 or more back to back hit it and the card was blocked. A
   rate-limited read now waits out the minute (at most two retries); writes never retry.

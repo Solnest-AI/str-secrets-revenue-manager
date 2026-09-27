@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 from datetime import date as Date, datetime, timedelta
@@ -229,6 +230,54 @@ def markups(context, as_of):
     if any(number(v) is None or number(v) > 500 for v in values.values()):
         raise CannotAnalyze("Channel markup percentages are invalid")
     return {k: float(v) for k, v in values.items()}
+
+
+def _visibility_verdict(wheel):
+    return (((wheel.get("spokes") or {}).get("visibility") or {}).get("diagnosis") or {}).get("verdict")
+
+
+def zero_value_question(zero_stays, rows, lead, pre_pace_wheel, wheel, min_price, min_price_for):
+    """The $0 bookings the card asks the host about, with the numbers read both ways.
+
+    An accepted stay at $0 counts as neither booked nor open. That is right for an owner or
+    comp stay and wrong for one paid outside the PMS: live 2026-09-26, Boho Bliss GJVJBI was
+    paid by Stripe after a Hospitable issue and read as 5 unsold nights, so the next 7 nights
+    showed 28.57% booked (really 100%) and the 30-night pace 33.33% (really 50%). The engine
+    cannot tell which it is, so it never guesses (Ryan 2026-09-26: "flag it on the card and ask
+    the user about it"): it names each stay and shows pace, funnel verdict and min price as
+    shown and as if paid. A stay the PMS marks as an owner or maintenance stay is not asked
+    about. Returns None when there is nothing to ask."""
+    ask = [s for s in zero_stays
+           if not (s.get("owner_stay") or s.get("stay_type") in ("owner_stay", "maintenance"))]
+    if not ask:
+        return None
+    paid_dates = {d for s in ask for d in s["dates"]}
+    alt_rows = [dict(r, status="confirmed_paid") if r["date"] in paid_dates else r for r in rows]
+    if_paid = {"window_days": None, "occupancy_pct": None, "as_shown_pct": None, "market_pct": None,
+               "funnel": None, "funnel_as_shown": None, "min_price": None}
+    if lead and lead.get("occupancy_pct") is not None and lead.get("bookable"):
+        k = sum(1 for r in rows[: lead["days"]] if r["date"] in paid_dates)
+        alt_occ = rounded(100.0 * (lead["confirmed"] + k) / lead["bookable"])
+        if_paid.update(window_days=lead["days"], occupancy_pct=alt_occ,
+                       as_shown_pct=lead["occupancy_pct"], market_pct=lead["market_occupancy_pct"])
+        if lead["market_occupancy_pct"] is not None:
+            alt_wheel = flywheel.apply_pace(copy.deepcopy(pre_pace_wheel), alt_occ,
+                                            lead["market_occupancy_pct"], lead["days"])
+            shown, alt = _visibility_verdict(wheel), _visibility_verdict(alt_wheel)
+            if shown != alt:
+                if_paid.update(funnel=alt, funnel_as_shown=shown)
+    alt_min = min_price_for(alt_rows)
+    if (alt_min["action"], alt_min["recommended"]) != (min_price["action"], min_price["recommended"]):
+        if_paid["min_price"] = {"action": alt_min["action"], "recommended": alt_min["recommended"],
+                                "pace": alt_min["pace"], "as_shown_action": min_price["action"],
+                                "as_shown_recommended": min_price["recommended"]}
+    return {
+        "stays": [{"code": s.get("code") or s["id"], "platform": s.get("platform"),
+                   "check_in": s["check_in"], "check_out": s["check_out"], "nights": s["nights"],
+                   "nights_in_window": len(s["dates"])} for s in ask],
+        "nights_in_window": len(paid_dates),
+        "if_paid": if_paid,
+    }
 
 
 def build(pms, listing, prices, market, overrides, rules, funnel, rankings, context, as_of,
@@ -655,6 +704,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
     # A funnel dip against similar listings is only a break when bookings trail the market too
     # (flywheel.apply_pace; Ryan 2026-09-26). The 30-night window is the card's lead window.
     lead = next((w for w in rollups if w["days"] == 30), None)
+    pre_pace_wheel = copy.deepcopy(wheel)
     if lead:
         wheel = flywheel.apply_pace(wheel, lead["occupancy_pct"], lead["market_occupancy_pct"], 30)
     months = []
@@ -677,10 +727,14 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
                 "matched_open_p90": average(r["p90"] for r in opened),
             }
         )
-    min_price = min_price_recommendation(
-        bounds, rows, multiplier, max_delta,
-        **({"comp_p25": (comps_ref or {}).get("adr_p25"),
-            "comp_source": (comps_ref or {}).get("source")} if beyond else {}))
+    def min_price_for(day_rows):
+        return min_price_recommendation(
+            bounds, day_rows, multiplier, max_delta,
+            **({"comp_p25": (comps_ref or {}).get("adr_p25"),
+                "comp_source": (comps_ref or {}).get("source")} if beyond else {}))
+    min_price = min_price_for(rows)
+    zero_question = zero_value_question(pms.get("zero_value_stays") or [], rows, lead,
+                                        pre_pace_wheel, wheel, min_price, min_price_for)
     result = {
         # D12: "degraded" is a real top-level state. It prices, and it says what it
         # priced without. It is not "blocked" and it is not silently "analysable".
@@ -699,6 +753,7 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         "bounds": bounds,
         "movement_scrutiny_pct": rounded(max_delta * 100, 1),
         "min_price": min_price,
+        "zero_value_question": zero_question,
         "flywheel": wheel,
         "visibility": {
             "month": funnel.get("current_month"),
@@ -931,6 +986,47 @@ def render_rules_first(pack, beyond):
     return lines
 
 
+def render_zero_value_question(q, currency=None):
+    """Top-of-card question for $0 bookings (see zero_value_question). Asked, never assumed."""
+    if not q:
+        return []
+    stays = q["stays"]
+    one = len(stays) == 1
+    lines = [f"QUESTION FOR THE HOST, $0 BOOKING{'' if one else 'S'} (ask before acting on pace, funnel "
+             "or min price):"]
+    for s in stays:
+        where = f" ({s['platform']})" if s.get("platform") else ""
+        inside = ("" if s["nights_in_window"] == s["nights"]
+                  else f", {s['nights_in_window']} of them in this window")
+        lines.append(f"  - {s['code']}{where}: {s['check_in']} to {s['check_out']}, {s['nights']} "
+                     f"night(s){inside}, $0 accommodation in the PMS.")
+    lines.append(f"  Was {'it' if one else 'each one'} paid outside the PMS (Stripe, e-transfer, cash), or "
+                 "an owner, friends or comp stay? Until the host answers, "
+                 f"{'its' if one else 'their'} {q['nights_in_window']} night(s) count as a $0 stay: "
+                 "not booked, not open, no revenue.")
+    p = q["if_paid"]
+    parts = []
+    if p.get("occupancy_pct") is not None and p["occupancy_pct"] != p["as_shown_pct"]:
+        mkt = f" vs the market's {p['market_pct']:g}%" if p.get("market_pct") is not None else ""
+        parts.append(f"next {p['window_days']} nights {p['occupancy_pct']:g}% booked{mkt} "
+                     f"(as shown: {p['as_shown_pct']:g}%)")
+    if p.get("funnel"):
+        parts.append(f"funnel verdict {p['funnel']} (as shown: {p['funnel_as_shown']})")
+    if p.get("min_price"):
+        m = p["min_price"]
+        verb = {"lower": "lower to", "raise": "raise to", "keep": "keep at"}
+        parts.append(f"min price {verb[m['action']]} {m['recommended']:g} (as shown: "
+                     f"{verb[m['as_shown_action']]} {m['as_shown_recommended']:g})")
+    if parts:
+        paid = "it was" if one else "they were all"
+        lines.append(f"  If {paid} paid: " + "; ".join(parts) + ". Revenue figures still leave out "
+                     "the amount paid outside the PMS.")
+    else:
+        lines.append("  Paid or not, the next-30-night pace, funnel verdict and min price below do not "
+                     "change.")
+    return lines
+
+
 def render(pack, run_id, metrics):
     if "windows" not in pack:
         return (
@@ -975,6 +1071,7 @@ def render(pack, run_id, metrics):
             f"dates only: {dates}. The PMS still shows PriceLabs' previous price. If a rerun after "
             "the next PriceLabs sync still shows this, check the PriceLabs to PMS connection."
         )
+    lines.extend(render_zero_value_question(pack.get("zero_value_question"), pack.get("currency")))
     lines += [
         f"Run {run_id}. Bounds min/base/max: {pack['bounds']['min']:g}/"
         f"{pack['bounds']['base']:g}/{ceiling}. "
