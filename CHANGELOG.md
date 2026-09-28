@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.0.4
+
+- **One link does the whole setup, on Mac and Windows.** "Set this up" now checks the tools
+  first (Git, Node.js, uv, Python 3.13) and installs any that are missing from inside the
+  desktop app (`install-tools.sh`, the same installer the connections kit ships), then finds
+  the connections kit you unzipped the week before the summit, runs its scoreboard and repairs
+  a red PMS, pricing or Supabase row before installing the plugin. It used to stop and send
+  you back to the kit.
+- **Finds Claude Code's own command** inside the desktop app on Windows and Mac, and installs
+  the command-line copy itself if there is none.
+- Installing twice is fine: the plugin source and the plugin are updated, not refused.
+
 ## 5.0.3
 
 - **Windows works on the first run.** Every command now starts with

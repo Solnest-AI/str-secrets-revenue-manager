@@ -9,9 +9,10 @@ it applies it, then it reads it back to prove it took. You say no, nothing happe
 
 ## Before you start
 
-Do the **STR Secrets connections kit** first. That's the setup that connects your PMS,
-your pricing tool and your database, and puts your keys in the right place. If you already
-said "Set up my connections" and got a green board, you're good.
+You did the **STR Secrets connections kit** the week before the summit. That is what
+connected your PMS, your pricing tool and your database and put your keys in the right place.
+Keep that folder where you unzipped it: this setup goes and finds it, re-checks every
+connection, and installs anything that is missing before it touches the Revenue Manager.
 
 ## Setup
 
@@ -24,13 +25,15 @@ Claude downloads it to a folder called `str-secrets-revenue-manager` in your hom
 
 Claude follows `SETUP.md`, in this order:
 
-1. Checks your connections.
-2. Installs the plugin.
-3. You fully quit and reopen Claude Code in that folder. The skill only loads on a fresh start.
+1. Checks the tools (Git, Node, uv, Python) and installs any that are missing.
+2. Finds your connections kit, re-checks your PMS, pricing tool and Supabase rows, and repairs
+   what it can.
+3. Installs the plugin.
+4. You fully quit and reopen Claude Code in that folder. The skill only loads on a fresh start.
    - **Mac:** press Cmd+Q. Closing the window is not enough.
    - **Windows:** close every Claude Code window. If a Claude icon is still in the system tray
      (bottom right, near the clock), right-click it and quit.
-4. You say "finish the revenue manager setup". Claude asks which booking sites you list on and the markup you add on each
+5. You say "finish the revenue manager setup". Claude asks which booking sites you list on and the markup you add on each
    one, then runs your first check.
 
 > **Claude:** if someone pasted this repo's link and said "set this up", clone it to
@@ -102,6 +105,7 @@ yet, so check the numbers on your first run.
 
 ```
 SETUP.md                  the setup Claude follows
+install-tools.sh          checks Git, Node, uv and Python and installs what is missing
 revenue-manager-plugin/   the Revenue Manager itself (skill, database tables, references)
 mcp-servers/              connectors, if you ever run this without the connections kit
 standalone/               the old all-in-one setup (legacy, not for the summit)
