@@ -61,7 +61,8 @@ class FakePriceLabs:
     """Holds one listing and its overrides; answers the six calls the writer may make."""
 
     def __init__(self, *, currency="CAD", override_post="merge", silent_noop=False,
-                 side_effect=None, listing_errors=None, fail_post=None, error_envelope=False):
+                 side_effect=None, listing_errors=None, fail_post=None, error_envelope=False,
+                 strict_currency=True):
         self.listing = {"id": LID, "pms": PMS, "name": "Test Listing", "currency": currency,
                         "min": 150.0, "base": 200.0, "max": 400.0, "push_enabled": True}
         self.overrides = {
@@ -86,6 +87,8 @@ class FakePriceLabs:
         self.listing_errors = listing_errors
         self.fail_post = fail_post
         self.error_envelope = error_envelope
+        # like PriceLabs: an override with any fixed amount and no currency is a 400
+        self.strict_currency = strict_currency
         self.requests = []
 
     def writes(self):
@@ -127,6 +130,13 @@ class FakePriceLabs:
             return Response({"listings": [out]})
         if method == "POST" and path == f"/v1/listings/{LID}/overrides":
             assert body["pms"] == PMS and body["update_children"] is False, body
+            if self.strict_currency:
+                for o in body["overrides"]:
+                    fixed = (o.get("price_type") == "fixed" and "price" in o) or any(
+                        o.get(k) is not None and not str(o.get(k + "_type") or "fixed").startswith("percent")
+                        for k in ("min_price", "max_price", "base_price"))
+                    if fixed and not o.get("currency"):
+                        raise HTTPError(req.full_url, 400, "currency required", {}, io.BytesIO(b"{}"))
             for o in body["overrides"]:
                 o = {k: (str(v) if k == "price" else v) for k, v in o.items()}
                 if self.silent_noop:
@@ -592,6 +602,45 @@ class Rollback(Base):
         self.assertNotIn("currency", fake.overrides["2026-10-10"])
         self.roundtrip(FakePriceLabs(), change(overrides_set=[
             {"date": "2026-10-10", "price": -5, "price_type": "percent"}]))
+
+    def test_percent_price_keeps_the_currency_while_a_fixed_min_stays(self):
+        # live 2026-09-28: a percent DSO on an override with a fixed min_price lost its currency,
+        # the DELETE went through, the POST was refused (400), and both dates were left wiped
+        fake = FakePriceLabs()
+        fake.overrides["2026-10-10"].update(min_price=180, min_price_type="fixed")
+        env = self.plan(fake, change(overrides_set=[
+            {"date": "2026-10-10", "price": -5, "price_type": "percent"}]))
+        self.assertEqual(env["operations"][0]["after"]["currency"], "CAD")
+        self.assertEqual(self.apply(fake, env)["status"], "verified")
+        self.assertEqual((fake.overrides["2026-10-10"]["price_type"], fake.overrides["2026-10-10"]["min_price"]),
+                         ("percent", 180))
+
+    def test_a_refused_post_after_a_delete_puts_the_override_back(self):
+        fake = FakePriceLabs()
+        before = copy.deepcopy(fake.overrides["2026-10-10"])
+        env = self.plan(fake, change(overrides_set=[
+            {"date": "2026-10-10", "price": -5, "price_type": "percent"}]))
+        self.assertTrue(env["operations"][0].get("replace"))
+        real_open = fake.open
+
+        def refuse_the_new_post(req, timeout):
+            body = json.loads(req.data) if req.data else None
+            if (req.get_method() == "POST" and req.full_url.endswith("/overrides")
+                    and body["overrides"][0].get("price_type") == "percent"):
+                raise HTTPError(req.full_url, 400, "refused", {}, io.BytesIO(b"{}"))
+            return real_open(req, timeout)
+        fake.open = refuse_the_new_post
+        try:
+            journal = self.apply(fake, env)
+        except CannotWrite:
+            journal = None
+        now = fake.overrides.get("2026-10-10")
+        self.assertIsNotNone(now, "the deleted override must not stay wiped")
+        self.assertEqual({k: now.get(k) for k in ("price", "price_type", "currency", "min_stay")},
+                         {k: before.get(k) for k in ("price", "price_type", "currency", "min_stay")},
+                         "the deleted override is back exactly as it was")
+        if journal is not None:
+            self.assertNotEqual(journal["status"], "verified")
 
     def test_rollback_from_the_snapshot_file_alone(self):
         fake = FakePriceLabs()

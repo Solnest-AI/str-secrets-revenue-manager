@@ -631,6 +631,18 @@ def _same(field: str, a, b) -> bool:
     return a == b
 
 
+def _needs_currency(override: dict) -> bool:
+    """PriceLabs refuses an override (HTTP 400) that carries any FIXED amount without a currency:
+    a fixed price, or a min/max/base price whose type is fixed (absent type means fixed). Live
+    2026-09-28: a percent price on an override that kept a fixed min_price lost its currency,
+    and the re-POST was refused after the DELETE had gone through."""
+    if override.get("price_type") == "fixed" and "price" in override:
+        return True
+    return any(override.get(k) is not None
+               and not str(override.get(k + "_type") or "fixed").lower().startswith("percent")
+               for k in ("min_price", "max_price", "base_price"))
+
+
 def _same_override(a, b) -> list:
     """The fields on which two override objects differ (None = no override)."""
     if a is None or b is None:
@@ -790,8 +802,16 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
             else:
                 if not PCT_RANGE[0] <= price <= PCT_RANGE[1]:
                     raise CannotWrite(f"{d} percent must be between -75 and 1000")
-                after.pop("currency", None)
             after["price"], after["price_type"] = _price_str(price), ptype
+            # The currency goes only when nothing fixed is left on the override; a fixed
+            # min/max/base price still needs it, or PriceLabs refuses the whole POST.
+            if _needs_currency(after):
+                if not currency:
+                    raise CannotWrite("The listing has no currency; this override keeps a fixed "
+                                      "amount, which needs one that exactly matches the PMS")
+                after["currency"] = currency
+            else:
+                after.pop("currency", None)
             if ptype == "fixed" and float(after["price"]) <= 0:  # after rounding, like the listing
                 raise CannotWrite(f"{d} fixed price must be above zero")
         if "min_stay" in item:
@@ -1257,8 +1277,26 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
             sets = [op["after"] for op in over_ops if op["after"]]
             if sets:
                 journal["sent"].append({"call": "POST overrides", "dates": [o["date"] for o in sets]})
-                live.client.request("POST", f"/v1/listings/{quote(live.lid)}/overrides",
-                                    body={"pms": live.pms, "update_children": False, "overrides": sets})
+                try:
+                    live.client.request("POST", f"/v1/listings/{quote(live.lid)}/overrides",
+                                        body={"pms": live.pms, "update_children": False, "overrides": sets})
+                except Exception:
+                    # A replace is DELETE then POST. If the POST is refused, the dates it deleted
+                    # must not stay wiped: put each back exactly as it was, then report the failure.
+                    back = [op["before"] for op in over_ops if op.get("replace") and op["before"]]
+                    if back:
+                        journal["sent"].append({"call": "POST overrides (put back after a refused write)",
+                                                "dates": [o["date"] for o in back]})
+                        try:
+                            live.client.request(
+                                "POST", f"/v1/listings/{quote(live.lid)}/overrides",
+                                body={"pms": live.pms, "update_children": False,
+                                      "overrides": [{k: v for k, v in o.items() if k in OVERRIDE_POSTABLE}
+                                                    for o in back]})
+                            journal["put_back"] = "ok"
+                        except Exception:  # noqa: BLE001 - the re-read below reports what is live
+                            journal["put_back"] = "failed"
+                    raise
         except CannotWrite as exc:
             send_error = str(exc)
         except Exception as exc:  # noqa: BLE001 - after a send nothing may escape unjournalled

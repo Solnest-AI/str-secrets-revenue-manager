@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.0.6
+
+- **A percent date override no longer wipes the date.** Changing an override to a percent price
+  dropped its currency even when it kept a fixed min price; PriceLabs refused the re-post (HTTP 400)
+  after the old override had been deleted, and the date was left with none (live 2026-09-28, two
+  dates). The currency now stays while any fixed amount stays, and if PriceLabs ever refuses the
+  re-post, the writer puts every deleted override back exactly as it was before reporting the failure.
+
 ## 5.0.5
 
 - **Every card opens with the flywheel, in plain English.** Six rows (Visibility, Views,
