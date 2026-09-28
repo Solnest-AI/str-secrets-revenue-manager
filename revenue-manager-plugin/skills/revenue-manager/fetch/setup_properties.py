@@ -440,6 +440,9 @@ def main(argv=None) -> int:
     ap.add_argument("--markup-for", action="append", default=[],
                     help='one property\'s markup when it differs: "<property id or exact name>:<channel>=<percent>" (repeat)')
     ap.add_argument("--dry-run", action="store_true", help="show the rows; write nothing")
+    ap.add_argument("--list-sites", action="store_true",
+                    help="print the booking sites the PMS reports for each property and stop; no markups "
+                         "needed, nothing written. Run this first, then ask only for the markup on each site")
     ap.add_argument("--min-price", action="append", default=[],
                     help='operator floor per property: "<property id or exact name>=<amount>" (repeat)')
     ap.add_argument("--pricing", "--pricing-tool", dest="pricing", choices=("auto", "pricelabs", "beyond"),
@@ -457,7 +460,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     store = None
     try:
-        markups = parse_markups(args.markup)
+        markups = {} if args.list_sites else parse_markups(args.markup)
         per_property = parse_property_markups(args.markup_for)
         airbnb_choice = parse_airbnb_choices(args.airbnb_for)
         min_prices = parse_min_prices(args.min_price)
@@ -496,6 +499,21 @@ def main(argv=None) -> int:
         pl_names = sources.pricelabs_inventory() if has_pricelabs else {}
         beyond_rows = BeyondSource(client, connections).listings() if maps_beyond else []
         props = [p for p in inventory if p.get("listed") is not False]
+        if args.list_sites:
+            # The sites are the PMS's to report, not the operator's to remember: with this list
+            # the only question left is the markup on each one (direct is always there).
+            print(f"{label}: {len(props)} listed propert{'y' if len(props) == 1 else 'ies'}.")
+            portfolio = set()
+            for p in props:
+                sites = listed_channels(p)
+                portfolio |= sites
+                print(f"  {p.get('name') or p['id']}: {', '.join(sorted(sites)) or 'no sites reported'}")
+            if portfolio:
+                print(f"Booking sites across the portfolio: {', '.join(sorted(portfolio))}, plus direct "
+                      "(every property). Ask for the markup on each of these, nothing else.")
+            else:
+                print(f"{label} does not report booking sites; ask which ones they list on, and the markup on each.")
+            return 0
         floors = match_min_prices(min_prices, props)
         overrides = match_property_markups(per_property, props)
         chosen_airbnb = {one_property(who, props, "--airbnb-for"): room for who, room in airbnb_choice.items()}

@@ -117,11 +117,18 @@ Claude: if someone says "finish the revenue manager setup", start here. First co
 skill loaded (the `revenue-manager` skill is in your skill list). If it is not, the restart
 did not happen: ask for a full quit and reopen again, then continue.
 
-Ask the operator, in one message: **which booking sites are your properties on, and what
-markup do you add on each one?** (For example Airbnb 16%, VRBO 20%, Booking.com 18%.) Every
-OTA they list on needs its markup: they all matter equally, none is optional and none comes
-first. Also ask whether it is the same for every property; note any property that differs and
-its numbers. If they add a markup in two places (in the PMS and in the pricing tool), get both
+Do not ask which booking sites they are on: the PMS knows. Read them first (nothing is written):
+
+```bash
+uv run --with tzdata --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms <PMS> --list-sites
+```
+
+Then ask one question, naming exactly the sites it printed plus their direct site: **"What
+markup do you add on Airbnb, VRBO, Booking.com and your direct booking site?"** (For example
+Airbnb 16%, VRBO 20%, Booking.com 18%, direct 10%.) Every site named needs a number: they all
+matter equally, none is optional. If the PMS reports no sites (Lodgify, Smoobu, Uplisting),
+ask which sites they list on in the same breath. Also ask whether it is the same for every
+property; note any property that differs and its numbers. If they add a markup in two places (in the PMS and in the pricing tool), get both
 and store the combined figure, (1 + first) x (1 + second) - 1: 10% and 5% make 15.5%. Store
 exactly what they say. Never work it out from the calendar; a difference between the PMS and
 PriceLabs is not a markup.
