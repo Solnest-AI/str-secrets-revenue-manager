@@ -32,6 +32,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from _mvp_pms import normalize_calendar, normalize_property, normalize_reservation, normalize_review
 from _mvp_store import CannotAnalyze
+from _match import pick
 
 BASE = "https://api.ownerrez.com/v2"
 UA = "RevenueManager/1.0"
@@ -193,10 +194,9 @@ class OwnerRezSource:
     def property(self, selector):
         def load():
             rows, _ = self._paged("/properties", {})
-            hits = [r for r in rows if str(r.get("id")) == str(selector) or str(r.get("name", "")).casefold() == str(selector).casefold()]
-            if len(hits) != 1:
-                raise OwnerRezError("Property must match exactly one OwnerRez property by id or name")
-            p = self._detail(hits[0]["id"])
+            hit = pick(rows, selector, message="Property must match exactly one OwnerRez property by id or name",
+                       error=OwnerRezError)
+            p = self._detail(hit["id"])
             if p.get("listed") is False:
                 raise OwnerRezError("The selected OwnerRez property is inactive or snoozed")
             return p

@@ -38,6 +38,7 @@ from _mvp_store import CannotAnalyze
 from _pms_write_http import (
     CannotWrite, TargetHTTP, inclusive_dates, number, same_currency, validate_changes, whole,
 )
+from _match import pick
 
 HOST = "connect.uplisting.io"
 BASE = f"https://{HOST}"
@@ -181,13 +182,9 @@ class UplistingSource:
 
     def property(self, selector):
         def load():
-            s = str(selector).casefold()
-            hits = [r for r in self._properties()
-                    if r["id"] == str(selector) or s in {str(r.get("name") or "").casefold(),
-                                                          str(r.get("public_name") or "").casefold()}]
-            if len(hits) != 1:
-                raise UplistingError("Property must match exactly one Uplisting property by id or name")
-            return hits[0]
+            return pick(self._properties(), selector, error=UplistingError,
+                        message="Property must match exactly one Uplisting property by id or name",
+                        names=lambda r: (r.get("name"), r.get("public_name")))
         return self.client.fetch("pms.property", [self.connections.account("uplisting"), selector], load)
 
     def _bookings(self, pid, start, days, max_pages=200):

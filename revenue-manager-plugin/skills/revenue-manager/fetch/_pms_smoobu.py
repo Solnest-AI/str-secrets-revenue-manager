@@ -50,6 +50,7 @@ from _mvp_store import CannotAnalyze
 from _pms_write_http import (
     CannotWrite, TargetHTTP, encode_query, inclusive_dates, number, same_currency, validate_changes, whole,
 )
+from _match import pick
 
 HOST = "login.smoobu.com"
 BASE = f"https://{HOST}"
@@ -237,12 +238,8 @@ class SmoobuSource:
 
     def property(self, selector):
         def load():
-            s = str(selector).casefold()
-            hits = [a for a in self._apartments()
-                    if str(a["id"]) == str(selector) or str(a.get("name") or "").casefold() == s]
-            if len(hits) != 1:
-                raise SmoobuError("Property must match exactly one Smoobu apartment by id or name")
-            return self._detail(hits[0])
+            return self._detail(pick(self._apartments(), selector, error=SmoobuError,
+                                     message="Property must match exactly one Smoobu apartment by id or name"))
         return self.client.fetch("pms.property", [self.connections.account("smoobu"), selector], load)
 
     def _bookings(self, pid, start, days, max_pages=200):

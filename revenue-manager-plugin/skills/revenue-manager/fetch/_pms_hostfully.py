@@ -35,6 +35,7 @@ from _mvp_store import CannotAnalyze
 from _pms_write_http import (
     CannotWrite, TargetHTTP, inclusive_dates, number, same_currency, validate_changes, whole,
 )
+from _match import pick
 
 HOST = "api.hostfully.com"
 PREFIX = "/api/v3.3"
@@ -222,10 +223,8 @@ class HostfullySource:
     def property(self, selector):
         def load():
             rows, _ = self._properties()
-            s = str(selector).casefold()
-            hits = [r for r in rows if r["id"] == str(selector) or str(r.get("name") or "").casefold() == s]
-            if len(hits) != 1:
-                raise HostfullyError("Property must match exactly one Hostfully property by uid or name")
+            hits = [pick(rows, selector, message="Property must match exactly one Hostfully property by uid or name",
+                         error=HostfullyError)]
             if hits[0].get("listed") is False:
                 raise HostfullyError("The selected Hostfully property is not active")
             return hits[0]

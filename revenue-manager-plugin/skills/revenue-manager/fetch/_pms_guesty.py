@@ -33,6 +33,7 @@ from pathlib import Path
 
 from _mvp_pms import normalize_calendar, normalize_property, normalize_reservation, normalize_review
 from _mvp_store import CannotAnalyze
+from _match import pick
 
 BASE = "https://open-api.guesty.com/v1"
 TOKEN_URL = "https://open-api.guesty.com/oauth2/token"
@@ -241,9 +242,8 @@ class GuestySource:
     def property(self, selector):
         def load():
             rows = self.inventory()["data"]
-            hits = [r for r in rows if r["id"] == selector or str(r.get("name", "")).casefold() == str(selector).casefold()]
-            if len(hits) != 1:
-                raise GuestyError("Property must match exactly one Guesty listing by id or name")
+            hits = [pick(rows, selector, message="Property must match exactly one Guesty listing by id or name",
+                         error=GuestyError)]
             if hits[0].get("listed") is False:
                 raise GuestyError("The selected Guesty listing is not active")
             return hits[0]

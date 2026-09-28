@@ -41,6 +41,7 @@ from _mvp_pms import normalize_calendar, normalize_property, normalize_reservati
 from _mvp_store import CannotAnalyze
 from _mvp_write import CannotWrite
 from _pms_target_kit import Transport, currency_code, validate_changes
+from _match import pick
 
 HOST = "api.lodgify.com"
 BASE = f"https://{HOST}"
@@ -246,12 +247,12 @@ class LodgifySource:
         def load():
             # Match on the property list first, then read ONE property's rooms (not every one).
             rows, _ = self._pages("/v2/properties", {}, 50)
-            want = str(selector).casefold()
-            hits = [r for r in rows if str(r.get("id")) == str(selector)
-                    or want in (str(r.get("internal_name") or r.get("name") or "").casefold(), str(r.get("name") or "").casefold())]
-            if len(hits) != 1 or _int(hits[0].get("id")) is None:
-                raise LodgifyError("Property must match exactly one Lodgify property by id or name")
-            return normalize_property(property_row(hits[0], self._room(hits[0]["id"])))
+            message = "Property must match exactly one Lodgify property by id or name"
+            hit = pick(rows, selector, message=message, error=LodgifyError,
+                       names=lambda r: (r.get("internal_name") or r.get("name"), r.get("name")))
+            if _int(hit.get("id")) is None:
+                raise LodgifyError(message)
+            return normalize_property(property_row(hit, self._room(hit["id"])))
         return self.client.fetch("pms.property", [self.connections.account("lodgify"), selector], load)
 
     def calendar(self, pid, start, days):

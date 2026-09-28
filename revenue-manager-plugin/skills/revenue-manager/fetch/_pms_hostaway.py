@@ -47,6 +47,7 @@ from _mvp_pms import normalize_calendar, normalize_property, normalize_reservati
 from _mvp_store import CannotAnalyze
 from _mvp_write import CannotWrite
 from _pms_target_kit import HTTPStatus, NoRedirect, Transport, currency_code, validate_changes
+from _match import pick
 
 HOST = "api.hostaway.com"
 BASE = f"https://{HOST}/v1"
@@ -324,9 +325,8 @@ class HostawaySource:
     def property(self, selector):
         def load():
             rows = self.inventory()["data"]
-            hits = [r for r in rows if r["id"] == str(selector) or str(r.get("name", "")).casefold() == str(selector).casefold()]
-            if len(hits) != 1:
-                raise HostawayError("Property must match exactly one Hostaway listing by id or name")
+            hits = [pick(rows, selector, message="Property must match exactly one Hostaway listing by id or name",
+                         error=HostawayError)]
             if hits[0].get("listed") is False:
                 raise HostawayError("The selected Hostaway listing is archived")
             return hits[0]

@@ -14,6 +14,7 @@ from _mvp_store import CannotAnalyze, identity
 from factcheck import neighborhood_base_percentiles, neighborhood_daily_from_raw
 from reduce_customizations import ALL_RULES, normalize_rules
 from reduce_prices import payload_matches, split_payload
+from _match import pick
 
 # RankBreeze pulls daily; its own guidance is to read yesterday, and after the UTC rollover the
 # run starts tomorrow, so the newest usable pull date can be up to 2 days before `start`.
@@ -102,14 +103,8 @@ class Sources:
                     raise CannotAnalyze("PMS returned another property")
             else:
                 inventory = self.pages("/properties", {"include": "listings"}, normalize_property)
-                matches = [
-                    x
-                    for x in inventory["data"]
-                    if str(x.get("name", "")).casefold() == selector.casefold()
-                ]
-                if len(matches) != 1:
-                    raise CannotAnalyze("Property name must match exactly one Hospitable property")
-                item = matches[0]
+                item = pick(inventory["data"], selector, ids=lambda x: (),
+                            message="Property name must match exactly one Hospitable property", error=CannotAnalyze)
             if item.get("listed") is False:
                 raise CannotAnalyze("The selected PMS property is not listed")
             return item
