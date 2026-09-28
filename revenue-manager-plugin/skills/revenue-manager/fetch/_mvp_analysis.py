@@ -1162,6 +1162,11 @@ def render(pack, run_id, metrics):
             f"only: {dates}. The PMS gives a price but no minimum stay there; set one in the PMS, "
             "then rerun.")
     lines.extend(render_zero_value_question(pack.get("zero_value_question"), pack.get("currency")))
+    # The FLYWHEEL block: where the listing stands at every stage, each number next to its
+    # benchmark, the first break named. After the safety warnings and the $0 question, which
+    # can change how the pace and funnel read; before everything else (Ryan, 2026-09-28).
+    import flywheel_brief
+    lines.extend([""] + flywheel_brief.render(pack) + [""])
     lines += [
         f"Run {run_id}. Bounds min/base/max: {pack['bounds']['min']:g}/"
         f"{pack['bounds']['base']:g}/{ceiling}. "

@@ -332,9 +332,16 @@ The framework is the *how* of a good recommendation; the safety layer is the gua
 
 **Visibility → Bookings → Reviews → Ranking → back to Visibility.** Better pricing → more bookings → more reviews → better ranking → more visibility → more bookings at higher rates.
 
-**The flywheel runs on EVERY call, all four spokes, in that order, before any pricing opinion.** Open every property card with one line per spoke:
+**The flywheel runs on EVERY call, all four spokes, in that order, before any pricing opinion.** The card prints a `FLYWHEEL: where this listing stands` block near the top: six rows (Visibility, Views, Bookings, Reviews, Ranking, Pacing), each with a verdict (✅ OK, ✅ AHEAD, ⚠️ BEHIND, ❌ NO DATA) and the listing's number next to its benchmark in plain words, then a `Where it breaks:` line. Open every property block for the operator with that FLYWHEEL block, all its lines, as the card prints them:
 ```
-Flywheel:  Visibility ✅ RankBreeze | Bookings ✅ PMS calendar | Reviews ✅ PMS | Ranking ⚠️ not available (no ranking tool)
+FLYWHEEL: where this listing stands (Visibility > Bookings > Reviews > Ranking)
+  ✅ OK      Visibility Seen in search 1,240 times vs 980 for similar listings. 3.1% of them click it vs 2.8%.
+  ✅ OK      Views      210 page views vs 190 for similar listings. Saved to a wishlist 14 times vs 11.
+  ⚠️ BEHIND  Bookings   Next 30 nights: 47% booked vs the market's 50.5%. 4.7% of lookers book vs 33.8% for similar listings.
+  ✅ OK      Reviews    4.9 stars across 15 reviews.
+  ✅ OK      Ranking    Shows on page 1 of search, best position 4.
+  ✅ AHEAD   Pacing     18 nights booked for the next 30 days vs 15 at this point last year. 3 new bookings in the last 7 days.
+  Where it breaks: Bookings. Guests look and save, but do not book. That points at price or the listing itself, not traffic.
 ```
 - **A missing spoke does NOT skip the listing.** Price it anyway and name the gap LOUDLY at the top: *"PRICED WITHOUT ranking data: no ranking tool connected."*
 - **The one exception is Bookings.** No PMS calendar → no dates to price → no price opinion for that listing; say which and why.
@@ -489,7 +496,7 @@ Include: gross revenue, ADR (cleared), occupancy, bookings, comp comparison, and
 Give every property the runner analysed its own block, in this order, taken from its card. A portfolio summary may come first, but it never replaces the blocks, and nothing in a block is dropped to save space.
 
 1. **Header:** name, currency and the card's status (`analysable` / `degraded` / `blocked`). A degraded or blocked card's gaps go right under it, first. A `QUESTION FOR THE HOST, $0 BOOKING` block goes next: ask it in plain words, naming each booking and its dates. Never assume the answer, and never call it missing revenue or an owner stay on your own. Until the host answers, the card's numbers stand as shown and each part that the card's `If it was paid` line changes says so. A DSO suggestion or rule change that line names (held by the booking guard, or opening up) depends on the answer: present it as conditional and do not ask to apply it until the host has answered. When the host answers, use that reading: paid outside the PMS means the `If it was paid` pace, funnel verdict, min price and changes, and revenue figures that leave out the amount; an owner, friends or comp stay means the card as shown.
-2. **Flywheel:** one line with all four spokes as the card prints them, in order: Visibility, Bookings, Reviews, Ranking (ok or BREAK and the number that shows it), then the card's diagnosis.
+2. **Flywheel:** the card's `FLYWHEEL: where this listing stands` block, every row and the `Where it breaks:` line, as printed (6.1). Never summarise it into one line or drop a row.
 3. **Data:** how old the PriceLabs numbers are (a `STALE PRICELABS DATA` warning goes first), the comp count N, the markups line with the channel the market comparison used, and the card's `History` line (3.1).
 4. **Min price:** the card's `Recommended min price` line with its number, even when it says keep.
 5. **Next 30 days:** occupancy vs the market, and the open Airbnb price vs the matched p50/p90, from the card's table. That is the ask side. The runner does not print a realized (cleared) ADR yet: say so if asked, and never work one out by hand.
