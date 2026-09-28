@@ -1,5 +1,38 @@
 # Changelog
 
+## 5.0.3
+
+- **Windows works on the first run.** Every command now starts with
+  `uv run --with tzdata --python 3.13 python`: Windows has no timezone database of its own,
+  and without it every property card blocked with "PMS property timezone is missing or
+  unreadable" (one code path quietly read the property as UTC first). A missing database is
+  now named as the cause. Setup closes its workbench file (Windows cannot delete an open
+  file), and the repo checks out with Unix line endings so the scripts run in Git Bash.
+- **A property name no longer has to be exact.** "apres arcade" finds "The Après Arcade":
+  accents, capitals, punctuation and a leading "The" are ignored, an exact name still wins,
+  and a miss lists the closest names instead of just refusing.
+- **Numbers that were wrong or missing on the card.** PriceLabs' "-1.0" no-data marker could
+  print as a real RevPAR; one cancelled booking in another currency refused the whole
+  reservations pull (the check now covers live bookings only); on Beyond a $0 price was
+  silently replaced by the current price instead of being flagged.
+- **PMS fixes.** Hostaway's own "unknown" booking status was filed as declined; Smoobu never
+  asked for cancelled bookings; an Uplisting booking without its own currency now uses the
+  property's; OwnerRez's Booking.com listing id was dropped by a spelling mismatch; a Lodgify
+  multi-room property is refused for bookings the way it already was for its calendar; Guesty
+  counts as connected only with both its id and secret; the Hospitable card no longer says
+  "first live write" (it was written live on 2026-09-25).
+- **Undo is safer.** A day-of-week rule undo was refused when PriceLabs omitted unset days
+  from the saved rule, and that refusal blocked the whole rollback; the missing days are now
+  filled with 0, as the write path already did. Every writer leaves a `.sending.json` marker
+  before a send and removes it once the journal is written, so a crash mid-send leaves a trace.
+- **The PriceLabs MCP server's delete-overrides tool needs `confirm: true`** and refuses
+  otherwise; set-overrides already never cascades to child listings.
+- **The Excel report writes percentages as numbers**, formatted 0%, so the columns sort and
+  sum; they were text before.
+- Under the hood: one MCP transport for RankBreeze and IntelliHost (three drifted copies
+  before; `initialize` now once per session), one sentinel set for the reducers and the fact
+  check, and the workbench and reducer caches share one root.
+
 ## 5.0.2
 
 - **Every OTA needs its markup, and none is special.** Setup used to require only the Airbnb
