@@ -224,20 +224,23 @@ class Onboarding(unittest.TestCase):
     def test_every_listed_ota_with_a_markup_writes_them_all(self):
         code, sql, out, err, _ = self.run_setup("guesty", self.GUESTY, channels=("airbnb2", "homeaway2"),
                                                 markup_args=("--markup", "airbnb=16", "--markup", "HomeAway=20"))
-        self.assertEqual(code, 0, err)
+        # no pricing tool is connected here: rows are saved, nothing can be priced (exit 3)
+        self.assertEqual(code, 3, err)
         self.assertEqual(self.row_from(sql)["settings"]["channel_markup_pct"], {"airbnb": 16.0, "vrbo": 20.0})
         self.assertIn("Markups airbnb 16%, vrbo 20%", out)
 
     def test_a_property_not_on_airbnb_sets_up_without_an_airbnb_markup(self):
         code, sql, out, err, _ = self.run_setup("guesty", self.GUESTY, channels=("homeaway2",),
                                                 markup_args=("--markup", "vrbo=20"))
-        self.assertEqual(code, 0, err)
+        # no pricing tool is connected here: rows are saved, nothing can be priced (exit 3)
+        self.assertEqual(code, 3, err)
         self.assertEqual(self.row_from(sql)["settings"]["channel_markup_pct"], {"vrbo": 20.0})
 
     def test_per_property_markup_overrides_the_portfolio_one(self):
         code, sql, out, err, _ = self.run_setup("guesty", self.GUESTY, channels=("airbnb2",),
                                                 markup_args=("--markup", "airbnb=16", "--markup-for", "Lake House:airbnb=22"))
-        self.assertEqual(code, 0, err)
+        # no pricing tool is connected here: rows are saved, nothing can be priced (exit 3)
+        self.assertEqual(code, 3, err)
         self.assertEqual(self.row_from(sql)["settings"]["channel_markup_pct"], {"airbnb": 22.0})
 
     @staticmethod
@@ -326,11 +329,13 @@ class Onboarding(unittest.TestCase):
 
     def test_no_pricelabs_is_a_named_gap_not_a_hard_stop(self):
         code, sql, out, err, fake = self.run_setup("guesty", {"GUESTY_CLIENT_ID": "cid", "GUESTY_CLIENT_SECRET": "s"})
-        self.assertEqual(code, 0, err)
+        # no pricing tool is connected here: rows are saved, nothing can be priced (exit 3)
+        self.assertEqual(code, 3, err)
         row = self.row_from(sql)
         self.assertNotIn("pricelabs_listing_id", row["settings"])
         self.assertIn("PriceLabs", row["settings"]["pricing_gap"])
         self.assertIn("PriceLabs", out)
+        self.assertIn("NOTHING TO PRICE", out)
         with self.assertRaisesRegex(CannotAnalyze, "PriceLabs"):
             self.analyze_branch(row, "guesty")
 

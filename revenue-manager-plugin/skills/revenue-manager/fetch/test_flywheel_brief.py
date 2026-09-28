@@ -115,6 +115,12 @@ class Wording(unittest.TestCase):
         self.assertEqual(by["Pacing"][1], "❌ NO DATA")
         self.assertIn("2 bookings in the PMS carry no status history", by["Pacing"][2])
 
+    def test_pickup_is_a_floor_when_creation_times_are_missing(self):
+        p = pack(stages=HEALTHY)
+        p["pms"]["pickup"]["last_7d"]["creation_timestamps_complete"] = False
+        by = {r[0]: r for r in fb.rows(p)}
+        self.assertIn("at least 3 new bookings in the last 7 days", by["Pacing"][2])
+
     def test_one_night_is_singular_and_a_visibility_break_always_explains_itself(self):
         by = {r[0]: r for r in fb.rows(pack(stages=HEALTHY, cur=1, prior=0))}
         self.assertIn("1 night booked", by["Pacing"][2])

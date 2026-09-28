@@ -636,6 +636,12 @@ def _same(field: str, a, b) -> bool:
     return a == b
 
 
+def _refused(reply) -> bool:
+    """A PriceLabs reply that refuses the write even with HTTP 200: an `error`, an `error_code`,
+    or a non-empty `errors` list (Codex second pass, 2026-09-28)."""
+    return isinstance(reply, dict) and bool(reply.get("error") or reply.get("error_code") or reply.get("errors"))
+
+
 def _needs_currency(override: dict) -> bool:
     """PriceLabs refuses an override (HTTP 400) that carries any FIXED amount without a currency:
     a fixed price, or a min/max/base price whose type is fixed (absent type means fixed). Live
@@ -1287,7 +1293,7 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
                                                body={"pms": live.pms, "update_children": False,
                                                      "overrides": sets})
                     # PriceLabs can refuse with HTTP 200 and an error body; that is a refusal too.
-                    if isinstance(resp, dict) and (resp.get("error") or resp.get("error_code")):
+                    if _refused(resp):
                         raise CannotWrite("PriceLabs refused the override write")
                 except Exception:
                     # A replace is DELETE then POST. If the POST is refused, the dates it deleted
@@ -1306,7 +1312,7 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
                             try:
                                 reply = live.client.request(
                                     "POST", f"/v1/listings/{quote(live.lid)}/overrides", body=payload)
-                                if isinstance(reply, dict) and (reply.get("error") or reply.get("error_code")):
+                                if _refused(reply):
                                     raise CannotWrite("PriceLabs refused the put-back")
                                 journal["put_back"] = "ok"
                                 break

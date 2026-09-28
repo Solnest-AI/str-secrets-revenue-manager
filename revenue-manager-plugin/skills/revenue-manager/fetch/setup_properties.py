@@ -585,6 +585,7 @@ def main(argv=None) -> int:
                   "through Beyond instead.")
         tool_label = {"pricelabs": "PriceLabs", "beyond": "Beyond"}.get(pricing, "Pricing tool")
         from _mvp_analysis import OTA_ORDER
+        ready = 0
         for r in rows:
             s = r["settings"]
             mapped = has_pricelabs or "beyond_listing_id" in s
@@ -597,6 +598,7 @@ def main(argv=None) -> int:
                                     "cannot price it.")
             mark = (f"✅ ({r['match']})" if r.get("match") and mapped else "✅") if mapped else "— (gap)"
             # No PriceLabs or Beyond means the runner cannot price it (pricing_gap): ❌, never ✅.
+            ready += bool(mapped)
             print(f"  {'✅' if mapped else '❌'} {r['display_name']}: {tool_label} {mark}  "
                   f"RankBreeze {'✅' if 'rankbreeze_listing_id' in s else '—'}  "
                   f"IntelliHost {'✅' if 'intellihost_property_id' in s else '—'}  "
@@ -632,7 +634,12 @@ def main(argv=None) -> int:
             post_sql(project, token, f.read_text(encoding="utf-8-sig"))
         print(f"Tables ready ({len(migration_files())} migrations applied, all idempotent).")
         post_sql(project, token, upsert_statement(rows))
-        print(f"SETUP DONE: {len(rows)} propert{'y' if len(rows) == 1 else 'ies'} configured. "
+        if not ready:
+            # Saved, but nothing can be priced: never a green "set up" (Codex second pass).
+            print(f"NOTHING TO PRICE: {len(rows)} propert{'y' if len(rows) == 1 else 'ies'} saved, none can be "
+                  "priced here (each ❌ line above says why). Fix that, then run setup again.")
+            return 3
+        print(f"SETUP DONE: {len(rows)} propert{'y' if len(rows) == 1 else 'ies'} configured, {ready} ready to price. "
               f"Next: uv run --with tzdata --python 3.13 python fetch/analyze90.py --property \"Exact Property Name\"")
         return 0
     except (SetupError, CannotAnalyze, OSError) as exc:

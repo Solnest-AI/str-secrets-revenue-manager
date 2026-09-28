@@ -164,7 +164,7 @@ its own; see `references/beyond.md`); no live Beyond account has tested them yet
 
 **A named gap is not an error.** The card says it at the top and still prices. The ones the code names today: no reviews API (Lodgify, Uplisting, Smoobu: `PRICED WITHOUT reviews`); no check-in or check-out day rules (Lodgify, Smoobu: nights read as having none, check blocked arrival days by hand); no nightly prices at all (no-rates mode); a PMS/PriceLabs sync mismatch withholds only that date (the whole run blocks above 20% of open nights). One real refusal to know: Hospitable in a currency without two decimals (JPY, KRW, VND, KWD, BHD and the like) is blocked rather than shown 100x off. Details: `pms-and-tools.md` and the PMS's own file.
 
-Stacks the runner does not cover (Wheelhouse, or no PriceLabs/Beyond mapping) follow Steps 1 to 9 below with the connected tools.
+A property setup marked ❌ (Wheelhouse, no PriceLabs or Beyond listing, or only a direct-booking markup) cannot be priced here. Say so in one line with setup's reason and what would fix it (connect PriceLabs or Beyond and run setup again, or add a booking-site markup), and never run a pricing workflow for it by hand.
 
 ## Step 1: Autonomy rules
 

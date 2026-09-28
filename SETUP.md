@@ -97,7 +97,7 @@ of the plugin (the spring kit's, or one installed from another folder), adds thi
 the plugin source and installs from it. Running it twice is fine:
 
 ```bash
-CLAUDE_BIN="$(command -v claude 2>/dev/null)"; for c in "$HOME/.local/bin/claude" "$HOME/.local/bin/claude.exe"; do [ -z "$CLAUDE_BIN" ] && [ -x "$c" ] && CLAUDE_BIN="$c"; done; [ -z "$CLAUDE_BIN" ] && [ -n "${APPDATA:-}" ] && CLAUDE_BIN="$(ls -t "$APPDATA"/Claude/claude-code/*/claude.exe 2>/dev/null | head -1)"; [ -z "$CLAUDE_BIN" ] && CLAUDE_BIN="$(ls -t "$HOME/Library/Application Support/Claude/claude-code/"*/claude.app/Contents/MacOS/claude 2>/dev/null | head -1)"; if [ -z "$CLAUDE_BIN" ]; then echo "claude: NOT FOUND"; else for old in revenue-manager@solnest-revenue-manager revenue-manager@str-secrets-revenue-manager; do "$CLAUDE_BIN" plugin uninstall "$old" >/dev/null 2>&1; done; for m in solnest-revenue-manager str-secrets-revenue-manager; do "$CLAUDE_BIN" plugin marketplace remove "$m" >/dev/null 2>&1; done; "$CLAUDE_BIN" plugin marketplace add "$PWD" && "$CLAUDE_BIN" plugin install revenue-manager@str-secrets-revenue-manager && "$CLAUDE_BIN" plugin update revenue-manager@str-secrets-revenue-manager >/dev/null 2>&1; echo "plugin: $("$CLAUDE_BIN" plugin list 2>/dev/null | grep -A1 'revenue-manager@str-secrets' | grep Version)"; fi
+CLAUDE_BIN="$(command -v claude 2>/dev/null)"; for c in "$HOME/.local/bin/claude" "$HOME/.local/bin/claude.exe"; do [ -z "$CLAUDE_BIN" ] && [ -x "$c" ] && CLAUDE_BIN="$c"; done; [ -z "$CLAUDE_BIN" ] && [ -n "${APPDATA:-}" ] && CLAUDE_BIN="$(ls -t "$(cygpath -u "$APPDATA" 2>/dev/null || printf '%s' "$APPDATA")"/Claude/claude-code/*/claude.exe 2>/dev/null | head -1)"; [ -z "$CLAUDE_BIN" ] && CLAUDE_BIN="$(ls -t "$HOME/Library/Application Support/Claude/claude-code/"*/claude.app/Contents/MacOS/claude 2>/dev/null | head -1)"; if [ -z "$CLAUDE_BIN" ]; then echo "claude: NOT FOUND"; else for old in revenue-manager@solnest-revenue-manager revenue-manager@str-secrets-revenue-manager; do "$CLAUDE_BIN" plugin uninstall "$old" >/dev/null 2>&1; done; for m in solnest-revenue-manager str-secrets-revenue-manager; do "$CLAUDE_BIN" plugin marketplace remove "$m" >/dev/null 2>&1; done; "$CLAUDE_BIN" plugin marketplace add "$PWD" && "$CLAUDE_BIN" plugin install revenue-manager@str-secrets-revenue-manager && "$CLAUDE_BIN" plugin update revenue-manager@str-secrets-revenue-manager >/dev/null 2>&1; echo "plugin: $("$CLAUDE_BIN" plugin list 2>/dev/null | grep -A1 'revenue-manager@str-secrets' | grep Version)"; fi
 ```
 
 Two lines start with ✔ (the source, then the plugin) and the last line reads
@@ -208,8 +208,9 @@ listing, so it cannot be priced here"), and never offer one of them for the firs
 
 ## 4. Done: the green check, then the first run
 
-When the setup pass has run for real (not the dry run) and lists their properties, say, with
-the names it printed: "✅ **Revenue Manager is set up.** It mapped <N> properties: <names>."
+If the setup pass ends with `NOTHING TO PRICE`, there is no green check: say in plain words why
+each property cannot be priced (the ❌ lines), what fixes it, and stop. Otherwise, when it has run
+for real (not the dry run) and lists their properties, say, with the names it printed: "✅ **Revenue Manager is set up.** It mapped <N> properties: <names>."
 Name any ❌ property in one plain line with the reason it gave. Then ask:
 **"Want to run it on one of your properties now? Which one?"** (suggest the first ✅ property;
 never offer a ❌ one).

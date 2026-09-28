@@ -1,5 +1,18 @@
 # Changelog
 
+## 5.0.8
+
+From a second Codex review:
+
+- **A deleted override is put back after any refusal**: an HTTP error, an `error` or
+  `error_code` body, or an `errors` list. The put-back is retried three times (2 s, then 4 s)
+  before the card says the dates have no override and to undo right away.
+- **Setup never shows a green check when nothing can be priced.** It ends `NOTHING TO PRICE` with
+  the reason for each property; otherwise `SETUP DONE` says how many are ready to price.
+- **A property setup marked ❌ is never priced by hand**; the reason and the fix are said instead.
+- **Pickup says "at least"** when some bookings carry no creation time.
+- The Claude desktop app is found on Windows even when `%APPDATA%` is a Windows-style path.
+
 ## 5.0.7
 
 From a Codex review:

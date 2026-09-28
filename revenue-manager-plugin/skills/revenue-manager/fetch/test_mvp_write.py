@@ -642,6 +642,13 @@ class Rollback(Base):
         if journal is not None:
             self.assertNotEqual(journal["status"], "verified")
 
+    def test_every_refusal_body_counts_as_a_refusal(self):
+        import _mvp_write as W
+        for body in ({"error": "x"}, {"error_code": "ERR-X"}, {"errors": ["rejected"]}):
+            self.assertTrue(W._refused(body), body)
+        for body in ({"overrides": []}, {"errors": []}, None, []):
+            self.assertFalse(W._refused(body), body)
+
     def test_a_200_error_reply_after_a_delete_also_puts_the_override_back(self):
         # Codex review 2026-09-28: PriceLabs can refuse with HTTP 200 and an error body
         fake = FakePriceLabs()

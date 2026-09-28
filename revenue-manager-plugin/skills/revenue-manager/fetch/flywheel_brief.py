@@ -165,8 +165,12 @@ def rows(pack) -> list[tuple[str, str, str]]:
     lead = next((w for w in (pms.get("same_lead") or {}).get("windows") or [] if w.get("days") == 30), None)
     cur = _num(((lead or {}).get("current") or {}).get("reconstructed_accepted_nights"))
     prior = _num(((lead or {}).get("prior_same_calendar") or {}).get("reconstructed_accepted_nights"))
-    pick7 = ((pms.get("pickup") or {}).get("last_7d") or {}).get("confirmed_positive_value_bookings")
-    pickup = f" {pick7} new booking{'' if pick7 == 1 else 's'} in the last 7 days." if pick7 is not None else ""
+    last7 = (pms.get("pickup") or {}).get("last_7d") or {}
+    pick7 = last7.get("confirmed_positive_value_bookings")
+    # Some bookings carry no creation time, so the count is only a floor: say "at least".
+    floor = "at least " if last7.get("creation_timestamps_complete") is False else ""
+    pickup = (f" {floor}{pick7} new booking{'' if pick7 == 1 else 's'} in the last 7 days." if pick7 is not None
+              else "")
     unknown = sum(int(((lead or {}).get(side) or {}).get("unknown_status_records") or 0)
                   for side in ("current", "prior_same_calendar"))
     if cur is None or prior is None:
