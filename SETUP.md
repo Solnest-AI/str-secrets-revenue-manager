@@ -62,14 +62,22 @@ The kit checks a dozen tools for the other summit skills; none of those is this 
 business, so the command drops them and you never bring them up:
 
 ```bash
-cd "<kit>" && bash check-connections.sh 2>/dev/null | grep -E "(Hospitable|Guesty|OwnerRez|Hostaway|Lodgify|Uplisting|Smoobu|Hostfully|PriceLabs|Beyond) API|Supabase MCP|Supabase shared project|No \.env yet"
+cd "<kit>" && bash check-connections.sh 2>/dev/null | grep -E "(Hospitable|Guesty|OwnerRez|Hostaway|Lodgify|Uplisting|Smoobu|Hostfully|PriceLabs|Beyond) API|Supabase MCP|Supabase shared project|RankBreeze MCP|IntelliHost MCP|Turno API|Breezeway API|No \.env yet"
 ```
 
-Print those lines as they are. All of them ✅ (the PMS API row, the pricing API row, `Supabase
-MCP`, `Supabase shared project`) means the connections are good: go to step 2. Do not mention
-any other tool, key or row, on the board or off it (Kie, AirROI, Meta, Firecrawl, Gemini,
-RankBreeze, IntelliHost, Turno, Breezeway): the other summit skills set up their own, and a
-ranking or cleaning tool that is missing only shows as a named gap on a property card.
+Print those lines as they are, in two groups:
+
+- **Required**: the PMS API row, the pricing API row, `Supabase MCP`, `Supabase shared
+  project`. All four ✅ means the connections are good: go to step 2.
+- **Optional, used when present**: `RankBreeze MCP` or `IntelliHost MCP` (ranking and the
+  visibility funnel), `Turno API` or `Breezeway API` (cleaning). A ➖ or ❌ here is not a stop
+  and is not chased in this setup: say in one line what it means for them ("no ranking tool is
+  connected, so each card will say it priced without ranking; the connections kit adds one any
+  time") and move on.
+
+Do not mention any other tool, key or row, on the board or off it (Kie, AirROI, Meta,
+Firecrawl, Gemini): the other summit skills set those up, and the Revenue Manager never asks
+for them.
 
 A required row that is not ✅:
 
