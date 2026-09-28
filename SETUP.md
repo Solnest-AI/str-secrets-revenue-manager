@@ -86,16 +86,17 @@ A required row that is not ✅:
 ## 2. Install the plugin
 
 One block, run as written from this folder. It finds the `claude` command (on the PATH, in
-`~/.local/bin`, or inside the desktop app itself on Windows and Mac), removes the spring kit's
-older copy of the plugin if there is one, adds this folder as a plugin source and installs from
-it. Running it twice is fine:
+`~/.local/bin`, or inside the desktop app itself on Windows and Mac), removes any earlier copy
+of the plugin (the spring kit's, or one installed from another folder), adds this folder as
+the plugin source and installs from it. Running it twice is fine:
 
 ```bash
-CLAUDE_BIN="$(command -v claude 2>/dev/null)"; for c in "$HOME/.local/bin/claude" "$HOME/.local/bin/claude.exe"; do [ -z "$CLAUDE_BIN" ] && [ -x "$c" ] && CLAUDE_BIN="$c"; done; [ -z "$CLAUDE_BIN" ] && [ -n "${APPDATA:-}" ] && CLAUDE_BIN="$(ls -t "$APPDATA"/Claude/claude-code/*/claude.exe 2>/dev/null | head -1)"; [ -z "$CLAUDE_BIN" ] && CLAUDE_BIN="$(ls -t "$HOME/Library/Application Support/Claude/claude-code/"*/claude.app/Contents/MacOS/claude 2>/dev/null | head -1)"; if [ -z "$CLAUDE_BIN" ]; then echo "claude: NOT FOUND"; else "$CLAUDE_BIN" plugin uninstall revenue-manager@solnest-revenue-manager >/dev/null 2>&1; "$CLAUDE_BIN" plugin marketplace remove solnest-revenue-manager >/dev/null 2>&1; { "$CLAUDE_BIN" plugin marketplace add "$PWD" 2>/dev/null || "$CLAUDE_BIN" plugin marketplace update str-secrets-revenue-manager; } && { "$CLAUDE_BIN" plugin install revenue-manager@str-secrets-revenue-manager 2>/dev/null || true; } && "$CLAUDE_BIN" plugin update revenue-manager@str-secrets-revenue-manager; fi
+CLAUDE_BIN="$(command -v claude 2>/dev/null)"; for c in "$HOME/.local/bin/claude" "$HOME/.local/bin/claude.exe"; do [ -z "$CLAUDE_BIN" ] && [ -x "$c" ] && CLAUDE_BIN="$c"; done; [ -z "$CLAUDE_BIN" ] && [ -n "${APPDATA:-}" ] && CLAUDE_BIN="$(ls -t "$APPDATA"/Claude/claude-code/*/claude.exe 2>/dev/null | head -1)"; [ -z "$CLAUDE_BIN" ] && CLAUDE_BIN="$(ls -t "$HOME/Library/Application Support/Claude/claude-code/"*/claude.app/Contents/MacOS/claude 2>/dev/null | head -1)"; if [ -z "$CLAUDE_BIN" ]; then echo "claude: NOT FOUND"; else for old in revenue-manager@solnest-revenue-manager revenue-manager@str-secrets-revenue-manager; do "$CLAUDE_BIN" plugin uninstall "$old" >/dev/null 2>&1; done; for m in solnest-revenue-manager str-secrets-revenue-manager; do "$CLAUDE_BIN" plugin marketplace remove "$m" >/dev/null 2>&1; done; "$CLAUDE_BIN" plugin marketplace add "$PWD" && "$CLAUDE_BIN" plugin install revenue-manager@str-secrets-revenue-manager && "$CLAUDE_BIN" plugin update revenue-manager@str-secrets-revenue-manager >/dev/null 2>&1; echo "plugin: $("$CLAUDE_BIN" plugin list 2>/dev/null | grep -A1 'revenue-manager@str-secrets' | grep Version)"; fi
 ```
 
-The last line starts with ✔ when it worked (the update after the install is what records this
-folder's version, so a re-run after a newer download shows the new number).
+Two lines start with ✔ (the source, then the plugin) and the last line reads
+`plugin: Version: <this folder's VERSION>`. Anything else: read the error, fix that one thing,
+run the block again.
 
 `claude: NOT FOUND` means the command-line copy of Claude Code is not on this computer (the
 desktop app alone does not put it on the PATH). Install it, then run the block above again.
