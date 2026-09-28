@@ -57,21 +57,19 @@ git clone --quiet https://github.com/Solnest-AI/str-secrets-connections "$HOME/s
 Then follow `<kit>/CONNECTIONS.md` from its start (it says hello, asks four questions and
 connects everything) and come back to step 2 once its done message has printed.
 
-With the kit found, run its scoreboard and print the whole board:
+With the kit found, run its scoreboard, keeping only the rows the Revenue Manager runs on.
+The kit checks a dozen tools for the other summit skills; none of those is this skill's
+business, so the command drops them and you never bring them up:
 
 ```bash
-cd "<kit>" && bash check-connections.sh
+cd "<kit>" && bash check-connections.sh 2>/dev/null | grep -E "(Hospitable|Guesty|OwnerRez|Hostaway|Lodgify|Uplisting|Smoobu|Hostfully|PriceLabs|Beyond) API|Supabase MCP|Supabase shared project|No \.env yet"
 ```
 
-These rows must be ✅ before step 2:
-
-- the PMS API row (Hospitable, Guesty, OwnerRez, Hostaway, Lodgify, Uplisting, Smoobu or Hostfully)
-- the pricing API row (PriceLabs or Beyond)
-- `Supabase MCP` and `Supabase shared project`
-
-Everything else on the board is optional for the Revenue Manager (RankBreeze, IntelliHost,
-AirROI, Turno, Breezeway, Meta, Kie, Gemini, Firecrawl): a missing one is a named gap on each
-property card, never a stop. Do not chase those rows here.
+Print those lines as they are. All of them ✅ (the PMS API row, the pricing API row, `Supabase
+MCP`, `Supabase shared project`) means the connections are good: go to step 2. Do not mention
+any other tool, key or row, on the board or off it (Kie, AirROI, Meta, Firecrawl, Gemini,
+RankBreeze, IntelliHost, Turno, Breezeway): the other summit skills set up their own, and a
+ranking or cleaning tool that is missing only shows as a named gap on a property card.
 
 A required row that is not ✅:
 
