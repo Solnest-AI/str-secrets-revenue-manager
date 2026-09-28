@@ -167,8 +167,14 @@ def rows(pack) -> list[tuple[str, str, str]]:
     prior = _num(((lead or {}).get("prior_same_calendar") or {}).get("reconstructed_accepted_nights"))
     pick7 = ((pms.get("pickup") or {}).get("last_7d") or {}).get("confirmed_positive_value_bookings")
     pickup = f" {pick7} new booking{'' if pick7 == 1 else 's'} in the last 7 days." if pick7 is not None else ""
+    unknown = sum(int(((lead or {}).get(side) or {}).get("unknown_status_records") or 0)
+                  for side in ("current", "prior_same_calendar"))
     if cur is None or prior is None:
         out.append(("Pacing", VERDICT["NO DATA"], "no bookings on record for this time last year to compare." + pickup))
+    elif unknown:
+        out.append(("Pacing", VERDICT["NO DATA"],
+                    f"{unknown} booking{'' if unknown == 1 else 's'} in the PMS carry no status history, "
+                    "so when they were booked cannot be rebuilt; a count would be wrong." + pickup))
     elif prior == 0:
         out.append(("Pacing", VERDICT["NO DATA"], f"{_nights(cur)} booked for the next 30 days; nothing was on the books at this point last year, so there is no year to compare." + pickup))
     else:

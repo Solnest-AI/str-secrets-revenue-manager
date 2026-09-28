@@ -642,6 +642,31 @@ class Rollback(Base):
         if journal is not None:
             self.assertNotEqual(journal["status"], "verified")
 
+    def test_a_200_error_reply_after_a_delete_also_puts_the_override_back(self):
+        # Codex review 2026-09-28: PriceLabs can refuse with HTTP 200 and an error body
+        fake = FakePriceLabs()
+        before = copy.deepcopy(fake.overrides["2026-10-10"])
+        env = self.plan(fake, change(overrides_set=[
+            {"date": "2026-10-10", "price": -5, "price_type": "percent"}]))
+        real_open = fake.open
+
+        def error_body(req, timeout):
+            body = json.loads(req.data) if req.data else None
+            if (req.get_method() == "POST" and req.full_url.endswith("/overrides")
+                    and body["overrides"][0].get("price_type") == "percent"):
+                fake.requests.append(("POST", "error-body", body))
+                return Response({"error": "rejected"})
+            return real_open(req, timeout)
+        fake.open = error_body
+        try:
+            self.apply(fake, env)
+        except CannotWrite:
+            pass
+        now = fake.overrides.get("2026-10-10")
+        self.assertIsNotNone(now, "the deleted override must not stay wiped")
+        self.assertEqual((now.get("price"), now.get("price_type"), now.get("currency")),
+                         (before.get("price"), before.get("price_type"), before.get("currency")))
+
     def test_rollback_from_the_snapshot_file_alone(self):
         fake = FakePriceLabs()
         env = self.plan(fake, change(listing_prices={"min": 170}))

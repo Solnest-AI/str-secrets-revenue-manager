@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.0.7
+
+From a Codex review:
+
+- **An override write refused with HTTP 200 and an error body now also puts the deleted override
+  back**, like a 400 already did. If the put-back itself fails, the message says the dates have no
+  override and to undo the change right away.
+- **Pacing never prints a count it cannot trust.** When bookings in the PMS carry no status history
+  (some Guesty bookings), the row says so instead of showing 0 beside real bookings.
+- **Beyond uses the listing's own date for what is past**, not the later of two clocks; a computer a
+  day ahead of the listing refused valid nights.
+- **Setup says up front what cannot be priced**: a property with no PriceLabs or Beyond listing, or
+  with only a direct-booking markup, shows ❌ with the reason, and is never offered for the first run.
+
 ## 5.0.6
 
 - **A percent date override no longer wipes the date.** Changing an override to a percent price

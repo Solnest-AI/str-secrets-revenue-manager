@@ -107,6 +107,14 @@ class Wording(unittest.TestCase):
         self.assertEqual(by["Bookings"][1], "⚠️ BEHIND")
         self.assertNotIn("lookers", by["Bookings"][2])
 
+    def test_pacing_with_bookings_missing_their_status_history_is_no_data(self):
+        # Codex review 2026-09-28: a reconstruction with unknown statuses printed 0 beside real bookings
+        p = pack(stages=HEALTHY, cur=0, prior=5)
+        p["pms"]["same_lead"]["windows"][0]["current"]["unknown_status_records"] = 2
+        by = {r[0]: r for r in fb.rows(p)}
+        self.assertEqual(by["Pacing"][1], "❌ NO DATA")
+        self.assertIn("2 bookings in the PMS carry no status history", by["Pacing"][2])
+
     def test_one_night_is_singular_and_a_visibility_break_always_explains_itself(self):
         by = {r[0]: r for r in fb.rows(pack(stages=HEALTHY, cur=1, prior=0))}
         self.assertIn("1 night booked", by["Pacing"][2])

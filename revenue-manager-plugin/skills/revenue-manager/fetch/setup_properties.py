@@ -584,11 +584,20 @@ def main(argv=None) -> int:
             print("  Beyond is connected too; this setup maps PriceLabs. Run with --pricing beyond to price "
                   "through Beyond instead.")
         tool_label = {"pricelabs": "PriceLabs", "beyond": "Beyond"}.get(pricing, "Pricing tool")
+        from _mvp_analysis import OTA_ORDER
         for r in rows:
             s = r["settings"]
             mapped = has_pricelabs or "beyond_listing_id" in s
+            if not any(c in (s.get("channel_markup_pct") or {}) for c in OTA_ORDER):
+                # The market data is Airbnb-facing; with only a direct markup the card has no fair
+                # comparison and refuses. Say so here, not on the first run (Codex review 2026-09-28).
+                mapped = False
+                r["airbnb_note"] = ("Only a direct-booking markup: the market comparison needs the markup "
+                                    "on at least one booking site (Airbnb, VRBO, Booking.com), so the runner "
+                                    "cannot price it.")
             mark = (f"✅ ({r['match']})" if r.get("match") and mapped else "✅") if mapped else "— (gap)"
-            print(f"  {'✅' if mapped or not pricing else '❌'} {r['display_name']}: {tool_label} {mark}  "
+            # No PriceLabs or Beyond means the runner cannot price it (pricing_gap): ❌, never ✅.
+            print(f"  {'✅' if mapped else '❌'} {r['display_name']}: {tool_label} {mark}  "
                   f"RankBreeze {'✅' if 'rankbreeze_listing_id' in s else '—'}  "
                   f"IntelliHost {'✅' if 'intellihost_property_id' in s else '—'}  "
                   f"Airbnb id {'✅' if 'airbnb_listing_id' in s else '—'}  "

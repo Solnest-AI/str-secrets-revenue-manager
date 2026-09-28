@@ -287,13 +287,13 @@ def _stored_override(item, d) -> dict:
 
 
 def _listing_today(listing, now: datetime) -> date:
-    """Beyond rejects override dates already past in the LISTING's timezone. Use the later of
-    this machine's date and the listing's, so a plan never offers a date Beyond will refuse."""
-    today = date.today()
+    """Beyond rejects override dates already past in the LISTING's timezone, so that date decides.
+    (The later of this machine's date and the listing's refused a valid night whenever the
+    computer was a day ahead of the listing.) Unreadable timezone: this machine's date."""
     try:
-        return max(today, now.astimezone(resolve(listing.get("timezone"))).date())
+        return now.astimezone(resolve(listing.get("timezone"))).date()
     except (ValueError, KeyError, TypeError, OSError):
-        return today
+        return date.today()
 
 
 def seen_digest(listing) -> str:

@@ -1278,8 +1278,12 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
             if sets:
                 journal["sent"].append({"call": "POST overrides", "dates": [o["date"] for o in sets]})
                 try:
-                    live.client.request("POST", f"/v1/listings/{quote(live.lid)}/overrides",
-                                        body={"pms": live.pms, "update_children": False, "overrides": sets})
+                    resp = live.client.request("POST", f"/v1/listings/{quote(live.lid)}/overrides",
+                                               body={"pms": live.pms, "update_children": False,
+                                                     "overrides": sets})
+                    # PriceLabs can refuse with HTTP 200 and an error body; that is a refusal too.
+                    if isinstance(resp, dict) and (resp.get("error") or resp.get("error_code")):
+                        raise CannotWrite("PriceLabs refused the override write")
                 except Exception:
                     # A replace is DELETE then POST. If the POST is refused, the dates it deleted
                     # must not stay wiped: put each back exactly as it was, then report the failure.
@@ -1296,6 +1300,11 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
                             journal["put_back"] = "ok"
                         except Exception:  # noqa: BLE001 - the re-read below reports what is live
                             journal["put_back"] = "failed"
+                            raise CannotWrite(
+                                "PriceLabs refused the override write AND the put-back of the deleted "
+                                f"override(s) on {', '.join(o['date'] for o in back)} failed. Those dates "
+                                "have NO override now. Undo this change right away with its journal "
+                                "(apply_change.py rollback); it puts them back from the saved copy") from None
                     raise
         except CannotWrite as exc:
             send_error = str(exc)

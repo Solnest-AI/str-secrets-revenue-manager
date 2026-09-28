@@ -201,16 +201,18 @@ Bash). Don't swap in `python` or `python3`: on a fresh Windows machine that open
 Microsoft Store instead of Python, and `uv run` never touches it. Keep `--with tzdata` too: Windows has no timezone
 database of its own, and every card blocks without it.
 
-**Wheelhouse, or no pricing tool at all:** setup still maps the properties, and marks the
-pricing tool as a named gap. The skill asks for the markup on its first run and works from
-the connected tools directly.
+**Wheelhouse, or no pricing tool at all:** setup still maps the properties and marks each one
+`❌ no pricing tool`. The Revenue Manager prices through PriceLabs or Beyond, so it cannot price
+those properties yet. Say so plainly in step 4 ("<property> has no PriceLabs or Beyond
+listing, so it cannot be priced here"), and never offer one of them for the first run.
 
 ## 4. Done: the green check, then the first run
 
 When the setup pass has run for real (not the dry run) and lists their properties, say, with
 the names it printed: "✅ **Revenue Manager is set up.** It mapped <N> properties: <names>."
 Name any ❌ property in one plain line with the reason it gave. Then ask:
-**"Want to run it on one of your properties now? Which one?"** (suggest the first mapped one).
+**"Want to run it on one of your properties now? Which one?"** (suggest the first ✅ property;
+never offer a ❌ one).
 
 When they pick one, run it right here. Read `revenue-manager-plugin/skills/revenue-manager/SKILL.md`
 in this folder with your Read tool and follow it as if the skill had been called with "check my
