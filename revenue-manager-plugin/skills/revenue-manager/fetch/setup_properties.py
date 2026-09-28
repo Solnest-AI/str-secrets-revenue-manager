@@ -407,32 +407,12 @@ def post_sql(project: str, token: str, sql: str) -> None:
 
 def rankbreeze_listings(client: ReadClient, url: str) -> list:
     """Every RankBreeze listing, paged by cursor, through the runner's read-only transport."""
-    session, counter = None, 0
-
-    def rpc(method, params):
-        nonlocal session, counter
-        counter += 1
-        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
-        if session:
-            headers["Mcp-Session-Id"] = session
-        text, resp_headers = client.request("rankbreeze", "rpc", url, headers=headers, text=True,
-                                            body={"jsonrpc": "2.0", "id": counter, "method": method, "params": params})
-        session = next((v for k, v in resp_headers.items() if k.lower() == "mcp-session-id"), session)
-        if text.lstrip().startswith("{"):
-            result = json.loads(text)
-        else:
-            events = [json.loads(line[5:]) for line in text.splitlines() if line.startswith("data:")]
-            result = next((x for x in reversed(events) if x.get("id") == counter), {})
-        if result.get("error") or "result" not in result:
-            raise CannotAnalyze("RankBreeze RPC returned an error")
-        return result["result"]
-
-    rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
-                       "clientInfo": {"name": "revenue-manager-setup", "version": "1"}})
+    from _mcp_rpc import McpRpc
+    rpc = McpRpc(client, "rankbreeze", url, client_name="revenue-manager-setup", label="RankBreeze")
     out, cursor = [], None
     for _ in range(20):
         args = {"status": "all", "limit": 60, **({"cursor": cursor} if cursor else {})}
-        result = rpc("tools/call", {"name": "get_user_listings", "arguments": args})
+        result = rpc.tool("get_user_listings", args)
         texts = [x["text"] for x in result.get("content", []) if x.get("type") == "text"]
         if result.get("isError") or len(texts) != 1:
             raise CannotAnalyze("Unreadable RankBreeze listing inventory")
@@ -470,8 +450,10 @@ def main(argv=None) -> int:
                     help="auto (the one connected; required when two PMSs are connected), or one of: "
                          + ", ".join(PMS_SUPPORTED))
     ap.add_argument("--env-file", action="append", default=[])
-    default_cache = Path(os.environ.get("RC_CACHE_DIR", str(Path.home() / ".cache/revenue-manager")))
-    ap.add_argument("--db", type=Path, default=default_cache / "workbench.sqlite3")
+    from _cache import cache_dir
+    # One cache root for the workbench and every reducer's JSON cache (RC_CACHE_DIR, then
+    # XDG_CACHE_HOME, then ~/.cache); the two used to disagree when XDG_CACHE_HOME was set.
+    ap.add_argument("--db", type=Path, default=Path(cache_dir()) / "workbench.sqlite3")
     args = ap.parse_args(argv)
     store = None
     try:

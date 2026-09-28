@@ -33,3 +33,36 @@ test("set_overrides always sends update_children: false", async (t) => {
   assert.equal(sent.length, 1);
   assert.equal((sent[0] as { update_children: unknown }).update_children, false);
 });
+
+test("delete_overrides refuses without confirm: true and sends nothing", async (t) => {
+  process.env.PRICELABS_API_KEY = "test-only";
+  const http = getPriceLabs();
+  const previous = http.defaults.adapter;
+  const sent: unknown[] = [];
+  http.defaults.adapter = async (config) => {
+    sent.push(config);
+    return { data: {}, status: 204, statusText: "No Content", headers: {}, config };
+  };
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  registerOverrideTools(server);
+  const client = new Client({ name: "test-client", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    http.defaults.adapter = previous;
+    await client.close();
+    await server.close();
+  });
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  const refused = await client.callTool({
+    name: "pricelabs_delete_overrides",
+    arguments: { listing_id: "L1", pms: "smartbnb", overrides: [{ date: "2026-12-01" }], confirm: false },
+  });
+  assert.ok(refused.isError);
+  assert.equal(sent.length, 0);
+  const done = await client.callTool({
+    name: "pricelabs_delete_overrides",
+    arguments: { listing_id: "L1", pms: "smartbnb", overrides: [{ date: "2026-12-01" }], confirm: true },
+  });
+  assert.ok(!done.isError);
+  assert.equal(sent.length, 1);
+});

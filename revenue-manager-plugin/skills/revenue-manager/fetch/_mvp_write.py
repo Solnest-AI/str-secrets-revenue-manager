@@ -542,6 +542,14 @@ def plan_rules(change: dict, live: "Live", rollback: bool, warnings: list) -> tu
         before = block.get(rule)
         if not isinstance(before, dict) or not isinstance(cfg, dict):
             raise CannotWrite(f"{rule} cannot be put back: PriceLabs no longer returns it for this listing")
+        if rule == "day_of_week_adjustment":
+            # A live read omits unset days, so the saved rule can carry fewer than seven and
+            # validate() below wants all seven. Fill the absent days with 0 exactly as the set
+            # path does, or the whole rollback (DSOs included) is refused over a day nobody set.
+            try:
+                cfg = cw.merge_dow(cfg, {})
+            except ValueError as exc:
+                raise CannotWrite(f"{rule} cannot be put back: {exc}") from None
         payload = rule_payload(rule, cfg)
         if not rule_diff(rule, payload, before):
             already += 1
@@ -1184,6 +1192,11 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
                "snapshot_path": str(snap), "sent": [], "verification": [], "applied_at": None}
     jpath = state / "journal" / f"{stamp}-{h12}.json"
     undo = f"apply_change.py rollback --journal {jpath.name}"
+    # A hard kill between the send and finish() would leave no journal at all; this marker
+    # records that a send was attempted, and finish() removes it once the real journal is down.
+    sending_marker = jpath.with_name(f"{stamp}-{h12}.sending.json")
+    _write_new(sending_marker, {"plan_id": journal["plan_id"], "snapshot_path": str(snap),
+                                "started_at": now.isoformat()})
     written = False
 
     def finish(status, problem=None):
@@ -1195,6 +1208,7 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
         if not written:
             _write_new(jpath, journal)
             written = True
+            sending_marker.unlink(missing_ok=True)
         return journal
 
     try:

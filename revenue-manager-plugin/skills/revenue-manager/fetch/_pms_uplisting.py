@@ -90,7 +90,7 @@ def property_row(resource: dict, included=()) -> dict:
     }
 
 
-def reservation_row(raw: dict) -> dict:
+def reservation_row(raw: dict, currency=None) -> dict:
     check_in, check_out = raw.get("check_in"), raw.get("check_out")
     return {
         "id": str(raw["id"]) if raw.get("id") is not None else None,
@@ -99,7 +99,7 @@ def reservation_row(raw: dict) -> dict:
         "check_in": check_in, "check_out": check_out, "nights": whole(raw.get("number_of_nights")),
         "booking_date": raw.get("booked_at"),
         "property_ids": [str(raw["property_id"])] if raw.get("property_id") is not None else [],
-        "financials": {"currency": raw.get("currency"),
+        "financials": {"currency": raw.get("currency") or currency,
                        "host_accommodation_cents": _cents(raw.get("accomodation_total")),
                        "host_discounts": []},
     }
@@ -217,8 +217,11 @@ class UplistingSource:
 
     def reservations(self, pid, start, days):
         def load():
+            # A booking without its own currency is in the property's (docs: "in the property
+            # currency"); None here would zero every reservation's money in the engine.
+            currency = self.property(pid)["currency"]
             raw, total = self._bookings(pid, start, days)
-            rows = [normalize_reservation(reservation_row(b)) for b in raw]
+            rows = [normalize_reservation(reservation_row(b, currency)) for b in raw]
             return {"data": rows, "total": len(rows), "complete": len(raw) == total}
         return self.client.fetch("pms.reservations", [self.connections.account("uplisting"), pid, start.isoformat(), days], load)
 

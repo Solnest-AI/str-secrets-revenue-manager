@@ -3,6 +3,25 @@ from datetime import date, datetime, timedelta, timezone
 
 from _tz import resolve
 
+# PriceLabs' "no data" markers, never real values: -1 = field unavailable (e.g. user_price on
+# a booked date), -2 = no same-time-last-year data (listing under ~13 months old). In Python
+# -1 == -1.0, so the int members cover the floats; the STRING forms are what PriceLabs returns
+# in text fields. One set for the reducers and factcheck, which used to keep their own and
+# disagreed about the same marker.
+SENTINELS = frozenset({-1, -2, "-1", "-2", "-1.0", "-2.0"})
+
+
+def is_sentinel(value) -> bool:
+    """True for a PriceLabs no-data marker; never raises on an unhashable value."""
+    return isinstance(value, (int, float, str)) and not isinstance(value, bool) and value in SENTINELS
+
+
+def is_booked(status) -> bool:
+    """PriceLabs emits 'Booked' AND 'Booked (Check-In)' as separate values. A check-in night is
+    a revenue night; matching only == 'Booked' undercounts occupancy (measured: 21 vs 35 of 366
+    on a live listing, a 40% miss)."""
+    return str(status or "").strip().lower().startswith("booked")
+
 
 def unbookable_flag(value):
     """PriceLabs' `unbookable`: True, False, or None when unreadable.

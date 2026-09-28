@@ -45,6 +45,7 @@ from _match import pick
 
 HOST = "api.lodgify.com"
 BASE = f"https://{HOST}"
+NOT_SINGLE_ROOM = "Lodgify property is not one single-unit room type; the runner reads whole-home listings only"
 UA = "RevenueManager/1.0"
 STATUS = {"booked": "accepted", "tentative": "request", "open": "inquiry", "declined": "not accepted"}
 SOURCES = {"airbnb": "airbnb", "airbnbintegration": "airbnb", "homeaway": "vrbo", "bookingcom": "booking",
@@ -260,7 +261,7 @@ class LodgifySource:
         def load():
             room = self._room(pid)
             if not room:
-                raise LodgifyError("Lodgify property is not one single-unit room type; the runner reads whole-home listings only")
+                raise LodgifyError(NOT_SINGLE_ROOM)
             rates = self._get("/v2/rates/calendar", {"houseId": pid, "roomTypeId": room["id"], "startDate": start.isoformat(),
                                                      "endDate": end.isoformat()}, op="rates")
             items = rates.get("calendar_items") if isinstance(rates, dict) else None
@@ -280,6 +281,10 @@ class LodgifySource:
 
     def reservations(self, pid, start, days):
         def load():
+            # Same gate as calendar(): a multi-room property's bookings span room types, so
+            # blending them into one record would double-count nights and revenue.
+            if not self._room(pid):
+                raise LodgifyError(NOT_SINGLE_ROOM)
             rows, complete = self._pages("/v2/reservations/bookings", {"stayFilter": "All"}, 50)
             mine = [normalize_reservation(reservation_row(b)) for b in rows
                     if str(b.get("property_id")) == str(pid) and b.get("is_deleted") is not True]

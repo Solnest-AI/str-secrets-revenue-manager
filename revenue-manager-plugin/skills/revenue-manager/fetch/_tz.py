@@ -32,10 +32,11 @@ def resolve(value) -> tzinfo:
     if text[0] in "+-":
         m = _OFFSET.fullmatch(text)
         hours, minutes = (int(m.group(2)), int(m.group(3) or 0)) if m else (24, 0)
-        if minutes >= 60 or hours * 60 + minutes >= 24 * 60:
+        total, negative = hours * 60 + minutes, m is not None and m.group(1) == "-"
+        if minutes >= 60 or total >= 24 * 60:
             raise ValueError(f"unreadable timezone offset {value!r}")
-        offset = timedelta(hours=hours, minutes=minutes)
-        return timezone(-offset if m.group(1) == "-" else offset)
+        offset = timedelta(minutes=total)
+        return timezone(-offset if negative else offset)
     try:
         return ZoneInfo(text)
     except (ZoneInfoNotFoundError, ValueError):

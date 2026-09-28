@@ -108,7 +108,8 @@ class Source(unittest.TestCase):
 
     def test_zero_based_pagination_to_the_end_and_cancelled_kept_as_cancelled(self):
         out = self.src.reservations("11033", self.START, 10)
-        self.assertEqual([dict(r["query"])["page"] for r in self.opener.requests], ["0", "1"])
+        # reservations() reads the property once for its currency; only the booking pages count here
+        self.assertEqual([dict(r["query"])["page"] for r in self.opener.calls("GET", "/bookings/11033")], ["0", "1"])
         self.assertEqual((out["total"], out["complete"]), (3, True))
         self.assertEqual({r["id"]: r["status"] for r in out["data"]}, {"1": "accepted", "2": "cancelled", "3": "accepted"})
 

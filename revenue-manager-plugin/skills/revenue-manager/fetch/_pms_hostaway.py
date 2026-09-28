@@ -59,7 +59,9 @@ STATUS = {"new": "accepted", "modified": "accepted", "ownerstay": "accepted",
           "cancelled": "cancelled", "canceled": "cancelled",
           "pending": "request", "awaitingpayment": "request", "awaitingguestverification": "request",
           "unconfirmed": "request",
-          "declined": "not accepted", "expired": "not accepted", "unknown": "not accepted",
+          # Hostaway's own "unknown" is a booking it cannot classify: surface it as unknown
+          # (warned, flagged), never file it under "not accepted" as if it were declined.
+          "declined": "not accepted", "expired": "not accepted", "unknown": "unknown",
           "inquiry": "inquiry", "inquirypreapproved": "inquiry", "inquirydenied": "inquiry",
           "inquirytimedout": "inquiry", "inquirynotpossible": "inquiry"}
 CHANNELS = {2018: "airbnb", 2002: "vrbo", 2009: "vrbo", 2010: "vrbo", 2005: "booking",

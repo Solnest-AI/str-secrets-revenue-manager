@@ -19,7 +19,8 @@ def _has_guesty(connections) -> bool:
     cache FILE counted, expired or not, so a Hospitable operator who once tried Guesty had
     every card stop with "More than one PMS is connected (hospitable, guesty)"."""
     from _pms_guesty import token_from_cache
-    if connections.values.get("GUESTY_CLIENT_ID"):
+    # An id without its secret is not a connection: it only failed later, inside get_token().
+    if connections.values.get("GUESTY_CLIENT_ID") and connections.values.get("GUESTY_CLIENT_SECRET"):
         return True
     caches = [os.environ["GUESTY_TOKEN_CACHE"]] if os.environ.get("GUESTY_TOKEN_CACHE") else []
     caches += [Path(d) / ".cache" / "guesty.token" for d in (connections.paths or {}).get("guesty", [])]

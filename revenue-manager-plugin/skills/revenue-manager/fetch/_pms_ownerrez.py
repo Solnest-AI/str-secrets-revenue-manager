@@ -25,6 +25,7 @@ Measured live 2026-09-24 on a real account (read-only):
 from __future__ import annotations
 
 import base64
+import math
 import re
 import urllib.parse
 from datetime import date, timedelta
@@ -39,7 +40,9 @@ UA = "RevenueManager/1.0"
 STATUS = {"active": "accepted", "confirmed": "accepted", "canceled": "cancelled", "cancelled": "cancelled",
           "tentative": "request", "hold": "request", "pending": "request", "inquiry": "inquiry",
           "declined": "not accepted", "expired": "not accepted"}
-SITES = {"airbnb": "airbnb", "vrbo": "vrbo", "homeaway": "vrbo", "booking.com": "booking", "booking": "booking",
+# Keyed by the site name with punctuation removed: OwnerRez writes listing_numbers keys in
+# PascalCase with no separator (confirmed for Airbnb), so "BookingCom" and "booking.com" both land.
+SITES = {"airbnb": "airbnb", "vrbo": "vrbo", "homeaway": "vrbo", "bookingcom": "booking", "booking": "booking",
          "direct": "direct", "ownerrez": "direct", "website": "direct"}
 
 
@@ -48,13 +51,13 @@ class OwnerRezError(CannotAnalyze):
 
 
 def _cents(value):
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         return None
     return int(Decimal(str(value)).scaleb(2).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def _site(value):
-    return SITES.get(str(value or "").strip().lower())
+    return SITES.get(re.sub(r"[^a-z0-9]", "", str(value or "").lower()))
 
 
 def _cancelled(b):

@@ -5,6 +5,7 @@ import math
 import re
 from urllib.parse import urlencode
 
+from _mvp_pms import _currency, _object  # one definition, shared with the engine
 from _mvp_store import CannotAnalyze
 from factcheck import AIRROI_COLUMNS, _facts_from_rows, _r
 
@@ -28,14 +29,6 @@ def _number(value, *, maximum=None, integer=False, minimum=0):
     if integer and not number.is_integer():
         return None
     return int(number) if integer else number
-
-
-def _currency(value):
-    return value.upper() if isinstance(value, str) and re.fullmatch(r"[A-Za-z]{3}", value) else None
-
-
-def _object(value):
-    return value if isinstance(value, dict) else {}
 
 
 def _rounded(value, kind, maximum=None):

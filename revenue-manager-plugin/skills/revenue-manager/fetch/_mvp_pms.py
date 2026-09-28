@@ -699,7 +699,9 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
         known_revenue = sum(row["accommodation_cents"] for row in paid)
         # Occupancy is over BOOKABLE nights. An owner-blocked night is not a night the
         # market failed to buy: 21 blocked + 2 booked of 30 is 2 of 9 (22.2%), not 6.7%.
-        # Same denominator as attribution._occ and reduce_prices.tier_b.
+        # Same denominator as reduce_prices.tier_b. The rule-effectiveness grade
+        # (_mvp_analysis effect_rows -> attribution._occ) also drops holds, conflicts and
+        # unknowns, on purpose: a night the market could not buy says nothing about the rule.
         bookable = calendar_count - counts["blocked"]
         return {
             "start_date": period_start.isoformat(),

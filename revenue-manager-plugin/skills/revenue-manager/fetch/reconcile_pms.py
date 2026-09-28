@@ -73,7 +73,7 @@ from datetime import date, timedelta, datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _cache import cache_dir, cache_name, listing_matches, read_json, write_json  # noqa: E402
-from _calendar import pms_status, pricelabs_status, validate_calendar  # noqa: E402
+from _calendar import is_booked, pms_status, pricelabs_status, validate_calendar  # noqa: E402, F401
 from factcheck import CAL_BLOCKED_COLUMNS, CAL_DRIFT_COLUMNS, CAL_GAP_COLUMNS, CAL_INVISIBLE_COLUMNS, calendar_rows, _r  # noqa: E402
 from pathlib import Path
 
@@ -159,14 +159,6 @@ def _request(req: urllib.request.Request, timeout: int = 120):
         raise CheckCannotRun(f"{req.full_url.split('?')[0]} returned {e.code}: {body}") from e
     except Exception as e:  # noqa: BLE001 - surface the cause, never swallow it
         raise CheckCannotRun(f"{req.full_url.split('?')[0]} failed: {e}") from e
-
-
-def is_booked(status: str) -> bool:
-    """PriceLabs emits 'Booked' AND 'Booked (Check-In)' as separate values.
-
-    Matching `== "Booked"` undercounts occupancy by roughly 40% on a busy month.
-    """
-    return str(status).strip().lower().startswith("booked")
 
 
 def pms_reserved(day: dict) -> bool:

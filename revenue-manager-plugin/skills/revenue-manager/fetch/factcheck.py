@@ -15,8 +15,12 @@ For each source there are two extractors that compute the SAME named facts:
   *_facts_full(raw)      reads the untouched API payload
   *_facts_reduced(text)  parses the reducer's printed output
 
-They deliberately share no parsing code. If the reducer mangles a number, the two sides
-disagree and the check fails. `compare()` lists every mismatch by name.
+AirROI comps and PriceLabs customizations are derived twice from the raw payload, sharing no
+parsing code, so a reducer bug there shows up as a mismatch. Reservations, overrides,
+neighborhood and the calendar reconciliation build their "full" side with the same helper the
+reducer prints from (reservation_tables, override_runs, neighborhood_daily_from_raw,
+calendar_rows): that side catches a number lost or rounded between the helper and the printed
+text, not a bug inside the helper itself. `compare()` lists every mismatch by name.
 
 Precision is fixed here and the reducers import it, so "equal" means equal at the
 precision the decision actually uses (an ADR of 538.94 vs 538.9 is not a lost fact).
@@ -439,7 +443,7 @@ CAL_GAP_COLUMNS = ["start", "end", "nights"]
 CAL_INVISIBLE_COLUMNS = ["date", "pms_price", "note"]
 CAL_DRIFT_COLUMNS = ["date", "pms_status", "pms_price", "pl_price", "ratio", "pms_min", "pl_min", "why"]
 DRIFT_TOLERANCE = 0.05  # ratio further than this from the median is a drift row
-SENTINELS = {"-1", "-2", "-1.0", "-2.0"}  # PriceLabs "no value" markers
+from _calendar import SENTINELS  # noqa: E402  PriceLabs "no value" markers, one set with the reducers
 
 
 def _cal_is_booked(status) -> bool:
@@ -677,7 +681,9 @@ def reservation_tables(rows: list[dict]) -> dict:
             "avg_los": _r(sum(m["loss"]) / len(m["loss"]), "days") if m["loss"] else None,
             "cancelled": m["cancelled"], **{c: m[c] for c in CHANNELS}, "other": m["other"],
         })
-    currencies = sorted({r["currency"] for r in rows if r.get("currency")})
+    # Over the LIVE population, the one revenue and ADR are summed from: one cancelled booking
+    # in another currency used to read as MIXED and refuse the whole reservations pull.
+    currencies = sorted({r["currency"] for r in live if r.get("currency")})
     return {
         "bookings": len(live),
         "cancelled": sum(1 for r in rows if r["cancelled"]),

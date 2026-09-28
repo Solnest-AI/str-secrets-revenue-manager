@@ -51,6 +51,17 @@ class Pick(unittest.TestCase):
             choose("Zzzz Qqqq")
         self.assertEqual(str(ctx.exception), "must match exactly one")
 
+    def test_a_name_with_no_latin_letters_never_matches_another_empty_key(self):
+        rows = [{"id": "jp", "name": "東京の家"}, {"id": "p2", "name": "Boho Bliss"}]
+        self.assertEqual(loose("東京の家"), "")
+        for selector in ("!!!", "the", "   "):
+            with self.assertRaises(Boom):
+                choose(selector, rows)
+        self.assertEqual(choose("東京の家", rows)["id"], "jp")  # exact still works
+        rows.append({"id": "none", "name": None})
+        with self.assertRaisesRegex(Boom, "2 match 'boho bliss'"):
+            choose("boho bliss", rows + [{"id": "p9", "name": "BOHO BLISS"}])
+
     def test_extra_name_fields_count(self):
         rows = [{"id": "u1", "name": "Unit 4B", "public_name": "Sunset Loft"}]
         self.assertEqual(choose("sunset loft", rows, names=lambda r: (r["name"], r["public_name"]))["id"], "u1")

@@ -155,15 +155,24 @@ class SourceReads(unittest.TestCase):
     def test_bookings_are_read_account_wide_and_filtered_here(self):
         rows = [BOOK, dict(BOOK, id=2, property_id=999), dict(BOOK, id=3, is_deleted=True),
                 dict(BOOK, id=4, canceled_at="2026-09-10T00:00:00Z")]
-        client = FakeClient({"/v2/reservations/bookings": {"count": 4, "items": rows}})
+        # reservations() reads the room list first: the same single-unit gate calendar() applies
+        client = FakeClient({"/v2/properties/5501/rooms": [ROOM],
+                             "/v2/reservations/bookings": {"count": 4, "items": rows}})
         out = LodgifySource(client, Conn()).reservations("5501", date(2026, 10, 1), 30)
         self.assertEqual([(r["id"], r["status"]) for r in out["data"]], [("9001", "accepted"), ("4", "cancelled")])
         self.assertEqual((out["total"], out["complete"]), (2, True))
-        self.assertIn("stayFilter=All", client.urls[0])
+        self.assertIn("stayFilter=All", client.urls[-1])
 
     def test_short_count_is_incomplete(self):
-        client = FakeClient({"/v2/reservations/bookings": {"count": 9, "items": [BOOK]}})
+        client = FakeClient({"/v2/properties/5501/rooms": [ROOM],
+                             "/v2/reservations/bookings": {"count": 9, "items": [BOOK]}})
         self.assertFalse(LodgifySource(client, Conn()).reservations("5501", date(2026, 10, 1), 30)["complete"])
+
+    def test_multi_room_property_bookings_are_refused_like_its_calendar(self):
+        client = FakeClient({"/v2/properties/5501/rooms": [ROOM, dict(ROOM, id=78)],
+                             "/v2/reservations/bookings": {"count": 1, "items": [BOOK]}})
+        with self.assertRaisesRegex(LodgifyError, "not one single-unit room type"):
+            LodgifySource(client, Conn()).reservations("5501", date(2026, 10, 1), 30)
 
     def test_calendar_merges_rates_and_availability(self):
         client = FakeClient({"/v2/properties/5501/rooms": [ROOM],

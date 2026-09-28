@@ -784,6 +784,11 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
                "snapshot_path": str(snap), "sent": [], "verification": [], "applied_at": None}
     jpath = state / "journal" / f"{stamp}-{h12}.json"
     undo = f"apply_change.py rollback --journal {jpath.name}"
+    # A hard kill between the send and finish() would leave no journal at all; this marker
+    # records that a send was attempted, and finish() removes it once the real journal is down.
+    sending_marker = jpath.with_name(f"{stamp}-{h12}.sending.json")
+    _write_new(sending_marker, {"plan_id": journal["plan_id"], "snapshot_path": str(snap),
+                                "started_at": now.isoformat()})
     written = False
 
     def finish(status, problem=None):
@@ -795,6 +800,7 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
         if not written:
             _write_new(jpath, journal)
             written = True
+            sending_marker.unlink(missing_ok=True)
         return journal
 
     prices = {op["field"]: op["after"] for op in ops if op["kind"] == "listing_price"}

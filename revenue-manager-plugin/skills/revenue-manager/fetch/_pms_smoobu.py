@@ -245,7 +245,9 @@ class SmoobuSource:
     def _bookings(self, pid, start, days, max_pages=200):
         params = {"apartmentId": str(pid), "from": (start - timedelta(days=HISTORY_DAYS)).isoformat(),
                   "to": (start + timedelta(days=max(days, 365))).isoformat(), "pageSize": PAGE_SIZE,
-                  "excludeBlocked": True, "includePriceElements": True}
+                  # Cancelled stays only come back when asked for; without this the STATUS map's
+                  # "cancellation" row never fired and historical pace undercounted them.
+                  "excludeBlocked": True, "includePriceElements": True, "showCancellation": True}
         rows, seen, total = [], set(), None
         for page in range(1, max_pages + 1):
             raw = self._get("/api/reservations", {**params, "page": page}, op="reservations")

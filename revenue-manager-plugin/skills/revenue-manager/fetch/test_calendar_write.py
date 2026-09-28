@@ -198,8 +198,16 @@ class FreshPlan(Base):
         self.assertIn("Floor: USD 150.00 (property_config min_price)", card)
         self.assertIn(f"Plan {cw.plan_id(env)}", card)
 
-    def test_card_says_this_is_the_first_live_write_for_the_vendor(self):
+    def test_card_says_first_live_write_only_for_an_unverified_vendor(self):
+        # Hospitable was written live on 2026-09-25 (written, read back, undone, read back), so
+        # its card drops the line; a target that has not been is still told to read carefully.
         env = plan(FakeHospitable(), [{"date": d(3), "price": 230}])
+        self.assertFalse(any("first live write" in w for w in env["warnings"]), env["warnings"])
+
+        class Unverified(HospitableCalendarTarget):
+            LIVE_WRITE_VERIFIED = False
+
+        env = plan(FakeHospitable(), [{"date": d(3), "price": 230}], target=hosp(FakeHospitable(), cls=Unverified))
         self.assertIn("first live write for Hospitable: read the after-values carefully.", env["warnings"][0])
 
     def test_a_date_the_vendor_did_not_return_is_refused(self):

@@ -49,8 +49,6 @@ class HospitableCalendarTarget:
         ("PUT", re.compile(rf"/v2/properties/{_SEG}/calendar")),
         ("GET", re.compile(rf"/v2/properties/{_SEG}")),
     )
-    # Never written live by this writer yet: the card says so (docs/WRITE-TARGETS.md).
-    LIVE_WRITE_VERIFIED = False
     # Documented asynchronous: "successful writes may not appear in the read endpoint immediately".
     APPLIES_ASYNC = True
     # Seconds to wait before each verification READ after the one PUT (asynchronous writes).

@@ -92,17 +92,36 @@ def _g(d, key, default=""):
     return default if val is None else val
 
 
-def _pct(val):
-    """Render a 0..1 fraction OR an already-percent number as a clean string."""
+class _Pct(float):
+    """A 0..1 fraction the xlsx path writes as a NUMBER with a percent format, so the column
+    sorts, filters and sums; "68%" as text did none of that."""
+
+
+def _pct_value(val):
+    """A fraction for a percent cell: 0.68 stays 0.68, an already-percent 68 becomes 0.68."""
     if val == "" or val is None:
-        return ""
+        return None
     try:
         f = float(val)
     except (TypeError, ValueError):
-        return str(val)
-    if -1.5 <= f <= 1.5:  # treat as a fraction
-        return f"{f * 100:.0f}%"
-    return f"{f:.0f}%"
+        return None
+    return _Pct(f if -1.5 <= f <= 1.5 else f / 100)  # magnitude tells a fraction from a percent
+
+
+def _pct(val):
+    """Render a 0..1 fraction OR an already-percent number as a clean string (the CSV path)."""
+    frac = _pct_value(val)
+    if frac is None:
+        return "" if val == "" or val is None else str(val)
+    return f"{frac * 100:.0f}%"
+
+
+def _cell(ws, r, c, value):
+    """ws.cell that writes a percent as a number formatted 0%, never as text."""
+    cell = ws.cell(r, c, float(value) if isinstance(value, _Pct) else value)
+    if isinstance(value, _Pct):
+        cell.number_format = "0%"
+    return cell
 
 
 def _default_output_path(meta):
@@ -135,10 +154,10 @@ def _recommendation_status(prop):
     return "partly applied" if "applied" in statuses else "proposed"
 
 
-def _action_rows(prop):
+def _action_rows(prop, pct=_pct):
     for rec in prop.get("recommendations") or []:
         yield [_g(prop, "name"), _g(rec, "field"), _g(rec, "from"), _g(rec, "to"),
-               _pct(_g(rec, "pct_move")), _g(rec, "reasoning"),
+               pct(_g(rec, "pct_move")), _g(rec, "reasoning"),
                ", ".join(rec.get("flags") or []), _g(rec, "status", "proposed")]
     for rec in prop.get("dso_recommendations") or []:
         yield [_g(prop, "name"), "Date-specific", _g(rec, "date_range"),
@@ -201,12 +220,12 @@ def build_xlsx(data, out_path):
         ("Proposed changes", _g(summary, "proposed_change_count")),
         ("Underpriced flags", _g(summary, "underpriced_count")),
         ("Overpriced flags", _g(summary, "overpriced_count")),
-        ("Avg occupancy", _pct(_g(summary, "avg_occupancy_pct"))),
+        ("Avg occupancy", _pct_value(_g(summary, "avg_occupancy_pct"))),
         ("RevPAR direction", _g(summary, "revpar_direction")),
     ]
     for label, value in rollup:
         ws.cell(r, 1, label).font = Font(bold=True)
-        ws.cell(r, 2, value)
+        _cell(ws, r, 2, value)
         r += 1
     if _g(summary, "notes"):
         ws.cell(r, 1, "Notes").font = Font(bold=True)
@@ -238,10 +257,10 @@ def build_xlsx(data, out_path):
             _g(pmin, "current"), _g(pmin, "recommended"),
             _g(pmax, "current"), _g(pmax, "recommended"),
             _g(p.get("comps", {}), "count"), _g(avc, "ask"), _g(avc, "adr"),
-            _pct(_g(kpis, "occupancy_pct")), (flags[0] if flags else ""), status,
+            _pct_value(_g(kpis, "occupancy_pct")), (flags[0] if flags else ""), status,
         ]
         for ci, value in enumerate(row, start=1):
-            ws.cell(r, ci, value)
+            _cell(ws, r, ci, value)
         r += 1
     r += 1
 
@@ -255,10 +274,10 @@ def build_xlsx(data, out_path):
     r += 1
     any_change = False
     for p in props:
-        for vals in _action_rows(p):
+        for vals in _action_rows(p, _pct_value):
             any_change = True
             for ci, value in enumerate(vals, start=1):
-                cell = ws.cell(r, ci, value)
+                cell = _cell(ws, r, ci, value)
                 if ci == 6:
                     cell.alignment = wrap
             r += 1
@@ -299,7 +318,7 @@ def _build_property_sheet(ws, p, meta, SECTION_FONT, HEADER_FILL, HEADER_FONT, F
     def kv(label, value):
         nonlocal r
         ws.cell(r, 1, label).font = Font(bold=True)
-        c = ws.cell(r, 2, value)
+        c = _cell(ws, r, 2, value)
         c.alignment = wrap
         r += 1
 
@@ -321,7 +340,7 @@ def _build_property_sheet(ws, p, meta, SECTION_FONT, HEADER_FILL, HEADER_FONT, F
         ws.cell(r, 1, field.capitalize()).font = Font(bold=True)
         ws.cell(r, 2, _g(blk, "current"))
         ws.cell(r, 3, _g(blk, "recommended"))
-        ws.cell(r, 4, _pct(_g(blk, "pct_move")))
+        _cell(ws, r, 4, _pct_value(_g(blk, "pct_move")))
         ws.cell(r, 5, _g(blk, "bound_flag"))
         r += 1
     r += 1
@@ -343,7 +362,7 @@ def _build_property_sheet(ws, p, meta, SECTION_FONT, HEADER_FILL, HEADER_FONT, F
 
     kpis = p.get("kpis", {}) or {}
     section("KPIs")
-    kv("Occupancy", _pct(_g(kpis, "occupancy_pct")))
+    kv("Occupancy", _pct_value(_g(kpis, "occupancy_pct")))
     kv("RevPAR", _g(kpis, "revpar"))
     kv("Pacing vs STLY", _g(kpis, "pacing_stly"))
     kv("Avg lead time (days)", _g(kpis, "lead_time_days"))
@@ -372,13 +391,13 @@ def _build_property_sheet(ws, p, meta, SECTION_FONT, HEADER_FILL, HEADER_FONT, F
     if recs:
         for rec in recs:
             vals = [
-                _g(rec, "field"), _g(rec, "from"), _g(rec, "to"), _pct(_g(rec, "pct_move")),
+                _g(rec, "field"), _g(rec, "from"), _g(rec, "to"), _pct_value(_g(rec, "pct_move")),
                 _g(rec, "reasoning"), _g(rec, "expected_impact"),
                 ", ".join(rec.get("flags", []) or []), _g(rec, "prior_attempts"),
                 _g(rec, "status", "proposed"),
             ]
             for ci, value in enumerate(vals, start=1):
-                cell = ws.cell(r, ci, value)
+                cell = _cell(ws, r, ci, value)
                 if ci in (5, 6):
                     cell.alignment = wrap
             r += 1

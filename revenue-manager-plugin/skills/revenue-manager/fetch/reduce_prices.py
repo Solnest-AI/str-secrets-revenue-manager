@@ -58,20 +58,15 @@ from collections import defaultdict
 from pathlib import Path
 
 from _cache import cache_name, listing_matches, read_json, write_json
-from _calendar import local_today, pricelabs_status, unbookable_flag, validate_calendar
+from _calendar import (SENTINELS, is_booked, is_sentinel, local_today, pricelabs_status,  # noqa: F401
+                       unbookable_flag, validate_calendar)
 
 BASE = "https://api.pricelabs.co"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
-# PriceLabs uses these as "no data" markers, not real values.
-# -1 = field unavailable (e.g. user_price on a booked date)
-# -2 = no same-time-last-year data (listing is under ~13 months old)
-SENTINELS = {-1, -2, "-1", "-2", "-1.0", "-2.0"}
-# -1 and -2 collapse to the same set members as -1.0 and -2.0 (in Python -1 == -1.0), so
-# writing both floats and ints was 6 literals for 4 real members and read as wider
-# coverage than it had. The STRING forms "-1.0"/"-2.0" are the ones that were genuinely
-# missing: PriceLabs returns them in text fields, and factcheck.SENTINELS already
-# included them, so the two modules disagreed about the same marker.
+# PriceLabs' "no data" markers (-1, -2 and their string forms) are _calendar.SENTINELS, one
+# set shared with factcheck; this module used to keep its own copy, and a third hand-written
+# tuple in metrics_line missed the "-1.0" form and printed it as a real number.
 
 # The only per-date fields any step of the skill actually consumes.
 # Everything else in the payload is carried and never read.
@@ -228,7 +223,7 @@ def fetch_metrics(listing_id: str, pms: str, key: str,
 def metrics_line(m: dict, window: str = "30") -> str:
     def pick(field, w=window):
         v = (m.get(field) or {}).get(w) if isinstance(m.get(field), dict) else m.get(field)
-        return None if v in (None, -1, -2, "-1", "-2") else v
+        return None if v is None or is_sentinel(v) else v
     bits = []
     for label, field in (("floor_pinned%", "min_prices"), ("mpi", "mpi"),
                          ("revpar", "revpar"), ("stly_revpar", "stly_revpar"),
@@ -247,7 +242,7 @@ def metrics_line(m: dict, window: str = "30") -> str:
 
 def num(value) -> float | None:
     """Parse a numeric field, mapping PriceLabs sentinels to None."""
-    if value in SENTINELS or value is None or value == "":
+    if value is None or value == "" or is_sentinel(value):
         return None
     try:
         parsed = float(value)
@@ -375,13 +370,6 @@ def tier_a(rows: list[dict]) -> str:
             for f in TIER_A_FIELDS
         ])
     return buf.getvalue()
-
-
-def is_booked(status: str) -> bool:
-    """PriceLabs emits 'Booked' AND 'Booked (Check-In)' as separate values.
-    A check-in night is a revenue night; matching only == 'Booked' undercounts
-    occupancy (measured: 21 vs 35 of 366 on a live listing, a 40% miss)."""
-    return status.strip().lower().startswith("booked")
 
 
 def is_blocked(row: dict) -> bool:

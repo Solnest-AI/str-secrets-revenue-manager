@@ -21,18 +21,24 @@ def loose(name) -> str:
     return text[4:] if text.startswith("the ") else text
 
 
+def _label(row, names) -> str:
+    return next((str(n) for n in names(row) if n), "?")
+
+
 def pick(rows, selector, *, message, error, ids=lambda r: (r.get("id"),), names=lambda r: (r.get("name"),)):
     """The one row `selector` names. Raises error(message [+ the closest names])."""
     want = str(selector)
+    # A name with no Latin letters or digits reduces to "" and must never match another "".
+    loose_want = loose(want)
     for hit in (lambda r: want in {str(i) for i in ids(r) if i is not None},
                 lambda r: want.casefold() in {str(n).casefold() for n in names(r) if n},
-                lambda r: loose(want) in {loose(n) for n in names(r) if n}):
+                lambda r: bool(loose_want) and loose_want in {loose(n) for n in names(r) if n}):
         hits = [r for r in rows if hit(r)]
         if len(hits) == 1:
             return hits[0]
         if hits:
             raise error(f"{message}; {len(hits)} match {selector!r}: "
-                        + ", ".join(sorted({str(next(iter(names(r)), '')) for r in hits})))
-    by_loose = {loose(n): str(n) for r in rows for n in names(r) if n}
-    close = difflib.get_close_matches(loose(want), list(by_loose), n=3, cutoff=0.5)
+                        + ", ".join(sorted({_label(r, names) for r in hits})))
+    by_loose = {loose(n): str(n) for r in rows for n in names(r) if n and loose(n)}
+    close = difflib.get_close_matches(loose_want, list(by_loose), n=3, cutoff=0.5) if loose_want else []
     raise error(message + (f"; closest: {', '.join(by_loose[c] for c in close)}" if close else ""))

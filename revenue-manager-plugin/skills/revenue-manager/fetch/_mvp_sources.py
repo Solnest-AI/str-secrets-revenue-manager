@@ -15,6 +15,7 @@ from factcheck import neighborhood_base_percentiles, neighborhood_daily_from_raw
 from reduce_customizations import ALL_RULES, normalize_rules
 from reduce_prices import payload_matches, split_payload
 from _match import pick
+from _mcp_rpc import McpRpc
 
 # RankBreeze pulls daily; its own guidance is to read yesterday, and after the UTC rollover the
 # run starts tomorrow, so the newest usable pull date can be up to 2 days before `start`.
@@ -488,34 +489,11 @@ class Sources:
         return self.client.fetch("pile", [self.connections.account("pricelabs")], load)
 
     def _rankbreeze_rpc(self):
-        """One MCP session on RankBreeze's official hosted server; returns rpc(method, params)."""
+        """One MCP session on RankBreeze's official hosted server; returns (McpRpc, url)."""
         url = self.connections.rankbreeze_url()
         if not url or urlsplit(url).scheme != "https":
             raise CannotAnalyze("A hosted RankBreeze connection is required")
-        state = {"session": None, "counter": 0}
-
-        def rpc(method, params):
-            state["counter"] += 1
-            headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
-            if state["session"]:
-                headers["Mcp-Session-Id"] = state["session"]
-            text, response_headers = self.client.request(
-                "rankbreeze", "rpc", url, headers=headers, text=True,
-                body={"jsonrpc": "2.0", "id": state["counter"], "method": method, "params": params})
-            state["session"] = next(
-                (v for k, v in response_headers.items() if k.lower() == "mcp-session-id"), state["session"])
-            if text.lstrip().startswith("{"):
-                result = json.loads(text)
-            else:
-                events = [json.loads(line[5:]) for line in text.splitlines() if line.startswith("data:")]
-                result = next((x for x in reversed(events) if x.get("id") == state["counter"]), {})
-            if result.get("error") or "result" not in result:
-                raise CannotAnalyze("RankBreeze RPC returned an error")
-            return result["result"]
-
-        rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
-                           "clientInfo": {"name": "revenue-manager-analysis", "version": "1"}})
-        return rpc, url
+        return McpRpc(self.client, "rankbreeze", url, client_name="revenue-manager-analysis", label="RankBreeze"), url
 
     def funnel(self, rid, start):
         """Visibility via RankBreeze's official MCP (get_listing_metrics_summary). The old
@@ -523,9 +501,9 @@ class Sources:
         def load():
             from _mvp_rankbreeze import funnel_from_summary
             rpc, _ = self._rankbreeze_rpc()
-            result = rpc("tools/call", {"name": "get_listing_metrics_summary", "arguments": {
+            result = rpc.tool("get_listing_metrics_summary", {
                 "listing_id": int(rid), "interval": "daily",
-                "start_date": (start - timedelta(days=3)).isoformat(), "end_date": start.isoformat()}})
+                "start_date": (start - timedelta(days=3)).isoformat(), "end_date": start.isoformat()})
             texts = [x["text"] for x in result.get("content", []) if x.get("type") == "text"]
             if result.get("isError") or len(texts) != 1:
                 raise CannotAnalyze("Unreadable RankBreeze funnel summary")
@@ -540,49 +518,9 @@ class Sources:
             raise CannotAnalyze(
                 "A hosted RankBreeze connection is required for dated ranking evidence"
             )
-        session = None
-        counter = 0
-
-        def rpc(method, params):
-            nonlocal session, counter
-            counter += 1
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-            }
-            if session:
-                headers["Mcp-Session-Id"] = session
-            text, response_headers = self.client.request(
-                "rankbreeze",
-                "rpc",
-                url,
-                headers=headers,
-                body={"jsonrpc": "2.0", "id": counter, "method": method, "params": params},
-                text=True,
-            )
-            session = next(
-                (v for k, v in response_headers.items() if k.lower() == "mcp-session-id"), session
-            )
-            if text.lstrip().startswith("{"):
-                result = json.loads(text)
-            else:
-                events = [
-                    json.loads(line[5:]) for line in text.splitlines() if line.startswith("data:")
-                ]
-                result = next((x for x in reversed(events) if x.get("id") == counter), {})
-            if result.get("error") or "result" not in result:
-                raise CannotAnalyze("RankBreeze RPC returned an error")
-            return result["result"]
+        rpc = McpRpc(self.client, "rankbreeze", url, client_name="revenue-manager-analysis", label="RankBreeze")
 
         def load():
-            rpc(
-                "initialize",
-                {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "revenue-manager-analysis", "version": "1"},
-                },
-            )
             if (
                 isinstance(guest_capacity, bool)
                 or float(guest_capacity) % 1
@@ -602,7 +540,7 @@ class Sources:
                 arguments = {"listing_id": int(rid), "ranking_type": "daily", "date": day, "limit": 60}
                 current, seen_pages = [], set()
                 for _ in range(10):
-                    result = rpc("tools/call", {"name": "get_listing_rankings", "arguments": arguments})
+                    result = rpc.tool("get_listing_rankings", arguments)
                     if result.get("isError"):
                         raise CannotAnalyze("RankBreeze ranking tool refused the read")
                     texts = [x["text"] for x in result.get("content", []) if x.get("type") == "text"]

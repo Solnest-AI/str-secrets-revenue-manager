@@ -378,10 +378,10 @@ def parser():
                     help="auto (the one connected; required when two PMSs are connected), or one of: "
                          + ", ".join(PMS_SUPPORTED))
     ap.add_argument("--start", help="Assert property local current date, YYYY-MM-DD")
-    default_cache = Path(
-        os.environ.get("RC_CACHE_DIR", str(Path.home() / ".cache/revenue-manager"))
-    )
-    ap.add_argument("--db", type=Path, default=default_cache / "workbench.sqlite3")
+    from _cache import cache_dir
+    # One cache root for the workbench and every reducer's JSON cache (RC_CACHE_DIR, then
+    # XDG_CACHE_HOME, then ~/.cache); the two used to disagree when XDG_CACHE_HOME was set.
+    ap.add_argument("--db", type=Path, default=Path(cache_dir()) / "workbench.sqlite3")
     ap.add_argument(
         "--env-file",
         action="append",

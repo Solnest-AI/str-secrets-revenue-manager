@@ -37,6 +37,12 @@ def _cell(value):
     return "n/a" if value is None else value
 
 
+def first_known(value, fallback):
+    """`value` unless it is None. `value or fallback` would turn a legitimate 0 into the
+    fallback, which is exactly the bad input this engine refuses instead of guessing at."""
+    return fallback if value is None else value
+
+
 def average(values):
     vals = [v for v in values if v is not None]
     return rounded(mean(vals)) if vals else None
@@ -396,6 +402,10 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         notes.append(delta_note)
     try:
         sync_date = Date.fromisoformat(funnel["last_sync_date"])
+        # Anchored on the window START, not the property-local today, by contract with the
+        # producers: IntelliHost's funnel is read with end_date=start and RankBreeze's summary
+        # with as_of=start, so after the evening UTC rollover (start = tomorrow) a sync stamped
+        # with tomorrow's UTC date is age 0 here. Anchoring on today would call it -1, stale.
         fresh_funnel = (
             0 <= (Date.fromisoformat(start) - sync_date).days <= 3
             and funnel.get("current_month") == start[:7]
@@ -439,7 +449,8 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
 
     def _stale(r):
         # A source may declare how old a scrape it accepts (IntelliHost scrapes every few days:
-        # max_age_days 7). Without a declaration the row must be today's, as before.
+        # max_age_days 7). Without a declaration the row must be today's, as before. Ages count
+        # from the window start, like the funnel above: both sources date their rows against it.
         try:
             age = (Date.fromisoformat(start) - Date.fromisoformat(str(r.get("date")))).days
         except ValueError:
@@ -554,8 +565,8 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             "market_occ_stly": values["occ_stly"],
             "layer": layer,
             "override": over or None,
-            "at_floor": (number(price.get("suggested")) or net) <= (
-                number(price.get("effective_min_price")) or bounds["min"]) + 0.005
+            "at_floor": first_known(number(price.get("suggested")), net) <= (
+                first_known(number(price.get("effective_min_price")), bounds["min"])) + 0.005
             if beyond else net == bounds["min"],
             "at_ceiling": (not no_ceiling and net >= bounds["max"] - 0.005) if beyond
             else net == bounds["max"],

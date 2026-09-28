@@ -17,11 +17,10 @@ Measured live 2026-09-24 on Premium properties (see references/intellihost.md):
 
 from __future__ import annotations
 
-import itertools
 import json
-import threading
 from datetime import date, timedelta
 
+from _mcp_rpc import McpRpc
 from _mvp_store import CannotAnalyze, identity
 
 URL = "https://clients.intellihost.co/api/mcp"
@@ -136,45 +135,13 @@ class IntelliHostSource:
     def __init__(self, client, connections):
         self.client, self.connections = client, connections
         self._token = connections.key("intellihost")
-        # analyze90 runs funnel + rankings in a 4-worker pool on ONE instance. A shared,
-        # mutable request counter let thread A look for thread B's id in its own response
-        # (audit REPRO: funnel "skipped"). Each call now owns its id, and the one-time
-        # initialize runs under a lock so it happens once.
-        self._session = None
-        self._ids = itertools.count(1)
-        self._lock = threading.Lock()
-        self._init_lock = threading.Lock()
-
-    def _rpc(self, method, params):
-        with self._lock:
-            rid = next(self._ids)
-            session = self._session
-        headers = {"Authorization": "Bearer " + self._token, "User-Agent": UA, "Content-Type": "application/json",
-                   "Accept": "application/json, text/event-stream"}
-        if session:
-            headers["Mcp-Session-Id"] = session
-        text, resp_headers = self.client.request("intellihost", "rpc", URL, headers=headers, text=True,
-                                                 body={"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
-        new_session = next((v for k, v in resp_headers.items() if k.lower() == "mcp-session-id"), None)
-        if new_session:
-            with self._lock:
-                self._session = new_session
-        if text.lstrip().startswith("{"):
-            result = json.loads(text)
-        else:
-            events = [json.loads(line[5:]) for line in text.splitlines() if line.startswith("data:")]
-            result = next((x for x in reversed(events) if x.get("id") == rid), {})
-        if result.get("error") or "result" not in result:
-            raise CannotAnalyze("IntelliHost RPC returned an error")
-        return result["result"]
+        # analyze90 runs funnel + rankings in a 4-worker pool on ONE instance: McpRpc gives each
+        # call its own request id and sends initialize once (audit REPRO: funnel "skipped").
+        self._rpc = McpRpc(client, "intellihost", URL, client_name="revenue-manager", label="IntelliHost",
+                           headers={"Authorization": "Bearer " + self._token, "User-Agent": UA})
 
     def _tool(self, name, args):
-        if not self._session:
-            with self._init_lock:
-                if not self._session:
-                    self._rpc("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
-                                             "clientInfo": {"name": "revenue-manager", "version": "1"}})
-        r = self._rpc("tools/call", {"name": name, "arguments": args})
+        r = self._rpc.tool(name, args)
         text = " ".join(c.get("text", "") for c in r.get("content", []) if c.get("type") == "text")
         if r.get("isError"):
             raise CannotAnalyze(PREMIUM_GAP if premium_refusal(text) else "IntelliHost refused the read")
