@@ -138,7 +138,7 @@ Any of the eight PMSs plus PriceLabs or Beyond runs through the runner in `fetch
 
 **Where the price lives** decides `--target`: PriceLabs manages the listing → `pricelabs` (the default); Beyond manages it → `beyond`; the PMS prices it itself → the PMS name. A PMS target on a listing PriceLabs or Beyond manages is refused, because the tool would overwrite the change on its next sync.
 
-First time on this Supabase project (no rows in `property_config`): read the booking sites with `--list-sites`, ask the markup question (Step 5), then run setup, dry run first. One `--markup <channel>=<percent>` for every booking site they list on; none is optional and none comes first:
+Every setup run (never only the first; a teammate may share the database), and any time a card says markups are missing: read the booking sites with `--list-sites`, ask the markup question (Step 5), then run setup, dry run first. One `--markup <channel>=<percent>` for every booking site they list on; none is optional and none comes first:
 
 ```bash
 uv run --with tzdata --python 3.13 python fetch/setup_properties.py --pms <PMS> --markup <CHANNEL>=<PERCENT> --dry-run
@@ -576,6 +576,7 @@ Follow `audit.md`: one `pricelabs_change_log` row per field/date change (the wri
 - **PMS calendar = ground truth** for what's listed. Per property, measure which PriceLabs field matches it before trusting it.
 - **Track ask (calendar) AND cleared (ADR) separately.** Cleared runs higher.
 - **Markup is operator-stated, per channel** (`channel_markup_pct`). Never inferred from a price gap.
+- **Never write `property_config` by hand** (no SQL UPDATE or INSERT on it, no MCP `execute_sql` against it). Markups and min prices go in only through `fetch/setup_properties.py`, which merges into the row; a hand write replaced every stored markup on a shared portfolio on 2026-09-28 and every card refused to price.
 - **Hospitable history → `hospitable_list_transactions`**; its calendar reads are in the currency's minor unit (cents for two-decimal currencies).
 - **Enrichment tools are read-only**: RankBreeze, IntelliHost, AirROI, Turno, Breezeway.
 - **Never recommend outside floor/ceiling silently**: surface it and offer to change the bound.

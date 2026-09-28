@@ -121,6 +121,12 @@ Code, the skill loads on its own.
 Claude: if someone says "finish the revenue manager setup", start here. Nothing in this step
 needs the skill loaded: these are this folder's own scripts.
 
+**This question is never skipped, and it is asked on every setup run**, even when the database
+already holds markups (an earlier run, a teammate on the same portfolio, an older version). When
+some are stored, show them in the same message ("I have Airbnb 18.34%, VRBO 20%, Booking.com 22%,
+direct 10%: still right?") and use what they answer. Markups only ever reach the database through
+the setup line below; never write `property_config` by hand.
+
 Do not ask which booking sites they are on: the PMS knows. Read them first (nothing is written):
 
 ```bash

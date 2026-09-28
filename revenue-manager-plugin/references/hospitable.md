@@ -20,7 +20,7 @@ These govern every pricing read on a Hospitable stack. They override generic ass
 6. **Ask vs cleared are different numbers: track BOTH.**
    - **Ask** (listed nightly) = Hospitable `get_property_calendar` price = PriceLabs forward curve. What you're *asking*.
    - **Cleared/realized ADR** = computed from `list_reservations` (and/or PriceLabs listing-prices ADR field). What you actually *got*. Cleared runs materially **higher** than ask in healthy markets (low-ask dates sell first, premium dates clear at premium).
-7. **Markup is what the operator says, per channel.** Store it in `property_config.settings.channel_markup_pct`. Never infer it from the PMS calendar vs PriceLabs: for many Hospitable listings the two match exactly (PriceLabs pushes the exact price, fees are added at the channel), and a gap between them is a sync finding, not a markup. Never "correct" a difference that is just the stated markup.
+7. **Markup is what the operator says, per channel.** It lands in `property_config.settings.channel_markup_pct`. through `setup_properties.py --markup` only, never a hand write Never infer it from the PMS calendar vs PriceLabs: for many Hospitable listings the two match exactly (PriceLabs pushes the exact price, fees are added at the channel), and a gap between them is a sync finding, not a markup. Never "correct" a difference that is just the stated markup.
 
 ---
 
