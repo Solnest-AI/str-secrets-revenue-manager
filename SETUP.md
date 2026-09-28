@@ -1,11 +1,11 @@
 # Revenue Manager: summit setup
 
 Claude: if someone says "set up the revenue manager" or "set this up", follow this file top
-to bottom. If they say "finish the revenue manager setup", they already installed and
-restarted: go to step 3. Run every command from this folder (the one this file is in), and
+to bottom. If they say "finish the revenue manager setup", the plugin is already installed: go to
+step 3. Run every command from this folder (the one this file is in), and
 start each one with `cd <this folder> &&`: Claude Code can reset the working folder between
-commands, and step 2 registers `$PWD` as the plugin source. When step 2 tells them to reopen
-Claude Code "in this folder", give them this folder's full path. Say what each step found in
+commands, and step 2 registers `$PWD` as the plugin source. If step 0 or step 1 asks for a
+restart, give them this folder's full path to reopen Claude Code in. Say what each step found in
 one plain line. Never ask for keys in the chat.
 
 **The connections kit went out the week before the summit**, so most attendees arrive with
@@ -106,16 +106,14 @@ It looks frozen for a minute or two; that is the download:
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex" ;; *) curl -fsSL https://claude.ai/install.sh | bash ;; esac
 ```
 
-Then stop and tell the operator, in these words or close to them: **"Installed. Now fully
-quit Claude Code (on Mac press Cmd+Q; on Windows close every Claude Code window, and if a
-Claude icon is still in the system tray, right-click it and quit) and reopen it in this folder. Then say: finish the revenue manager setup."** The skill only
-loads on a fresh start, so step 3 cannot run in this session. Do not start step 3 here.
+Then go straight on to step 3, in this same chat. No restart: step 3 runs this folder's own
+scripts, and step 4 reads the skill from this folder. From the next time they open Claude
+Code, the skill loads on its own.
 
-## 3. First run (after the restart)
+## 3. Booking sites and markups
 
-Claude: if someone says "finish the revenue manager setup", start here. First confirm the
-skill loaded (the `revenue-manager` skill is in your skill list). If it is not, the restart
-did not happen: ask for a full quit and reopen again, then continue.
+Claude: if someone says "finish the revenue manager setup", start here. Nothing in this step
+needs the skill loaded: these are this folder's own scripts.
 
 Do not ask which booking sites they are on: the PMS knows. Read them first (nothing is written):
 
@@ -195,11 +193,22 @@ database of its own, and every card blocks without it.
 pricing tool as a named gap. The skill asks for the markup on its first run and works from
 the connected tools directly.
 
-## 4. Test
+## 4. Done: the green check, then the first run
 
-Say **"check my pricing"**. The first card should open with the Flywheel line, name any
-missing piece at the top, show the recommended min price for each listing, and end by
-asking whether to apply the changes. Nothing changes unless the answer is yes.
+When the setup pass has run for real (not the dry run) and lists their properties, say, with
+the names it printed: "✅ **Revenue Manager is set up.** It mapped <N> properties: <names>."
+Name any ❌ property in one plain line with the reason it gave. Then ask:
+**"Want to run it on one of your properties now? Which one?"** (suggest the first mapped one).
 
-Done. If anything above failed, the line it printed says why; fix that one thing and run
-the step again.
+When they pick one, run it right here. Read `revenue-manager-plugin/skills/revenue-manager/SKILL.md`
+in this folder with your Read tool and follow it as if the skill had been called with "check my
+pricing for <that property>" (that file's folder is the skill's folder, for every path it
+names). The first card opens with the Flywheel line, names any missing piece at the top, shows
+the recommended min price, and ends by asking whether to apply the changes. Nothing changes
+unless the answer is yes.
+
+From the next time they open Claude Code, they just say **"check my pricing"**, or ask about one
+property by name.
+
+If anything above failed, the line it printed says why; fix that one thing and run the step
+again.

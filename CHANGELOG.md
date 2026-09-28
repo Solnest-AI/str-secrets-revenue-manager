@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **No restart between install and the first run.** After the plugin installs, setup goes
+  straight on to the booking-site markups and the property mapping (this folder's own
+  scripts), then shows a green check ("Revenue Manager is set up", with the properties it
+  mapped) and offers to run it on one property right away, reading the skill from this folder.
+  The only restarts left are the ones after step 0 or 1 install a missing tool or server.
+
 ## 5.0.4
 
 - **One link does the whole setup, on Mac and Windows.** "Set this up" now checks the tools

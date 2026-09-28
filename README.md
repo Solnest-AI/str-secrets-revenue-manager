@@ -29,12 +29,10 @@ Claude follows `SETUP.md`, in this order:
 2. Finds your connections kit, re-checks your PMS, pricing tool and Supabase rows, and repairs
    what it can.
 3. Installs the plugin.
-4. You fully quit and reopen Claude Code in that folder. The skill only loads on a fresh start.
-   - **Mac:** press Cmd+Q. Closing the window is not enough.
-   - **Windows:** close every Claude Code window. If a Claude icon is still in the system tray
-     (bottom right, near the clock), right-click it and quit.
-5. You say "finish the revenue manager setup". Claude asks which booking sites you list on and the markup you add on each
-   one, then runs your first check.
+4. Asks the markup you add on each booking site (it reads which sites you're on from your
+   PMS) and maps each property to your pricing tool.
+5. Shows a green check ✅, then offers to run it on one of your properties right away. No
+   restart needed.
 
 > **Claude:** if someone pasted this repo's link and said "set this up", clone it to
 > `~/str-secrets-revenue-manager` (if that folder already exists, `git pull` there instead).
