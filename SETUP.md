@@ -64,14 +64,14 @@ for every booking site they named (for example `--markup airbnb=16 --markup vrbo
 
 | PMS | Setup line (dry run) |
 |---|---|
-| Hospitable | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hospitable --markup <CHANNEL>=<PERCENT> --dry-run` |
-| Guesty | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms guesty --markup <CHANNEL>=<PERCENT> --dry-run` |
-| OwnerRez | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms ownerrez --markup <CHANNEL>=<PERCENT> --dry-run` |
-| Hostaway | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hostaway --markup <CHANNEL>=<PERCENT> --dry-run` |
-| Lodgify | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms lodgify --markup <CHANNEL>=<PERCENT> --dry-run` |
-| Uplisting | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms uplisting --markup <CHANNEL>=<PERCENT> --dry-run` |
-| Smoobu | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms smoobu --markup <CHANNEL>=<PERCENT> --dry-run` |
-| Hostfully | `uv run --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hostfully --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Hospitable | `uv run --with tzdata --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hospitable --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Guesty | `uv run --with tzdata --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms guesty --markup <CHANNEL>=<PERCENT> --dry-run` |
+| OwnerRez | `uv run --with tzdata --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms ownerrez --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Hostaway | `uv run --with tzdata --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hostaway --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Lodgify | `uv run --with tzdata --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms lodgify --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Uplisting | `uv run --with tzdata --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms uplisting --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Smoobu | `uv run --with tzdata --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms smoobu --markup <CHANNEL>=<PERCENT> --dry-run` |
+| Hostfully | `uv run --with tzdata --python 3.13 python revenue-manager-plugin/skills/revenue-manager/fetch/setup_properties.py --pms hostfully --markup <CHANNEL>=<PERCENT> --dry-run` |
 
 A property whose markup differs from the rest gets `--markup-for "<exact property name>:<channel>=<percent>"`
 (repeat per property and channel). If the dry run looks right, run the same line without
@@ -111,7 +111,8 @@ nights to price).
 `uv` is what the connections kit installed and uses for every Python step, so nothing else
 needs installing. **Windows:** run these exactly as written (Claude's Bash tool is Git
 Bash). Don't swap in `python` or `python3`: on a fresh Windows machine that opens the
-Microsoft Store instead of Python, and `uv run` never touches it.
+Microsoft Store instead of Python, and `uv run` never touches it. Keep `--with tzdata` too: Windows has no timezone
+database of its own, and every card blocks without it.
 
 **Wheelhouse, or no pricing tool at all:** setup still maps the properties, and marks the
 pricing tool as a named gap. The skill asks for the markup on its first run and works from

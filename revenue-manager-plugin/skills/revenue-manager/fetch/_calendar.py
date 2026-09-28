@@ -1,6 +1,7 @@
 """Calendar availability and coverage checks shared by the read-only safety gates."""
 from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from _tz import resolve
 
 
 def unbookable_flag(value):
@@ -27,18 +28,7 @@ def local_today(tz=None, now=None) -> date:
     if not tz:
         return now.astimezone().date() if now else date.today()
     now = now or datetime.now(timezone.utc)
-    text = str(tz).strip()
-    if text[:1] in {"+", "-"}:
-        clean = text.replace(":", "")
-        try:
-            offset = timedelta(hours=int(clean[1:3]), minutes=int(clean[3:5] or 0))
-        except ValueError:
-            raise ValueError(f"unreadable timezone offset {tz!r}") from None
-        return now.astimezone(timezone(-offset if clean[0] == "-" else offset)).date()
-    try:
-        return now.astimezone(ZoneInfo(text)).date()
-    except (ZoneInfoNotFoundError, ValueError):
-        raise ValueError(f"unknown timezone {tz!r}") from None
+    return now.astimezone(resolve(tz)).date()
 
 
 def pms_status(row) -> str:

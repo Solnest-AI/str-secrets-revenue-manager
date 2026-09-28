@@ -48,7 +48,9 @@ class TmpHome:
         (self.home / ".claude.json").write_text(json.dumps({"mcpServers": self.servers}))
         self._cwd = os.getcwd()
         os.chdir(self.home)
-        self._env = mock.patch.dict(os.environ, {**clean_env(), "HOME": str(self.home), **self.env}, clear=True)
+        # Windows resolves ~ from USERPROFILE, not HOME: set both, or the real ~/.claude.json leaks in.
+        home = {"HOME": str(self.home), "USERPROFILE": str(self.home)}
+        self._env = mock.patch.dict(os.environ, {**clean_env(), **home, **self.env}, clear=True)
         self._env.start()
         return self
 
@@ -99,8 +101,8 @@ class KeyDiscovery(unittest.TestCase):
         self.assertIn(REPO, _mvp_config.bundle_roots({}, here=FETCH / "_mvp_config.py"))
 
     def test_env_example_declares_the_intellihost_token_and_template_drops_the_cookie(self):
-        self.assertIn("INTELLIHOST_MCP_TOKEN=", (REPO / ".env.example").read_text())
-        self.assertNotIn("RANKBREEZE_SESSION", (REPO / ".env.template").read_text())
+        self.assertIn("INTELLIHOST_MCP_TOKEN=", (REPO / ".env.example").read_text(encoding="utf-8"))
+        self.assertNotIn("RANKBREEZE_SESSION", (REPO / ".env.template").read_text(encoding="utf-8"))
 
 
 # ------------------------------------------------------------------ item 27: Windows
@@ -129,7 +131,7 @@ class Windows(unittest.TestCase):
 
     def test_entry_points_call_the_console_fix(self):
         for name in ("setup_properties.py", "analyze90.py", "apply_change.py"):
-            src = (FETCH / name).read_text()
+            src = (FETCH / name).read_text(encoding="utf-8")
             body = src.split("def main(", 1)[1]
             self.assertIn("utf8_console()", body.split("\n\n\n")[0], name)
 

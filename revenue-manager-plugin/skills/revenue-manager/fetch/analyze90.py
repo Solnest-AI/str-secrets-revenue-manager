@@ -27,26 +27,21 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from _mvp_analysis import build, render
 from _mvp_config import Connections, read_context, utf8_console
 from _mvp_pms import analyze
 from _mvp_sources import MarketRolledOver, Sources
 from _mvp_store import CannotAnalyze, ReadClient, Store, encode, utc_now
+from _tz import TimezoneDataMissing, resolve
 
 
 def local_date(prop, as_of):
-    value = prop.get("timezone")
     try:
-        if isinstance(value, str) and value[:1] in {"-", "+"}:
-            clean = value.replace(":", "")
-            offset = timedelta(hours=int(clean[1:3]), minutes=int(clean[3:5]))
-            tz = timezone(-offset if clean[0] == "-" else offset)
-        else:
-            tz = ZoneInfo(value)
-        return as_of.astimezone(tz).date()
-    except (ValueError, TypeError, KeyError):
+        return as_of.astimezone(resolve(prop.get("timezone"))).date()
+    except TimezoneDataMissing as exc:
+        raise CannotAnalyze(str(exc)) from None
+    except ValueError:
         raise CannotAnalyze("PMS property timezone is missing or unreadable") from None
 
 

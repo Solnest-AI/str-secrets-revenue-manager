@@ -106,7 +106,7 @@ def run_reducer(fixture, *extra):
 import _cache  # noqa: E402
 with patch.dict(os.environ, RC_CACHE_DIR="/tmp/rc-probe-xyz"):
     check("caches resolve under RC_CACHE_DIR when set (never inside the plugin tree)",
-          _cache.cache_dir("airroi") == "/tmp/rc-probe-xyz/airroi")
+          _cache.cache_dir("airroi") == os.path.join("/tmp/rc-probe-xyz", "airroi"))
 with patch.dict(os.environ):
     os.environ.pop("RC_CACHE_DIR", None)
     expected = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),

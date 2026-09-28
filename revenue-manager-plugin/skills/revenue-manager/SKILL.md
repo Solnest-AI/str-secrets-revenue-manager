@@ -120,7 +120,7 @@ Do not continue past Step 0 until at least PMS + pricing are detected.
 
 ### Which command for which stack
 
-Any of the eight PMSs plus PriceLabs or Beyond runs through the runner in `fetch/`. Do NOT pull that data by hand: the runner walks the flywheel, prices, checks every rule and names every gap in one command. Run from this skill's folder with `uv run --python 3.13 python` (what the connections kit installed) in front of every command below, never bare `python`/`python3` (on Windows that opens the Microsoft Store). Anything in `<>` is a template: fill it with the operator's own names and numbers, never run it as written.
+Any of the eight PMSs plus PriceLabs or Beyond runs through the runner in `fetch/`. Do NOT pull that data by hand: the runner walks the flywheel, prices, checks every rule and names every gap in one command. Run from this skill's folder with `uv run --with tzdata --python 3.13 python` (what the connections kit installed) in front of every command below, never bare `python`/`python3` (on Windows that opens the Microsoft Store). Keep `--with tzdata`: Windows has no timezone database of its own, and without it every card blocks with "no timezone database". Anything in `<>` is a template: fill it with the operator's own names and numbers, never run it as written.
 
 | Job | Command |
 |---|---|
@@ -141,13 +141,13 @@ Any of the eight PMSs plus PriceLabs or Beyond runs through the runner in `fetch
 First time on this Supabase project (no rows in `property_config`): ask the markup question (Step 5), then run setup, dry run first. One `--markup <channel>=<percent>` for every booking site they list on; none is optional and none comes first:
 
 ```bash
-uv run --python 3.13 python fetch/setup_properties.py --pms <PMS> --markup <CHANNEL>=<PERCENT> --dry-run
+uv run --with tzdata --python 3.13 python fetch/setup_properties.py --pms <PMS> --markup <CHANNEL>=<PERCENT> --dry-run
 ```
 
 then the same line without `--dry-run`. It lists every property ✅ or ❌ with the reason. Per property:
 
 ```bash
-uv run --python 3.13 python fetch/analyze90.py --property "Exact Property Name" --pms <PMS>
+uv run --with tzdata --python 3.13 python fetch/analyze90.py --property "Exact Property Name" --pms <PMS>
 ```
 
 Exit 0 is `analysable` or `degraded` (the gaps are named at the top: say them first). Exit 2 is `blocked`: say why, and do not invent a price. Changes follow Step 8.
@@ -530,25 +530,25 @@ After the recommendations, **offer** it, don't auto-generate: *"Want a spreadshe
 
 **Change the price where it lives (`--target`).** PriceLabs manages the listing → `pricelabs` (the default: min/base/max and date overrides). Beyond manages it → `beyond` (same flow, see `beyond.md`). The PMS prices it itself → `hospitable`, `guesty`, `ownerrez`, `hostaway`, `lodgify`, `uplisting`, `smoobu` or `hostfully` (per-date nightly price and min stay). The writer refuses a PMS price write on a listing PriceLabs or Beyond manages, because the tool would overwrite it on its next sync: change it in the tool. It also refuses a PMS price cut with no stored min, since no PMS API gives it one: recommend the min (2.1), and on a yes store it by re-running setup with the stored markups plus `--min-price "<property>=<amount>"`, then plan again.
 
-1. **Write one change file per listing** (both shapes, PriceLabs and `calendar_set` for a PMS, are in `uv run --python 3.13 python fetch/apply_change.py --help`). A DSO suggestion has no ready change file, so you write it: **carry each date's current min stay unchanged** unless the change is about min stay, and read the min-stay before/after on the plan card before you ask (live 2026-09-26: a hand-written DSO file dropped 2-night minimums to 1 against the operator's cleaning-fee note; the plan card showed it). **Rules first:** for a rule change, save the card's `Change file:` line as the file; it carries `rules_set` (name only the fields that change; the writer reads the rest fresh and sends the whole rule, all seven days for day-of-week). One file can carry a rule change and DSOs: the rule is listed first and sent first, and if the rule write fails nothing after it is sent. Only the listing's own last-minute, far-out premium and day-of-week rules are writable; a group or account rule is refused with "this changes every listing in the group (or account); change it in PriceLabs", and so is a rule the listing only inherits.
+1. **Write one change file per listing** (both shapes, PriceLabs and `calendar_set` for a PMS, are in `uv run --with tzdata --python 3.13 python fetch/apply_change.py --help`). A DSO suggestion has no ready change file, so you write it: **carry each date's current min stay unchanged** unless the change is about min stay, and read the min-stay before/after on the plan card before you ask (live 2026-09-26: a hand-written DSO file dropped 2-night minimums to 1 against the operator's cleaning-fee note; the plan card showed it). **Rules first:** for a rule change, save the card's `Change file:` line as the file; it carries `rules_set` (name only the fields that change; the writer reads the rest fresh and sends the whole rule, all seven days for day-of-week). One file can carry a rule change and DSOs: the rule is listed first and sent first, and if the rule write fails nothing after it is sent. Only the listing's own last-minute, far-out premium and day-of-week rules are writable; a group or account rule is refused with "this changes every listing in the group (or account); change it in PriceLabs", and so is a rule the listing only inherits.
 2. **Plan it** (fresh read; refuses if anything already moved):
    ```bash
-   uv run --python 3.13 python fetch/apply_change.py plan --target <TARGET> --change <change file>
+   uv run --with tzdata --python 3.13 python fetch/apply_change.py plan --target <TARGET> --change <change file>
    ```
    Show the operator the card(s) it prints, re-checked against the safety layer (bounds, max-delta, currency), and ask whether to apply.
    **Say the test status out loud.** PriceLabs and Hospitable writes are live-tested (2026-09-25). Every other PMS and Beyond card prints `first live write for <Name>: read the after-values carefully.` PriceLabs rule changes are live-tested too (2026-09-25, applied and undone). Read that line to the operator word for word before asking. A rule card also prints `BLAST RADIUS` (how many of the next 90 nights the rule reaches), and flags a sign flip or a move over the cap: read those too.
 3. **On a plain yes, apply:**
    ```bash
-   uv run --python 3.13 python fetch/apply_change.py apply --target <TARGET> --plan <PLAN_ID>
+   uv run --with tzdata --python 3.13 python fetch/apply_change.py apply --target <TARGET> --plan <PLAN_ID>
    ```
    It refuses if anything moved since the plan (for a rule, if any of the listing's six rules moved), saves the undo first (for a rule, the exact rule it will put back), applies once (never retries), and re-reads every field after, every rule included. Only `APPLIED AND VERIFIED` is done. Anything else: say so first, and offer the undo.
 4. **A PMS that applies late** (Hospitable, OwnerRez, Uplisting): the writer re-reads on that PMS's schedule. If it says the change was accepted but not applied yet, that is not a failure. Wait a minute, then re-check, read-only:
    ```bash
-   uv run --python 3.13 python fetch/apply_change.py verify --target <TARGET> --journal <JOURNAL_FILE>
+   uv run --with tzdata --python 3.13 python fetch/apply_change.py verify --target <TARGET> --journal <JOURNAL_FILE>
    ```
 5. **To undo** (plans the reverse change; show it and ask again like any other change; for a rule it re-sends the rule exactly as the snapshot saved it and re-reads it to prove it):
    ```bash
-   uv run --python 3.13 python fetch/apply_change.py rollback --target <TARGET> --journal <JOURNAL_FILE>
+   uv run --with tzdata --python 3.13 python fetch/apply_change.py rollback --target <TARGET> --journal <JOURNAL_FILE>
    ```
 6. **A tool the writer cannot reach** (it refuses, says "not installed in this version", or the tool isn't a target, like Wheelhouse): do NOT fall back to a raw MCP write. Give the operator the change as exact steps to do by hand: where to click, which listing and dates, which field, the old value and the new value. Ask them to say when it's done, then re-read the field yourself and confirm it matches before calling it done.
 7. **Audit:** follow `audit.md` (the writer already logs its own change rows).

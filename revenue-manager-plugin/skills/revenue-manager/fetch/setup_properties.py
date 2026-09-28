@@ -473,6 +473,7 @@ def main(argv=None) -> int:
     default_cache = Path(os.environ.get("RC_CACHE_DIR", str(Path.home() / ".cache/revenue-manager")))
     ap.add_argument("--db", type=Path, default=default_cache / "workbench.sqlite3")
     args = ap.parse_args(argv)
+    store = None
     try:
         markups = parse_markups(args.markup)
         per_property = parse_property_markups(args.markup_for)
@@ -505,7 +506,8 @@ def main(argv=None) -> int:
         has_pricelabs = pricing == "pricelabs"
         maps_beyond = pricing == "beyond" and has["beyond"]
         args.db.parent.mkdir(parents=True, exist_ok=True)
-        client = ReadClient(Store(args.db), max_calls=400)
+        store = Store(args.db)
+        client = ReadClient(store, max_calls=400)
         sources = Sources(client, connections, pms=pms)
         inventory = (sources._pms.inventory() if sources._pms else
                      sources.pages("/properties", {"include": "listings"}, normalize_property))["data"]
@@ -622,11 +624,15 @@ def main(argv=None) -> int:
         print(f"Tables ready ({len(migration_files())} migrations applied, all idempotent).")
         post_sql(project, token, upsert_statement(rows))
         print(f"SETUP DONE: {len(rows)} propert{'y' if len(rows) == 1 else 'ies'} configured. "
-              f"Next: uv run --python 3.13 python fetch/analyze90.py --property \"Exact Property Name\"")
+              f"Next: uv run --with tzdata --python 3.13 python fetch/analyze90.py --property \"Exact Property Name\"")
         return 0
     except (SetupError, CannotAnalyze, OSError) as exc:
         print(f"CANNOT SET UP: {exc}", file=sys.stderr)
         return 2
+    finally:
+        # Windows cannot delete or move a SQLite file that is still open.
+        if store is not None:
+            store.close()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,16 @@
+# LF everywhere, on every OS: Git for Windows defaults to autocrlf=true, and a CRLF .sh
+# script fails in bash ("$'\r': command not found"). Mirrors str-secrets-connections.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
+*.json text eol=lf
+*.ts text eol=lf
+*.toml text eol=lf
+.env.template text eol=lf
+.env.example text eol=lf
+*.xlsx binary
+*.png binary
+*.pdf binary
+*.zip binary

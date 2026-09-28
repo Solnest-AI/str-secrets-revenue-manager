@@ -44,9 +44,9 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
-from zoneinfo import ZoneInfo
 
 import _beyond as B
+from _tz import resolve
 from _mvp_store import CannotAnalyze
 from _mvp_write import (  # the PriceLabs writer's hardened helpers, reused as-is
     CannotWrite, _NoRedirect, _check_fresh, _date, _money, _num, _over, _parse_date, _pct,
@@ -291,7 +291,7 @@ def _listing_today(listing, now: datetime) -> date:
     this machine's date and the listing's, so a plan never offers a date Beyond will refuse."""
     today = date.today()
     try:
-        return max(today, now.astimezone(ZoneInfo(str(listing.get("timezone")))).date())
+        return max(today, now.astimezone(resolve(listing.get("timezone"))).date())
     except (ValueError, KeyError, TypeError, OSError):
         return today
 

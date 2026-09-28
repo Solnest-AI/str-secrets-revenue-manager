@@ -244,7 +244,8 @@ class StoreTests(StoreCase):
         self.assertEqual(client.metrics()["sources"], [])
 
     def test_private_store_roundtrip_and_missing_run(self):
-        self.assertEqual(self.store.path.stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":  # NTFS has no POSIX mode bits; Store's chmod is best-effort there
+            self.assertEqual(self.store.path.stat().st_mode & 0o777, 0o600)
         run = {"started_at": utc_now(), "status": "complete", "evidence": {"nights": 90}}
         self.store.save_run("synthetic-run", run)
         self.assertEqual(self.store.get_run("synthetic-run"), run)

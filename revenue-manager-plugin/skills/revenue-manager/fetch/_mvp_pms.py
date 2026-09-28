@@ -9,9 +9,10 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 import statistics
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 import _money
+from _tz import TimezoneDataMissing, resolve
 from _calendar import validate_calendar
 
 
@@ -406,16 +407,15 @@ def _year_before(value):
 
 
 def _tz(value):
+    # A machine with no timezone database (Windows without tzdata) must not read every
+    # property as UTC: that shifts every date silently. It raises instead.
     try:
-        return ZoneInfo(value), None
-    except (ValueError, TypeError, ZoneInfoNotFoundError):
-        if isinstance(value, str) and re.fullmatch(r"[+-]\d{2}:?\d{2}", value):
-            offset = value.replace(":", "")
-            minutes = int(offset[1:3]) * 60 + int(offset[3:5])
-            if int(offset[3:5]) < 60 and minutes < 24 * 60:
-                sign = -1 if offset[0] == "-" else 1
-                return timezone(timedelta(minutes=sign * minutes)), "fixed_offset_timezone"
+        tz = resolve(value)
+    except TimezoneDataMissing:
+        raise
+    except ValueError:
         return timezone.utc, "missing_property_timezone_using_utc"
+    return tz, None if isinstance(tz, ZoneInfo) else "fixed_offset_timezone"
 
 
 def _current_category(record):
