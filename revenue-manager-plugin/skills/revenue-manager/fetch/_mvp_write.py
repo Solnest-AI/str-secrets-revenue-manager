@@ -53,6 +53,7 @@ import json
 import math
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
@@ -71,6 +72,10 @@ VERSION = 1
 LISTING_FIELDS = ("min", "base", "max")
 # What a person may ask to set on a date. Everything else on an existing override is
 # carried forward untouched (and re-verified), never edited by this writer.
+PUT_BACK_ATTEMPTS = 3        # tries to put a deleted override back after a refused re-post
+PUT_BACK_WAIT_SECONDS = 2    # 2 s, then 4 s, between tries
+PUT_BACK_SLEEP = time.sleep  # tests swap this out
+
 OVERRIDE_SETTABLE = {"price", "price_type", "min_stay"}
 # Every field POST /v1/listings/{id}/overrides accepts (customer-api.json, 2026-09-23).
 # A GET field outside this set cannot be sent back, so a rollback could not restore it.
@@ -1291,15 +1296,26 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
                     if back:
                         journal["sent"].append({"call": "POST overrides (put back after a refused write)",
                                                 "dates": [o["date"] for o in back]})
-                        try:
-                            live.client.request(
-                                "POST", f"/v1/listings/{quote(live.lid)}/overrides",
-                                body={"pms": live.pms, "update_children": False,
-                                      "overrides": [{k: v for k, v in o.items() if k in OVERRIDE_POSTABLE}
-                                                    for o in back]})
-                            journal["put_back"] = "ok"
-                        except Exception:  # noqa: BLE001 - the re-read below reports what is live
-                            journal["put_back"] = "failed"
+                        # Re-posting the same override is harmless (it sets the same values), so the
+                        # put-back is retried: a dropped connection must not leave dates wiped.
+                        payload = {"pms": live.pms, "update_children": False,
+                                   "overrides": [{k: v for k, v in o.items() if k in OVERRIDE_POSTABLE}
+                                                 for o in back]}
+                        journal["put_back"] = "failed"
+                        for attempt in range(PUT_BACK_ATTEMPTS):
+                            try:
+                                reply = live.client.request(
+                                    "POST", f"/v1/listings/{quote(live.lid)}/overrides", body=payload)
+                                if isinstance(reply, dict) and (reply.get("error") or reply.get("error_code")):
+                                    raise CannotWrite("PriceLabs refused the put-back")
+                                journal["put_back"] = "ok"
+                                break
+                            except Exception:  # noqa: BLE001 - retried, then reported below
+                                if attempt + 1 < PUT_BACK_ATTEMPTS:
+                                    PUT_BACK_SLEEP(PUT_BACK_WAIT_SECONDS * (attempt + 1))
+                                    journal["sent"].append({"call": "POST overrides (put back, retry)",
+                                                            "attempt": attempt + 2})
+                        if journal["put_back"] == "failed":
                             raise CannotWrite(
                                 "PriceLabs refused the override write AND the put-back of the deleted "
                                 f"override(s) on {', '.join(o['date'] for o in back)} failed. Those dates "

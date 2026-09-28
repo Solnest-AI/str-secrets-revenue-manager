@@ -667,6 +667,38 @@ class Rollback(Base):
         self.assertEqual((now.get("price"), now.get("price_type"), now.get("currency")),
                          (before.get("price"), before.get("price_type"), before.get("currency")))
 
+    def test_a_dropped_put_back_is_retried_until_the_override_is_back(self):
+        # the refused re-post, then the first put-back also fails (a dropped connection): retried
+        import _mvp_write as W
+        waits = []
+        self.addCleanup(setattr, W, "PUT_BACK_SLEEP", W.PUT_BACK_SLEEP)
+        W.PUT_BACK_SLEEP = waits.append
+        fake = FakePriceLabs()
+        before = copy.deepcopy(fake.overrides["2026-10-10"])
+        env = self.plan(fake, change(overrides_set=[
+            {"date": "2026-10-10", "price": -5, "price_type": "percent"}]))
+        real_open = fake.open
+        state = {"put_backs": 0}
+
+        def flaky(req, timeout):
+            body = json.loads(req.data) if req.data else None
+            if req.get_method() == "POST" and req.full_url.endswith("/overrides"):
+                if body["overrides"][0].get("price_type") == "percent":
+                    raise HTTPError(req.full_url, 400, "refused", {}, io.BytesIO(b"{}"))
+                state["put_backs"] += 1
+                if state["put_backs"] == 1:
+                    raise urllib.error.URLError("connection dropped")
+            return real_open(req, timeout)
+        fake.open = flaky
+        try:
+            self.apply(fake, env)
+        except CannotWrite:
+            pass
+        self.assertEqual(state["put_backs"], 2, "one failed put-back, one retry")
+        self.assertEqual(waits, [2])
+        now = fake.overrides.get("2026-10-10")
+        self.assertEqual((now or {}).get("price"), before["price"])
+
     def test_rollback_from_the_snapshot_file_alone(self):
         fake = FakePriceLabs()
         env = self.plan(fake, change(listing_prices={"min": 170}))
