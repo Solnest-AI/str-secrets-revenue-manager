@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## 5.0.5
+
+- **Every card opens with the flywheel, in plain English.** Six rows (Visibility, Views,
+  Bookings, Reviews, Ranking, Pacing), each with a verdict (✅ OK, ✅ AHEAD, ⚠️ BEHIND,
+  ❌ NO DATA) and the listing's number next to its benchmark: similar listings, the market, or
+  the same point last year. The last line names the first stage that breaks and what it means.
+- **The markup question is asked on every setup run.** It was skipped when the database
+  already had properties (a teammate on the same portfolio); now the stored numbers are shown
+  for a yes or a correction. Booking sites are read from the PMS (`--list-sites`), so the only
+  question is the markup on each one plus direct.
+- **Markups go into the database only through setup**, which adds to what is stored. A
+  hand-written update replaced every stored markup on a shared portfolio and every card
+  refused to price; Claude is now told never to write the property settings by hand.
+- **The connections check shows only what the Revenue Manager uses**: the PMS, the pricing
+  tool and Supabase (required), then ranking and cleaning tools (optional). Keys for the other
+  summit skills (Kie, AirROI, Meta, Firecrawl, Gemini) are never mentioned.
 
 - **No restart between install and the first run.** After the plugin installs, setup goes
   straight on to the booking-site markups and the property mapping (this folder's own
