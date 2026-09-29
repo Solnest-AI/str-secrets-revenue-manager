@@ -52,6 +52,7 @@ import os
 import re
 import statistics as st
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -81,6 +82,7 @@ TIER_A_FIELDS = [
 # tier evaluation, so they stay even though they widen the CSV ~40%.
 
 BYTES_PER_TOKEN = 3.6  # rough; use count_tokens for anything load-bearing
+PRICE_CACHE_SECONDS = 15 * 60  # prices move on Sync Now or an applied change
 
 
 # ---------------------------------------------------------------- helpers
@@ -628,8 +630,11 @@ def main() -> None:
     # week-old prices forever.
     cache_file = cache / cache_name("prices", sorted(targets), date_from, date_to,
                                    want_reason, today.isoformat())
+    # Prices move the moment the operator hits Sync Now or a change is applied, so a cached
+    # pull is reused for PRICE_CACHE_SECONDS only (a burst of re-runs), never for the whole day.
     payload = None
-    if cache_file.is_file() and not args.refresh:
+    if (cache_file.is_file() and not args.refresh
+            and 0 <= time.time() - cache_file.stat().st_mtime <= PRICE_CACHE_SECONDS):
         try:
             candidate = read_json(cache_file)
             if payload_matches(candidate, targets):

@@ -218,6 +218,21 @@ class EndToEnd(unittest.TestCase):
         self.assertTrue(facts["coverage"]["reservation_source_trusted"])
         self.assertEqual(facts["coverage"]["scoped_unique_records"], 2)
 
+    def test_a_cancellation_without_usable_dates_does_not_block_the_property(self):
+        # Hostaway sends no dates for a dateless inquiry; a row that never holds a night must not
+        # make the whole reservation source untrusted. A booked stay without dates still must.
+        start = date(2026, 10, 4)
+        st = {f"2026-10-{d:02d}": ("RESERVED" if d in (5, 6, 7) else "AVAILABLE") for d in range(4, 14)}
+        cal = [day_row(item(k), v, "USD") for k, v in st.items()]
+        when = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        dateless = dict(BOOK, id=9003, arrival="2026-10-10", departure="2026-10-10", canceled_at="2026-09-10T00:00:00Z")
+        facts = analyze(property_row(PROP, ROOM), cal, [reservation_row(BOOK), reservation_row(dateless)], [], start, 10, when)
+        self.assertTrue(facts["coverage"]["reservation_source_trusted"])
+        self.assertIn("unheld_reservation_without_dates_ignored", {w["code"] for w in facts["warnings"]})
+        booked = dict(BOOK, id=9004, arrival="2026-10-10", departure="2026-10-10")
+        facts = analyze(property_row(PROP, ROOM), cal, [reservation_row(BOOK), reservation_row(booked)], [], start, 10, when)
+        self.assertFalse(facts["coverage"]["reservation_source_trusted"])
+
 
 # ------------------------------------------------------------------------------ write target with fake HTTP
 

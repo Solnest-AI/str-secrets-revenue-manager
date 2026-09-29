@@ -10,6 +10,7 @@ import re
 import sqlite3
 import threading
 import time
+import http.client
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -230,7 +231,7 @@ class ReadClient:
                     raise CannotAnalyze(f"{provider} {operation}: HTTP 401, the {provider} token expired "
                                         "or wrong; reconnect it") from None
                 raise CannotAnalyze(f"{provider} {operation}: HTTP {exc.code}") from None
-            except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, ValueError):
                 raise CannotAnalyze(
                     f"{provider} {operation}: unreadable response or connection"
                 ) from None

@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getPriceLabs, formatResponse, handleError } from "../services/pricelabs-client.js";
+import { CONFIRM_TEXT, overrideLiveProblems, overrideProblems, readLiveListing, refusal } from "./guards.js";
 
 export function registerOverrideTools(server: McpServer): void {
 
@@ -14,14 +15,14 @@ export function registerOverrideTools(server: McpServer): void {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }, async ({ listing_id, pms }) => {
     try {
-      const res = await getPriceLabs().get(`/v1/listings/${listing_id}/overrides`, { params: { pms } });
+      const res = await getPriceLabs().get(`/v1/listings/${encodeURIComponent(listing_id)}/overrides`, { params: { pms } });
       return { content: [{ type: "text", text: formatResponse(res.data) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: handleError(e) }] }; }
   });
 
   server.registerTool("pricelabs_set_overrides", {
     title: "Set Date-Specific Overrides",
-    description: "Create or update date-specific overrides (DSOs) for a listing — set custom prices (fixed or percent), min stays, min/max price bounds, and check-in/check-out day restrictions. Applies to this listing only (update_children is always sent as false).",
+    description: "Create or update date-specific overrides (DSOs) for a listing — set custom prices (fixed or percent), min stays, min/max price bounds, and check-in/check-out day restrictions. Applies to this listing only (update_children is always sent as false). Guarded: every price needs its type, a fixed amount needs the listing's currency, a percent stays within -75 to 500, and a fixed night below the listing min is refused. Prefer the Revenue Manager's safe writer (fetch/apply_change.py) for revenue changes.",
     inputSchema: {
       listing_id: z.string().describe("Listing ID"),
       pms: z.string().describe("PMS name from list_listings (e.g. 'airbnb'; Hospitable uses 'smartbnb')"),
@@ -41,11 +42,21 @@ export function registerOverrideTools(server: McpServer): void {
         check_out: z.string().optional().describe("7-char binary Mon-Sun (e.g. '0000011' = Sat-Sun only)"),
         reason: z.string().optional().describe("Reason for override (for your reference)"),
       })).describe("Array of date overrides to set"),
+      confirm: z.boolean().describe(CONFIRM_TEXT),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
-  }, async ({ listing_id, pms, overrides }) => {
+  }, async ({ listing_id, pms, overrides, confirm }) => {
+    if (confirm !== true) {
+      return refusal("pricelabs_set_overrides", ["needs confirm: true, given only after the operator has seen the exact dates and amounts and said yes"]);
+    }
+    const shape = overrideProblems(overrides);
+    if (shape.length) return refusal("pricelabs_set_overrides", shape);
     try {
-      const res = await getPriceLabs().post(`/v1/listings/${listing_id}/overrides`, {
+      const http = getPriceLabs();
+      const live = await readLiveListing(http, listing_id, pms);
+      const against = overrideLiveProblems(overrides, live);
+      if (against.length) return refusal("pricelabs_set_overrides", against);
+      const res = await http.post(`/v1/listings/${encodeURIComponent(listing_id)}/overrides`, {
         overrides,
         pms,
         // Always explicit: never let a DSO silently cascade to child listings.
@@ -73,7 +84,7 @@ export function registerOverrideTools(server: McpServer): void {
       return { isError: true, content: [{ type: "text", text: "Refused: pricelabs_delete_overrides needs confirm: true, given only after the operator has seen the exact dates and said yes. Nothing was deleted." }] };
     }
     try {
-      const res = await getPriceLabs().delete(`/v1/listings/${listing_id}/overrides`, {
+      const res = await getPriceLabs().delete(`/v1/listings/${encodeURIComponent(listing_id)}/overrides`, {
         data: { overrides, pms, update_children: update_children || false },
       });
       return { content: [{ type: "text", text: res.status === 204 ? "Overrides deleted successfully." : formatResponse(res.data) }] };

@@ -108,6 +108,14 @@ class Mappers(unittest.TestCase):
         self.assertEqual((r["financials"]["currency"], r["status"], r["platform"], r["nights"]), ("EUR", "accepted", "airbnb", 2))
         self.assertNotIn("SHOULD NEVER APPEAR", json.dumps(r))
 
+    def test_a_discount_element_makes_room_revenue_unknown_not_gross(self):
+        raw = booking(1, "2030-02-03", "2030-02-05")
+        raw["priceElements"].append({"type": "longStayDiscount", "amount": -30, "currencyCode": "EUR",
+                                     "priceIncludedInId": None})
+        self.assertIsNone(reservation_row(raw)["financials"]["host_accommodation_cents"])
+        raw["priceElements"][-1]["amount"] = 0  # a zero discount changes nothing
+        self.assertEqual(reservation_row(raw)["financials"]["host_accommodation_cents"], 20000)
+
     def test_no_base_price_is_unknown_not_zero_and_currency_falls_back(self):
         r = reservation_row(dict(booking(1, "2030-02-03", "2030-02-05"), priceElements=[]), "EUR")
         self.assertIsNone(r["financials"]["host_accommodation_cents"])

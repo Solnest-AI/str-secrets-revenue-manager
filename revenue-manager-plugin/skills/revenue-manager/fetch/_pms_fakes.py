@@ -80,7 +80,7 @@ def read_client(opener, max_calls=40):
     from pathlib import Path
 
     from _mvp_store import ReadClient, Store
-    tmp = tempfile.TemporaryDirectory()
+    tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)  # Windows: the store holds the file open
     client = ReadClient(Store(Path(tmp.name) / "w.sqlite"), max_calls=max_calls, opener=opener)
     client._tmp = tmp  # keep the directory alive with the client
     return client

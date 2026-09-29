@@ -109,6 +109,7 @@ data['data']['Market KPI']['Category']                 # monthly booking window,
 - Confirm seasonal / event / weekend overrides are actually in place vs. just intended.
 
 ### 7. `pricelabs_set_overrides`: push date-specific overrides (the write path)
+> **Not called directly.** The Revenue Manager makes this change through `fetch/apply_change.py`, which calls the PriceLabs API itself (plan, yes, undo snapshot, re-read). The MCP tool is guarded as a backstop: it refuses without `confirm: true`, a price without its type, a fixed amount without the listing's currency or below its min, and a percent outside -75 to 500.
 **Returns:** confirmation of overrides written. **THIS IS A MUTATION.**
 **Revenue-management use (gated):** the mechanism for date-specific overrides: seasonal DSOs, event boosts, weekend premiums, last-minute / orphan discounts.
 - **Safety Layer #6 (Approval Gate):** fire ONLY on explicit human approval. NEVER a silent auto-write/push. The gate must first show: current price, recommended price, nearest bound, comp count, currency, and the reasoning.
@@ -129,6 +130,7 @@ data['data']['Market KPI']['Category']                 # monthly booking window,
 - Note: the PMS reservations feed is the primary booking history; PriceLabs reservations are a useful corroboration/secondary source.
 
 ### 10. `pricelabs_update_listings`: update listing-level pricing config (the write path)
+> **Not called directly.** The Revenue Manager makes this change through `fetch/apply_change.py`, which calls the PriceLabs API itself (plan, yes, undo snapshot, re-read). The MCP tool is guarded as a backstop: it refuses without `confirm: true`, min <= base <= max breaking, a value at or below zero, and any value more than 5x from its live value.
 **Returns:** confirmation of the listing update. **THIS IS A MUTATION.**
 **Revenue-management use (gated):** change the listing-level levers: **min / base / max** and other listing settings.
 - This is how a **bound change** is executed when the operator approves moving a floor/ceiling (Safety Layer #1: operator can override bounds in plain English; persist the new bound to `property_config`).

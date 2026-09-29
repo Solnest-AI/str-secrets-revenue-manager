@@ -580,6 +580,18 @@ class Rollback(Base):
         self.roundtrip(FakePriceLabs(), change(overrides_set=[
             {"date": "2026-10-05", "price": 230, "price_type": "fixed"}]))
 
+    def test_undo_restores_an_override_now_below_a_raised_min_with_a_warning(self):
+        # the 250 fixed DSO is raised to 270, then the min goes to 260: the undo puts 250 back
+        fake = FakePriceLabs()
+        journal = self.apply(fake, self.plan(fake, change(overrides_set=[
+            {"date": "2026-10-10", "price": 270, "price_type": "fixed", "min_stay": 3}])))
+        fake.listing.update(min=260.0, base=300.0)
+        back = self.plan_undo(fake, journal)
+        self.assertTrue(any("UNDO RESTORES A NIGHT BELOW YOUR MIN" in w for w in back["warnings"]),
+                        back["warnings"])
+        self.assertEqual(self.apply(fake, back)["status"], "verified")
+        self.assertEqual(float(fake.overrides["2026-10-10"]["price"]), 250.0)
+
     def test_deleted_override_rolls_back_whole(self):
         self.roundtrip(FakePriceLabs(), change(overrides_delete=["2026-10-10"]))
 

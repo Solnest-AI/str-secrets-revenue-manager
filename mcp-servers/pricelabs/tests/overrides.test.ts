@@ -12,6 +12,10 @@ test("set_overrides always sends update_children: false", async (t) => {
   const previous = http.defaults.adapter;
   const sent: unknown[] = [];
   http.defaults.adapter = async (config) => {
+    if (config.method === "get") {
+      const listing = { id: "L1", pms: "smartbnb", min: 150, base: 200, max: 400, currency: "CAD" };
+      return { data: { listings: [listing] }, status: 200, statusText: "OK", headers: {}, config };
+    }
     sent.push(JSON.parse(config.data));
     return { data: { ok: true }, status: 200, statusText: "OK", headers: {}, config };
   };
@@ -27,7 +31,7 @@ test("set_overrides always sends update_children: false", async (t) => {
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   const result = await client.callTool({
     name: "pricelabs_set_overrides",
-    arguments: { listing_id: "L1", pms: "smartbnb", overrides: [{ date: "2026-12-01", price: 200, price_type: "fixed" }] },
+    arguments: { listing_id: "L1", pms: "smartbnb", overrides: [{ date: "2026-12-01", price: 200, price_type: "fixed", currency: "CAD" }], confirm: true },
   });
   assert.ok(!result.isError);
   assert.equal(sent.length, 1);

@@ -154,6 +154,7 @@ def audit_statement(journal: dict) -> str:
 
 
 def audit(connections: Connections, journal: dict) -> str:
+    import http.client
     import urllib.error
     import urllib.request
     conf = connections.supabase()
@@ -171,7 +172,7 @@ def audit(connections: Connections, journal: dict) -> str:
     except urllib.error.HTTPError as exc:
         exc.close()
         raise CannotPersist(f"Supabase HTTP {exc.code}") from None
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
         raise CannotPersist("Supabase unreachable") from None
     return f"audit stored: {len(journal['envelope']['operations'])} row(s) in {AUDIT_TABLE}"
 
@@ -252,6 +253,7 @@ def resolve(name: str):
 
 
 def _supabase_rows(connections: Connections, sql: str, read_only: bool):
+    import http.client
     import urllib.error
     import urllib.request
     conf = connections.supabase()
@@ -269,7 +271,7 @@ def _supabase_rows(connections: Connections, sql: str, read_only: bool):
     except urllib.error.HTTPError as exc:
         exc.close()
         raise CannotPersist(f"Supabase HTTP {exc.code}") from None
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
         raise CannotPersist("Supabase unreachable") from None
     try:
         return json.loads(raw) if raw else []

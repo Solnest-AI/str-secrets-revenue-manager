@@ -418,6 +418,9 @@ def _tz(value):
     return tz, None if isinstance(tz, ZoneInfo) else "fixed_offset_timezone"
 
 
+_NEVER_HOLDS_NIGHTS = frozenset({"inquiry", "not accepted", "cancelled"})
+
+
 def _current_category(record):
     current = _object(_object(record.get("reservation_status")).get("current"))
     return current.get("category") or current.get("status") or record["status"]
@@ -502,7 +505,13 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
         arrival = _date(record["check_in"] or record["arrival_date"])
         departure = _date(record["check_out"] or record["departure_date"])
         if arrival is None or departure is None or departure <= arrival:
-            warnings["reservation_stay_dates_invalid"] += 1
+            # An inquiry, a declined request or a cancellation never holds a night, so its
+            # missing dates (Hostaway sends none for a dateless inquiry) cannot skew the calendar.
+            # Only a stay that could hold nights makes the reservation source untrusted.
+            if _current_category(record) in _NEVER_HOLDS_NIGHTS:
+                warnings["unheld_reservation_without_dates_ignored"] += 1
+            else:
+                warnings["reservation_stay_dates_invalid"] += 1
             continue
         if (departure - arrival).days > 3660:
             warnings["reservation_stay_dates_excessive"] += 1

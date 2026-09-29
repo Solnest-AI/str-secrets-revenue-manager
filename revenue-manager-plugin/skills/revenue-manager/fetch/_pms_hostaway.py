@@ -36,6 +36,7 @@ import math
 import os
 import re
 import time
+import http.client
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -242,7 +243,7 @@ def _mint_direct(account_id, api_key, opener=None) -> str:
         exc.close()
         why = "the account id or API key is wrong or revoked: create a new pair" if exc.code == 401 else "refused"
         raise HostawayError(f"Hostaway token request refused (HTTP {exc.code}); {why}") from None
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, ValueError):
         raise HostawayError("Hostaway token endpoint unreachable") from None
     tok = parsed.get("access_token") if isinstance(parsed, dict) else None
     if not isinstance(tok, str) or not tok:

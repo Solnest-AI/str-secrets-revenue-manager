@@ -1,5 +1,26 @@
 # Changelog
 
+## 5.0.9
+
+From a full bug review:
+
+- **An undo is never refused because your min went up.** Putting back a price that is now below
+  the min says so loudly (`UNDO RESTORES A NIGHT BELOW YOUR MIN`) and goes ahead, on PriceLabs and
+  on a PMS calendar, as Beyond already did. A normal plan below the min is still refused.
+- **A dateless inquiry, declined request or cancellation no longer blocks the whole property**
+  (Hostaway sends no dates for a dateless inquiry). A booked stay with bad dates still does.
+- **Smoobu: a long-stay discount or coupon makes that booking's revenue unknown** instead of
+  counting the full base price as paid.
+- **A connection cut mid-response is a plain "no readable response"**, not a traceback, on every
+  read, write and setup call.
+- **Migration 001 gives the tables to the service role only**, so running it alone never opens
+  them to the anon key.
+- **The PriceLabs MCP write tools are guarded.** `pricelabs_set_overrides` and
+  `pricelabs_update_listings` need `confirm: true`, a price type, the listing's currency, a fixed
+  night at or above the min, and min <= base <= max; a value 5x off live is refused. The Revenue
+  Manager still writes only through `apply_change.py`.
+- `reduce_prices.py` reuses a cached price pull for 15 minutes, not the whole day.
+
 ## 5.0.8
 
 From a second Codex review:

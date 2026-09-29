@@ -65,7 +65,7 @@ refuses everything else (bookings, messages, availability, cancellations).
 - **Reservations:** `type` is `reservation` | `modification of booking` | `cancellation`; cancellations are
   left out unless `showCancellation`; blocked bookings are excluded (`excludeBlocked=true`) and any that
   still arrive are dropped. Room revenue is the `basePrice` price element(s) (the stay total, not per night).
-  Long-stay discounts and coupons are not netted, because their sign is not documented. `page` is 1-based,
+  A non-zero long-stay discount or coupon element makes the value unknown (its sign is not documented). `page` is 1-based,
   `pageSize` max 100.
 - `created-at` ("2018-01-03 13:51") has no timezone, so pickup windows cannot place Smoobu bookings in time.
 - Whether `end_date` is inclusive is not documented: reads ask one extra night and trim.

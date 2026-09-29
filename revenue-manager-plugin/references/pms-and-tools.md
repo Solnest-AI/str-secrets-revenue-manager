@@ -137,8 +137,9 @@ listing['data']  # Array of date objects
 Read tools: `pricelabs_list_listings`, `pricelabs_get_listing`, `pricelabs_get_listing_prices`,
 `pricelabs_get_neighborhood_data`, `pricelabs_list_reservations`, `pricelabs_list_overrides`,
 `pricelabs_get_rate_plans`. The write tools (`pricelabs_update_listings`,
-`pricelabs_set_overrides`, `pricelabs_delete_overrides`) are what the safe writer uses; never
-call them directly.
+`pricelabs_set_overrides`, `pricelabs_delete_overrides`) are never called directly: every change
+goes through the safe writer (`fetch/apply_change.py`), which calls the PriceLabs API itself. The
+tools refuse without `confirm: true` and guard the price (type, currency, min/max) as a backstop.
 
 ### Beyond (pricing tool, read and write)
 - Beyond's official MCP (Neyoba) is read-only. The connections kit builds a `beyond` server on

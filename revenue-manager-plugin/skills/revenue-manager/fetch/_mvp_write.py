@@ -54,6 +54,7 @@ import math
 import os
 import re
 import time
+import http.client
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
@@ -173,7 +174,7 @@ class WriteClient:
         except urllib.error.HTTPError as exc:
             exc.close()  # the body can echo the request; never surface it
             raise CannotWrite(f"PriceLabs {method} {path}: HTTP {exc.code}") from None
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
             raise CannotWrite(f"PriceLabs {method} {path}: no readable response") from None
         self.calls[-1]["status"] = status
         if not raw:
@@ -997,6 +998,11 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
         if night is None:
             warnings.append(f"{d}: no current price for that night, so the {a['price']}% could not "
                             "check it against your min and max.")
+        elif night < merged["min"] - 0.005 and rollback:
+            # An undo puts back exactly what the operator had. Refusing it would leave the change
+            # it undoes stuck in place, so the undo says it loudly instead (as the Beyond writer does).
+            warnings.append(f"UNDO RESTORES A NIGHT BELOW YOUR MIN: {d} goes back to "
+                            f"${_money(night)} (min ${_money(merged['min'])}), exactly as it was before.")
         elif night < merged["min"] - 0.005:
             raise CannotWrite(f"{d}: that night would be ${_money(night)}, below your min of "
                               f"${_money(merged['min'])}. Nothing was planned.")

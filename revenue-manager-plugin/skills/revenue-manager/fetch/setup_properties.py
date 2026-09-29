@@ -59,6 +59,7 @@ import math
 import os
 import re
 import sys
+import http.client
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -401,7 +402,7 @@ def post_sql(project: str, token: str, sql: str) -> None:
             raise SetupError("Supabase HTTP 401: the Supabase access token expired or wrong; "
                              "re-run the connections kit's Supabase step") from None
         raise SetupError(f"Supabase HTTP {exc.code}: {detail}") from None
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
         raise SetupError("Supabase is unreachable") from None
 
 

@@ -38,6 +38,7 @@ import json
 import os
 import re
 import time
+import http.client
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
@@ -167,7 +168,7 @@ class CalendarHTTP:
             why = self.explain.get(exc.code)
             raise CannotWrite(f"{self.label} {method} {path}: HTTP {exc.code}"
                               + (f" ({why})" if why else "")) from None
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
             raise CannotWrite(f"{self.label} {method} {path}: no readable response") from None
         self.calls[-1]["status"] = status
         if not raw:
@@ -317,7 +318,7 @@ def plan_calendar(change: dict, target, settings: dict | None = None, *, today: 
     """rollback=True is set ONLY by the undo path, which builds calendar_restore from a journal
     or snapshot this writer saved. Past dates are dropped and dates already back are skipped,
     both said on the card; a price cut is allowed without a floor there because it puts back a
-    value that was live before, and the floor (when one exists) still holds."""
+    value that was live before. A restored price under the floor is warned about, not refused."""
     today = today or date.today()
     now = now or datetime.now(timezone.utc)
     settings = settings or {}
@@ -415,7 +416,12 @@ def plan_calendar(change: dict, target, settings: dict | None = None, *, today: 
         op = {"kind": "night", "date": d, "before": before, "after": after, "set": changed}
         if "price" in changed:
             new, old = after["price"], before["price"]
-            if floor is not None and new < floor - _tol(currency):
+            if floor is not None and new < floor - _tol(currency) and rollback:
+                # An undo puts back exactly what was live before. Refusing it would leave the
+                # change it undoes stuck in place, so the undo says it loudly instead.
+                warnings.append(f"UNDO RESTORES A NIGHT BELOW YOUR MIN: {d} goes back to {currency} "
+                                f"{_money(new)} (min {_money(floor)}, {floor_src}), exactly as it was before.")
+            elif floor is not None and new < floor - _tol(currency):
                 raise CannotWrite(f"{d}: {currency} {_money(new)} is below your min of {_money(floor)} "
                                   f"({floor_src}). Nothing was planned.")
             if floor is None and not rollback and (old is None or new < old):
@@ -642,7 +648,7 @@ def apply_envelope(envelope: dict, target, settings: dict | None = None, *, stat
         floor, fsrc = floor_for(target, lid, settings)
         for op in price_ops:
             new, old = op["after"]["price"], op["before"]["price"]
-            if floor is not None and new < floor - _tol(currency):
+            if floor is not None and new < floor - _tol(currency) and not envelope.get("undo"):
                 raise CannotWrite(f"{op['date']}: {_money(new)} is below your min of {_money(floor)} "
                                   f"({fsrc}) now. Nothing was sent; plan again.")
             if floor is None and not envelope.get("undo") and (old is None or new < old):

@@ -128,14 +128,26 @@ def property_row(summary: dict, detail: dict) -> dict:
     }
 
 
+def _has_discount(elements) -> bool:
+    """A non-zero discount or coupon element (longStayDiscount, coupon, ...)."""
+    for e in elements if isinstance(elements, list) else []:
+        kind = str(e.get("type") or "").lower() if isinstance(e, dict) else ""
+        if ("discount" in kind or "coupon" in kind) and _cents(e.get("amount")) not in (None, 0):
+            return True
+    return False
+
+
 def reservation_row(raw: dict, currency: str | None = None) -> dict:
     """Room revenue = the basePrice price element(s) not already included in another element.
-    Long-stay discounts and coupons are not netted: their sign is not documented."""
+    A long-stay discount or coupon element has no documented sign, so its presence makes the
+    value unknown rather than the gross base price reported as paid (as Hostaway does)."""
     elements = raw.get("priceElements")
     base = [e for e in elements if isinstance(e, dict) and e.get("type") == "basePrice"
             and e.get("priceIncludedInId") is None] if isinstance(elements, list) else []
     amounts = [_cents(e.get("amount")) for e in base]
     accommodation = sum(amounts) if base and all(a is not None for a in amounts) else None
+    if accommodation is not None and _has_discount(elements):
+        accommodation = None
     codes = {_currency(e.get("currencyCode")) for e in base} - {None}
     arrival, departure = raw.get("arrival"), raw.get("departure")
     try:

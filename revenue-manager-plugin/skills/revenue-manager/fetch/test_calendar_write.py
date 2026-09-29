@@ -618,6 +618,19 @@ class Undo(Base):
         self.assertEqual([op["date"] for op in env["operations"]], [d(3)])
         self.assertTrue(any("in the past now" in w for w in env["warnings"]))
 
+    def test_undo_restores_a_price_now_below_a_raised_floor_with_a_warning(self):
+        fake = FakeHospitable()
+        journal = self.applied(fake, [{"date": d(4), "price": 230}])  # was 200
+        raised = {"min_price": 210}  # the min went up after the change
+        env = cw.plan_calendar(cw.rollback_change(journal), hosp(fake), raised, today=TODAY, now=LATER, rollback=True)
+        self.assertTrue(any("UNDO RESTORES A NIGHT BELOW YOUR MIN" in w for w in env["warnings"]))
+        self.assertEqual(self.apply(env, fake, settings=raised, when=LATER)["status"], "verified")
+        self.assertEqual(fake.days[d(4)]["amount"], 20000)
+
+    def test_a_normal_plan_below_the_floor_is_still_refused(self):
+        with self.assertRaisesRegex(CannotWrite, "below your min of 210.00"):
+            plan(FakeHospitable(), [{"date": d(4), "price": 195}], settings={"min_price": 210})
+
     def test_undo_of_a_raise_works_without_a_floor(self):
         fake = FakeHospitable()
         journal = self.applied(fake, [{"date": d(3), "price": 230}], settings={})

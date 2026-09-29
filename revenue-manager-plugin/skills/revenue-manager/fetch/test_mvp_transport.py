@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import os
@@ -313,6 +314,8 @@ class StoreTests(StoreCase):
         errors = (
             HTTPError(secret_url, 403, "PRIVATE_MESSAGE", {}, io.BytesIO(b"PRIVATE_BODY")),
             URLError("PRIVATE_CONNECTION_ERROR " + secret_url),
+            # a connection cut mid-body (hotel wifi): urllib does not wrap it in URLError
+            http.client.IncompleteRead(b"PRIVATE_PARTIAL_BODY"),
             Response(b"PRIVATE_INVALID_JSON"),
         )
         for response in errors:

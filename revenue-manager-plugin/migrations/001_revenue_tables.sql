@@ -1,5 +1,6 @@
 -- Revenue Manager Plugin — Supabase Migration v1
--- Run this ONCE in your own Supabase project before using the skill.
+-- Run 001 through 004 in order (setup_properties.py does this for you). If you paste by hand,
+-- run every numbered file, not just this one.
 -- Copy this file's contents into: Supabase Dashboard → SQL Editor → New query → Run.
 
 -- 1. market_snapshots — point-in-time market/comp data (one row per property per snapshot_date)
@@ -87,20 +88,19 @@ ALTER TABLE public.pricelabs_change_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pricing_decisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.property_config ENABLE ROW LEVEL SECURITY;
 
--- Example: allow the service role full access (service role bypasses RLS anyway,
--- but this makes intent explicit). Tighten for your multi-user setup.
+-- Only the service role gets access (it bypasses RLS anyway; the anon key gets nothing).
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'market_snapshots' AND policyname = 'service_all') THEN
-    CREATE POLICY service_all ON public.market_snapshots FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY service_all ON public.market_snapshots FOR ALL TO service_role USING (true) WITH CHECK (true);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'pricelabs_change_log' AND policyname = 'service_all') THEN
-    CREATE POLICY service_all ON public.pricelabs_change_log FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY service_all ON public.pricelabs_change_log FOR ALL TO service_role USING (true) WITH CHECK (true);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'pricing_decisions' AND policyname = 'service_all') THEN
-    CREATE POLICY service_all ON public.pricing_decisions FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY service_all ON public.pricing_decisions FOR ALL TO service_role USING (true) WITH CHECK (true);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'property_config' AND policyname = 'service_all') THEN
-    CREATE POLICY service_all ON public.property_config FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY service_all ON public.property_config FOR ALL TO service_role USING (true) WITH CHECK (true);
   END IF;
 END $$;

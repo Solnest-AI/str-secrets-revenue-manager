@@ -24,6 +24,7 @@ import math
 import os
 import re
 import time
+import http.client
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -188,7 +189,7 @@ def get_token(connections) -> str:
         why = ("the client id or secret is expired or wrong" if exc.code == 401
                else "today's 5-token cap may be spent")
         raise GuestyError(f"Guesty token request refused (HTTP {exc.code}); {why}") from None
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, ValueError):
         raise GuestyError("Guesty token endpoint unreachable") from None
     if not tok:
         raise GuestyError("Guesty returned no access token")

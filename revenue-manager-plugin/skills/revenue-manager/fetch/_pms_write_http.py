@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import http.client
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -93,7 +94,7 @@ class TargetHTTP:
             exc.close()  # the body can echo the request or guest data; never surface it
             self.calls[-1]["status"] = exc.code
             raise CannotWrite(f"{self.vendor} {method} {path}: HTTP {exc.code}") from None
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
             raise CannotWrite(f"{self.vendor} {method} {path}: no readable response") from None
         self.calls[-1]["status"] = status
         if not raw:

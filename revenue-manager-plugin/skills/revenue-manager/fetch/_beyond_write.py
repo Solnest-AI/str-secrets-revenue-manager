@@ -39,6 +39,7 @@ import copy
 import hashlib
 import json
 import os
+import http.client
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
@@ -127,7 +128,7 @@ class WriteClient:
         except urllib.error.HTTPError as exc:
             exc.close()  # Beyond error details can echo channel credentials; never surface them
             raise CannotWrite(f"Beyond {method} {path}: HTTP {exc.code}") from None
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
             raise CannotWrite(f"Beyond {method} {path}: no readable response") from None
         self.calls[-1]["status"] = status
         if not raw:
