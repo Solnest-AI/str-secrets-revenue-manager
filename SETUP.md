@@ -26,6 +26,9 @@ bash install-tools.sh
 ```
 
 - `All set`: go to step 1.
+- A `⚠️ Git` line (Mac only) is not a stop: Apple's installer window just opened. Tell them "A
+  window from Apple just opened. Click **Install**, then **Agree**. It finishes on its own, and you
+  can leave it running," and carry on with the line below it.
 - `RESTART NEEDED`: something was just installed, and the app only sees a new tool after it
   restarts. Tell the attendee, in these words or close to them: **"One tool was missing, so I
   installed it. Now fully quit Claude Code (on Mac press Cmd+Q; on Windows close every Claude
@@ -53,6 +56,9 @@ did, get it for them:
 ```bash
 git clone --quiet https://github.com/Solnest-AI/str-secrets-connections "$HOME/str-secrets-connections" && echo "kit: $HOME/str-secrets-connections"
 ```
+
+(On a Mac where `git` fails with `xcrun: error`, get it without Git:
+`D="$HOME/str-secrets-connections"; mkdir -p "$D" && curl -fsSL -o "$D.tar.gz" https://github.com/Solnest-AI/str-secrets-connections/archive/refs/heads/main.tar.gz && tar -xzf "$D.tar.gz" -C "$D" --strip-components 1 && rm -f "$D.tar.gz" && echo "kit: $D"`)
 
 Then follow `<kit>/CONNECTIONS.md` from its start (it says hello, asks four questions and
 connects everything) and come back to step 2 once its done message has printed.

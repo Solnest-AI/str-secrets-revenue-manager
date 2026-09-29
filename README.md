@@ -40,6 +40,15 @@ Claude follows `SETUP.md`, in this order:
 > follow `SETUP.md`, starting every command with `cd ~/str-secrets-revenue-manager &&` (or
 > this folder), because Claude Code can reset the working folder between commands. When you
 > tell them to quit and reopen, give them the folder's full path to reopen in.
+>
+> **On a Mac, if `git` fails with `xcrun: error` or `invalid active developer path`,** Git is not
+> installed yet (it comes with Apple's command line tools; step 0 opens Apple's installer for
+> them). Do not stop to install it: nothing in this setup needs Git once the folder is here. Get
+> the same folder without it, and run this same line again to update a folder that has no `.git`:
+>
+> ```bash
+> D=~/str-secrets-revenue-manager; mkdir -p "$D" && curl -fsSL -o "$D.tar.gz" https://github.com/Solnest-AI/str-secrets-revenue-manager/archive/refs/heads/main.tar.gz && tar -xzf "$D.tar.gz" -C "$D" --strip-components 1 && rm -f "$D.tar.gz"
+> ```
 
 ## Using it
 

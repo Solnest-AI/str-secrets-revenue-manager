@@ -32,18 +32,28 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) WIN=1 ;; *) WIN=0 ;; esac
 ok()   { printf '✅ %s\n' "$1"; }
 bad()  { printf '❌ %s\n' "$1"; BROKEN=1; }
 info() { printf '   %s\n' "$1"; }
+warn() { printf '⚠️  %s\n' "$1"; }
 
 # ---------------------------------------------------------------- git --
-if command -v git >/dev/null 2>&1; then
-  ok "Git $(git --version 2>/dev/null | awk '{print $3}')"
+# Git counts only when it answers. On a Mac /usr/bin/git is always there, but until Apple's command
+# line tools are installed it is a stub that prints no version and exits 1, so `command -v git`
+# alone passed on Macs with no Git at all (2026-09-28 audit).
+GIT_V="$(git --version 2>/dev/null | awk '{print $3}')"
+if [ -n "$GIT_V" ]; then
+  ok "Git $GIT_V"
 elif [ $WIN -eq 1 ] && { [ -x /mingw64/bin/git.exe ] || [ -x /cmd/git.exe ] || [ -x "/c/Program Files/Git/cmd/git.exe" ]; }; then
   # Inside the desktop app the Bash tool IS Git Bash, so Git is installed even when this
   # shell's PATH does not list it.
   ok "Git (installed with Git Bash)"
 elif [ $WIN -eq 1 ]; then
   bad "Git: not found. connectors/system-git.md (the Git for Windows installer, keep every default)"
+elif [ $CHECK -eq 1 ]; then
+  warn "Git: Apple's command line tools are missing (install mode opens Apple's installer)"
 else
-  bad "Git: missing. connectors/system-git.md (xcode-select --install on Mac)"
+  # A Mac needs Git only for updates once this folder is here, so this opens Apple's installer
+  # and carries on instead of stopping the setup on a 5 to 15 minute download.
+  xcode-select --install >/dev/null 2>&1
+  warn "Git: Apple's command line tools are missing. Apple's installer window just opened: click Install, then Agree. It finishes on its own in 5 to 15 minutes; nothing in this setup waits for it."
 fi
 
 # --------------------------------------------------------------- node --
@@ -61,10 +71,12 @@ elif [ $CHECK -eq 1 ]; then
   bad "Node.js: missing or older than 20 (install mode adds it)"
 elif [ $WIN -eq 1 ] && command -v winget >/dev/null 2>&1; then
   info "installing Node.js LTS with winget. Windows shows a permission prompt (User Account Control): click Yes."
-  winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements --silent >/dev/null 2>&1
+  # --source winget: without it winget also queries the Microsoft Store source and aborts with
+  # 0x8a15003b when the Store is unreachable. Its last line is kept, so a failure says why.
+  WG_SAID="$(winget install --id OpenJS.NodeJS.LTS -e --source winget --accept-source-agreements --accept-package-agreements --silent 2>&1 | tr '\r' '\n' | grep -v '^[[:space:]]*$' | tail -1)"
   NODE_V="$(node_ok "/c/Program Files/nodejs/node.exe")"
   if [ -n "$NODE_V" ]; then ok "Node.js v$NODE_V (just installed)"; INSTALLED=1
-  else bad "Node.js: winget could not install it. connectors/system-node.md"; fi
+  else bad "Node.js: winget could not install it (winget said: ${WG_SAID:-nothing}). connectors/system-node.md"; fi
 elif [ $WIN -eq 0 ] && command -v brew >/dev/null 2>&1; then
   info "installing Node.js with Homebrew"
   brew install node >/dev/null 2>&1

@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.0.10
+
+Setup, found in the night-before audit (nothing in the plugin changed):
+
+- **A Mac without Apple's command line tools no longer gets a false ✅ for Git.** On a Mac
+  `/usr/bin/git` is always there, a stub until those tools are installed, so the old
+  `command -v git` passed with a blank version. Git now counts only when `git --version` answers.
+  A Mac without it gets a ⚠️ line and Apple's installer window, and setup carries on: nothing here
+  needs Git once the folder is downloaded. Windows without Git is still a stop.
+- **A Mac with no Git can still get the folder.** README and SETUP give a curl and tar download
+  for when `git` fails with `xcrun: error`.
+- **Windows: winget installs Node from the winget source only** (`--source winget`), so an
+  unreachable Microsoft Store no longer aborts it, and a failure prints winget's own last line.
+
 ## 5.0.9
 
 From a full bug review:
