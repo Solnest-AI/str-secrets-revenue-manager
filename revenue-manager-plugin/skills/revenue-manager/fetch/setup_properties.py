@@ -84,11 +84,16 @@ CHANNEL_ALIASES = {"homeaway": "vrbo", "homeaway2": "vrbo", "vrbo": "vrbo", "abr
                    "bookingcom": "booking", "booking": "booking", "airbnb": "airbnb", "airbnb2": "airbnb",
                    "airbnbofficial": "airbnb", "expedia": "expedia", "tripadvisor": "tripadvisor", "hometogo": "hometogo",
                    # Google Vacation Rentals sells the direct-booking site's price (Hospitable calls it
-                   # gvr), so it carries the direct markup, not one of its own (Ryan 2026-09-26)
-                   "gvr": "direct", "googlevacationrentals": "direct", "google": "direct"}
-# Channels a PMS reports that are not an OTA, so they carry no markup requirement.
-NOT_OTA = {"direct", "manual", "website", "owner", "block", "blocked", "other", "hospitable", "guesty",
-           "ownerrez", "hostaway", "hostfully", "lodgify", "smoobu", "uplisting", "none"}
+                   # gvr), so it needs no markup of its own and uses the direct one (Ryan 2026-09-26).
+                   # It is still its own name (S2-040): a host whose Google markup differs from direct
+                   # (10% vs 5%) gives --markup google=10, and folding it into direct refused that as
+                   # "direct given twice".
+                   "gvr": "google", "googlevacationrentals": "google", "google": "google",
+                   "googlevr": "google"}
+# Channels a PMS reports that are not an OTA, so they carry no markup requirement. Google is here:
+# with no google markup stored it uses the direct one.
+NOT_OTA = {"direct", "google", "manual", "website", "owner", "block", "blocked", "other", "hospitable",
+           "guesty", "ownerrez", "hostaway", "hostfully", "lodgify", "smoobu", "uplisting", "none"}
 
 
 class SetupError(Exception):

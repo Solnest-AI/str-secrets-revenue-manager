@@ -163,7 +163,9 @@ markup do you add on Airbnb, VRBO, Booking.com and your direct booking site?"** 
 Airbnb 16%, VRBO 20%, Booking.com 18%, direct 10%.) Every site named needs a number: they all
 matter equally, none is optional. If the PMS reports no sites (Lodgify, Smoobu, Uplisting),
 ask which sites they list on in the same breath. Also ask whether it is the same for every
-property; note any property that differs and its numbers. If they add a markup in two places (in the PMS and in the pricing tool), get both
+property; note any property that differs and its numbers. Google Vacation Rentals uses the direct
+markup and is not asked about; if they say their Google markup is different, store it too as
+`--markup google=<percent>`. If they add a markup in two places (in the PMS and in the pricing tool), get both
 and store the combined figure, (1 + first) x (1 + second) - 1: 10% and 5% make 15.5%. Store
 exactly what they say. Never work it out from the calendar; a difference between the PMS and
 PriceLabs is not a markup.
