@@ -46,7 +46,9 @@ class Markups(unittest.TestCase):
     def test_channel_spellings_collapse_to_one_name(self):
         for raw, want in (("Booking.com", "booking"), ("booking_com", "booking"), ("HomeAway", "vrbo"),
                           ("VRBO", "vrbo"), ("airbnb2", "airbnb"), ("Air BnB", "airbnb"), ("expedia", "expedia"),
-                          ("gvr", "direct"), ("Google Vacation Rentals", "direct")):  # GVR sells the direct price (Ryan 2026-09-26)
+                          # GVR sells the direct price (Ryan 2026-09-26) but is its own name since
+                          # S2-040, so a different Google markup can be given; see test_google_markup
+                          ("gvr", "google"), ("Google Vacation Rentals", "google")):
             with self.subTest(raw=raw):
                 self.assertEqual(channel_name(raw), want)
         with self.assertRaisesRegex(SetupError, "twice"):
