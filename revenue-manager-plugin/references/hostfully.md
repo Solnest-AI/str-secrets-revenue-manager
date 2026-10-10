@@ -73,7 +73,16 @@ pricing, pricing rules, property edits, other API versions. It only ever builds 
   not accepted, NEW/ON_HOLD/PENDING* request or inquiry. BLOCK leads and SAMPLE leads are not stays.
 - `bookedUtcDateTime` is read as UTC (its name); a stamp without an offset gets `Z`.
 - **Reviews:** `rating` is an integer with no documented scale. Only 1 to 5 from a non-Booking.com source is
-  kept, so scales never mix.
+  kept, so scales never mix. The review `date` is `format: date` (ReviewApi3Dto, read 2026-10-10), a plain
+  day; it is read as midnight UTC (S2-023: before this every Hostfully review was dropped as unreadable).
+  Hostfully holds only the reviews it stores: when an Airbnb-listed property has no Airbnb review there, the
+  card says `REVIEWS FROM HOSTFULLY ONLY` instead of letting the count read as the listing's.
+- **Status history (S2-024):** a lead carries none, only `bookedUtcDateTime`, `metadata.createdUtcDateTime`
+  and `metadata.updatedUtcDateTime` (LeadApiV3_1Dto, read 2026-10-10). The adapter emits what those prove:
+  booked at `bookedUtcDateTime`; a request or inquiry since creation; a declined lead was a request (or an
+  inquiry, by `type`) until its last update at the latest; a cancelled lead is unknown from booking until its
+  last update, then cancelled. `updatedUtcDateTime` is the last change, so it is only an upper bound. Pacing
+  that hits an unknown still says NO DATA rather than guess.
 - Whether `to` is inclusive is not documented: reads ask one extra night and trim.
 - **Not verified:** whether the calendar's `pricing.value` equals the pricing period `price` on weekends,
   given the property's `weekendAdjustmentRate`. The core's verifying re-read would catch a mismatch.

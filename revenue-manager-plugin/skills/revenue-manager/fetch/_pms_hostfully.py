@@ -18,7 +18,12 @@ What the docs say, and what this module relies on:
   - GET/POST /pricing-periods: one period per DATE {propertyUid, date, price, minimumStay,
     availableForCheckIn, availableForCheckOut, name}; POST {operation: SET | REMOVE, pricingPeriod}.
     (The older build brief's startDate/endDate/amount shape is not what v3.3 documents.)
-  - Reviews: GET /reviews?propertyUid; `rating` is an integer with no documented scale.
+  - Reviews: GET /reviews?propertyUid; `rating` is an integer with no documented scale, and
+    `date` is `format: date` (a plain day; ReviewApi3Dto, read 2026-10-10). Hostfully stores only
+    the reviews it holds, which need not include the listing's Airbnb reviews (S2-023).
+  - Leads carry no status history, only `bookedUtcDateTime`, `metadata.createdUtcDateTime` and
+    `metadata.updatedUtcDateTime` (LeadApiV3_1Dto, read 2026-10-10). status_history() builds the
+    part of the history those prove (S2-024).
   - The property has `useMinimumPriceRule` (a boolean) but no documented minimum price value.
   - Limits: 10,000 calls an hour per client (the FAQ says 1,000; plan for the lower).
 """
@@ -65,6 +70,14 @@ def _cents(value):
 def _currency(value):
     ok = isinstance(value, str) and re.fullmatch(r"[A-Za-z]{3}", value) and value.upper() != "NONE"
     return value.upper() if ok else None
+
+
+def _day_utc(value):
+    """A plain day (Hostfully's review `date` is `format: date`) as midnight UTC. Anything else
+    goes through _utc unchanged: a bad value stays bad and is refused downstream."""
+    if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return value + "T00:00:00Z"
+    return _utc(value)
 
 
 def _utc(value):
@@ -119,6 +132,38 @@ def lead_status(raw: dict) -> str | None:
     return STATUS.get(status, "unknown")
 
 
+def status_history(raw: dict, status: str) -> list:
+    """The part of a lead's status history its own timestamps prove (S2-024). Without any,
+    pacing read every booking as "unknown" at last year's comparison date and showed NO DATA.
+
+      accepted               accepted at bookedUtcDateTime (none: nothing, it stays unknown)
+      request / inquiry      that status since metadata.createdUtcDateTime
+      not accepted           a request (or inquiry, by `type`) from creation, declined by
+                             metadata.updatedUtcDateTime at the latest. A declined lead was never
+                             booked: a booked one that falls through is CANCELLED.
+      cancelled              unknown from booking (or creation) until updatedUtcDateTime, then
+                             cancelled: when between the two it was cancelled is not knowable.
+    updatedUtcDateTime is the LAST change to the lead, so it bounds the status change from above;
+    it is never read as the moment of the change itself."""
+    meta = raw.get("metadata") or {}
+    booked, created, updated = (_utc(raw.get("bookedUtcDateTime")), _utc(meta.get("createdUtcDateTime")),
+                                _utc(meta.get("updatedUtcDateTime")))
+
+    def event(category, at):
+        return [{"category": category, "changed_at": at}] if isinstance(at, str) and at else []
+
+    if status == "accepted":
+        return event("accepted", booked)
+    if status in ("request", "inquiry"):
+        return event(status, created)
+    if status == "not accepted":
+        before = "inquiry" if str(raw.get("type") or "").upper() == "INQUIRY" else "request"
+        return event(before, created) + event("not accepted", updated)
+    if status == "cancelled":
+        return event("unknown", booked or created) + event("cancelled", updated)
+    return []
+
+
 def reservation_row(raw: dict, order: dict | None) -> dict:
     status = lead_status(raw)
     if status is None:
@@ -137,6 +182,7 @@ def reservation_row(raw: dict, order: dict | None) -> dict:
         "id": raw.get("uid"), "platform": CHANNELS.get(str(raw.get("channel") or "").upper()),
         "status": status, "check_in": check_in, "check_out": check_out, "nights": nights,
         "booking_date": _utc(raw.get("bookedUtcDateTime") or meta.get("createdUtcDateTime")),
+        "status_history": status_history(raw, status),
         "property_ids": [raw["propertyUid"]] if isinstance(raw.get("propertyUid"), str) else [],
         "financials": {"currency": (order or {}).get("currency"),
                        "host_accommodation_cents": _cents(rent.get("rentNetPrice")),
@@ -150,7 +196,7 @@ def review_row(raw: dict) -> dict:
     # No scale is documented; only a 1-5 value from a 5-star channel is kept, never mixed in.
     ok = whole(rating) is not None and 1 <= rating <= 5 and source != "BOOKING_DOT_COM"
     return {
-        "id": raw.get("uid"), "platform": REVIEW_SOURCES.get(source), "reviewed_at": raw.get("date"),
+        "id": raw.get("uid"), "platform": REVIEW_SOURCES.get(source), "reviewed_at": _day_utc(raw.get("date")),
         "rating": rating if ok else None,
         "detailed_ratings": [{"type": CATEGORIES[c["category"]], "rating": c.get("rate")}
                              for c in raw.get("ratingCategories") or []
@@ -266,7 +312,18 @@ class HostfullySource:
         def load():
             rows, total = self._paged("/reviews", {"propertyUid": pid}, "reviews")
             mine = [normalize_review(review_row(r)) for r in rows if r.get("propertyUid") == pid]
-            return {"data": mine, "total": len(mine), "complete": total is None or total == len(rows)}
+            out = {"data": mine, "total": len(mine), "complete": total is None or total == len(rows)}
+            # S2-023: Hostfully holds the reviews it stores, not necessarily the listing's Airbnb
+            # ones (a student had 1 here and 159 on Airbnb). Say so instead of letting the count
+            # read as the listing's.
+            listed = self.property(pid).get("listings") or []
+            if any(x.get("platform") == "airbnb" for x in listed) and not any(
+                    r.get("platform") == "airbnb" for r in mine):
+                out["gap"] = (f"REVIEWS FROM HOSTFULLY ONLY: Hostfully returned no Airbnb reviews for "
+                              f"this property, though it is listed on Airbnb, so the review count and "
+                              f"rating cover only the {len(mine)} review(s) Hostfully stores. Airbnb's own "
+                              "reviews are not read here.")
+            return out
         return self.client.fetch("pms.reviews", [self.connections.account("hostfully"), pid], load)
 
 

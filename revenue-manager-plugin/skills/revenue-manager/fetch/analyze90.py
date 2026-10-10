@@ -91,6 +91,8 @@ def compute(inputs, as_of, start, days):
     pms["reviews"]["all_time_coverage_verified"] = reviews_in.get("complete", False)
     pms["reviews"]["total_reported"] = reviews_in.get("total")
     pms["reviews"]["unreadable_sample"] = reviews_unreadable
+    # a review source that holds only part of the listing's reviews says so (S2-023)
+    pms["reviews"]["source_gap"] = reviews_in.get("gap")
     # days_out counts from the PROPERTY-LOCAL today, which after the evening rollover is
     # the day before `start`. Derived from as_of, so a replay reproduces it exactly.
     try:
