@@ -66,7 +66,10 @@ class FakeRules(FakePriceLabs):
         method = req.get_method()
         path = url.path
         if path in ("/v1/customizations/group", "/v1/customizations/account"):
-            raise AssertionError(f"the writer must never touch {method} {path}")
+            # read-only since S2-007 (the seasonal profile a listing inherits); never written
+            if method != "GET":
+                raise AssertionError(f"the writer must never write {method} {path}")
+            return super().open(req, timeout)
         if path != "/v1/customizations/listing":
             return super().open(req, timeout)
         body = json.loads(req.data) if req.data else None
@@ -436,8 +439,12 @@ class TransportAndAudit(unittest.TestCase):
         c = WriteClient("synthetic-key", opener=FakeRules())
         c.request("GET", "/v1/customizations/listing",
                   {"listing_id": LID, "pms_name": PMS, "toggled_on": "false"})
+        # S2-007: group and account rules are READ (the seasonal profile a listing inherits sets
+        # its nights' min and max); writing them stays refused
+        c.request("GET", "/v1/customizations/account", {"pms_name": PMS, "toggled_on": "false"})
         for method, path in (("POST", "/v1/customizations/group"), ("POST", "/v1/customizations/account"),
-                             ("GET", "/v1/customizations/group"), ("POST", "/v1/customization_profiles")):
+                             ("PUT", "/v1/customizations/group"), ("DELETE", "/v1/customizations/account"),
+                             ("POST", "/v1/customization_profiles")):
             with self.subTest(path=path), self.assertRaisesRegex(CannotWrite, "refuses"):
                 c.request(method, path, body={"x": 1})
 

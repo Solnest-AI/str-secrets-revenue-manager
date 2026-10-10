@@ -123,6 +123,24 @@ def verification_lines(journal: dict) -> list:
         lines.append(f"  ok  {quiet} other fields and dates re-read, unchanged")
     return lines
 
+def season_scope_lines(journal: dict) -> list:
+    """Where a verified listing-level min/base/max change actually lands (S2-007). The re-read
+    proves the listing value changed; it cannot show that a custom seasonal profile prices some
+    nights with its own fixed value, so those nights did not move. Say it beside the verified line."""
+    scope = (journal.get("envelope") or {}).get("season_scope") or {}
+    lines = []
+    for field in sorted(scope):
+        r = scope[field]
+        if not r.get("season_set"):
+            continue
+        kept = "; ".join(f"{k['season']}: {field} {k['value']:g} ({k['nights']} nights)"
+                         for k in r.get("seasons", [])[:4])
+        lines.append(f"  note {field}: the new listing-level {field} prices {r['moves']} of the next "
+                     f"{r['horizon_days']} nights. Your seasonal profile keeps its own {field} on the other "
+                     f"{r['season_set']} ({kept}); those nights did not move.")
+    return lines
+
+
 def audit_statement(journal: dict) -> str:
     """One INSERT per operation into the existing change log. Values are literals only."""
     env = journal["envelope"]
@@ -541,7 +559,7 @@ def main(argv=None) -> int:
             env = journal["envelope"]
             print(f"APPLIED AND VERIFIED: plan {plan_id(env)} on "
                   f"{env.get('listing_name') or env['target']['listing_id']}")
-            print("\n".join(verification_lines(journal)))
+            print("\n".join(verification_lines(journal) + season_scope_lines(journal)))
             print(f"  undo: apply_change.py rollback --journal {Path(journal['journal_path']).name}")
             if not args.no_audit:
                 try:

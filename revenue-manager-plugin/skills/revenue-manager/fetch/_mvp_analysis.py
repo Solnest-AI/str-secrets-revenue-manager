@@ -9,6 +9,7 @@ from datetime import date as Date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from statistics import mean
 
+import _seasons
 import attribution
 import flywheel
 import rules_first
@@ -98,7 +99,7 @@ def min_price_recommendation(bounds, rows, multiplier, max_delta, comp_p25=None,
     the reason. The rule itself is the same for every pricing tool. The raise never passes
     base; no ceiling (max None) is never read here.
     """
-    current = bounds["min"]
+    current, base_cap = bounds["min"], bounds["base"]
     # "Next 30 nights" is the table's 30-night window: the first NEAR_TERM_DAYS rows of the
     # window. After the evening UTC rollover the window starts tomorrow and days_out starts at
     # 1 (it counts from the property-local today), so `0 <= days_out < 30` kept only 29 nights
@@ -106,6 +107,23 @@ def min_price_recommendation(bounds, rows, multiplier, max_delta, comp_p25=None,
     # Sunburst 46% vs 44.44, Olde Town 56% vs 53.85). Anchor on the window's first night.
     first = min((r["days_out"] for r in rows), default=0)
     near = [r for r in rows if 0 <= r["days_out"] - first < NEAR_TERM_DAYS]
+    # S2-007 (a Summit student report, 2026-09-29): with a custom seasonal profile a FIXED season sets the
+    # min on its nights and the listing-level min is not used there. The card said "keep min at
+    # 435" for a listing whose every night was priced from a $275-300 seasonal floor. When fixed
+    # seasons price most of the next 30 nights, this line is about that season's min.
+    applies, season_label, listing_nights = "listing", None, None
+    if any("night_min" in r for r in near):
+        listing_nights = sum(1 for r in near if not r.get("min_fixed"))
+        held = {}
+        for r in near:
+            if r.get("min_fixed"):
+                held.setdefault(r["min_set_by"], []).append(r)
+        if held:
+            label, governed = max(held.items(), key=lambda kv: len(kv[1]))
+            if len(governed) > listing_nights:
+                applies, season_label = "season", label
+                current = governed[0]["night_min"]
+                base_cap = governed[0].get("night_base", base_cap)
     # ONE occupancy definition on the card: the table's (paid nights over non-blocked nights,
     # _mvp_pms.forward). Live 2026-09-25 (The Apres Arcade) this function counted four $0
     # nights as demand, printed "13% booked vs the market's 13%" under a table saying 0%, and
@@ -158,13 +176,17 @@ def min_price_recommendation(bounds, rows, multiplier, max_delta, comp_p25=None,
     if action == "keep" and reason is None:
         reason = (f"{floor_open} of {len(open_near)} open near-term nights sit at your min and "
                   f"{pace_txt}; nothing says the floor is the problem")
+    if applies == "season":
+        reason = (f"Your custom seasonal profile sets the min on {len(near) - listing_nights} of the "
+                  f"next {len(near)} nights ({season_label}: {current:g}); the listing-level min "
+                  f"{bounds['min']:g} prices {listing_nights} of them. " + reason[:1].upper() + reason[1:])
     recommended = current
     large = False
     if action != "keep":
         capped = min(max(target, lo), hi)
         large = not (lo - 1e-9 <= target <= hi + 1e-9)
         if action == "raise":
-            capped = min(capped, bounds["base"])
+            capped = min(capped, base_cap)
             recommended = math.floor(capped + 1e-9)
         else:
             recommended = math.ceil(capped - 1e-9)
@@ -188,6 +210,9 @@ def min_price_recommendation(bounds, rows, multiplier, max_delta, comp_p25=None,
         "floor_sold_near": floor_sold,
         "pace": pace,
         "comp_p25_net": rounded(p25_net) if p25_net is not None else None,
+        "applies_to": applies,
+        "season": season_label,
+        "listing_min": bounds["min"],
     }
 
 
@@ -356,6 +381,19 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
     if len(override_map) != len(overrides):
         raise CannotAnalyze("Duplicate overrides prevent trustworthy attribution")
     blockers, notes, mismatches, held_gaps, rows = [], [], [], [], []
+    # S2-007: the seasonal profile the listing uses (rules["raw"] is the resolved stack). A
+    # profile that is on but unreadable is NAMED at the top and the listing values are used.
+    season_profile, season_level = None, None
+    if not beyond:
+        season_level = (rules.get("levels") or {}).get("custom_seasonal_profile") or "listing"
+        try:
+            season_profile = _seasons.from_rule((rules.get("raw") or {}).get("custom_seasonal_profile"),
+                                                season_level)
+        except _seasons.SeasonUnreadable as exc:
+            notes.append(f"SEASONAL PROFILE UNREADABLE: your PriceLabs custom seasonal profile "
+                         f"({season_level} level) is switched on but cannot be read ({exc}). Each "
+                         "night's min and max below are the listing-level values, which PriceLabs may "
+                         "not be using on those nights; check the seasons in PriceLabs.")
     pending_pushes, unseen_bookings, stay_missing_dates = [], [], []
     try:
         pl_refreshed = datetime.fromisoformat(str(prices.get("last_refreshed_at")).replace("Z", "+00:00"))
@@ -546,6 +584,12 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             )
         if classification == "pending_hold" and pl_status != "RESERVED":
             held_gaps.append(date)
+        nb = season_profile.night(Date.fromisoformat(date), bounds) if season_profile else None
+        night_min = nb["min"] if nb else bounds["min"]
+        night_max = nb["max"] if nb else bounds["max"]
+        # a percentage season's bound is computed here; PriceLabs' own rounding of it is not known
+        tol_min = 0.5 if nb and nb["set_by"]["min"] and not nb["fixed"]["min"] else 0.005
+        tol_max = 0.5 if nb and nb["set_by"]["max"] and not nb["fixed"]["max"] else 0.005
         over = override_map.get(date, {})
         layer = "fixed_override" if over.get("price_type") == "fixed" else "customization_stack"
         if over.get("price") is not None and over.get("price_type") != "fixed":
@@ -567,13 +611,17 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             "override": over or None,
             "at_floor": first_known(number(price.get("suggested")), net) <= (
                 first_known(number(price.get("effective_min_price")), bounds["min"])) + 0.005
-            if beyond else net == bounds["min"],
+            if beyond else abs(net - night_min) <= tol_min,
             "at_ceiling": (not no_ceiling and net >= bounds["max"] - 0.005) if beyond
-            else net == bounds["max"],
+            else abs(net - night_max) <= tol_max,
             "action": "hold_unavailable" if not opened else "monitor",
             "flags": [],
             "demand": price.get("demand_desc"),
         }
+        if nb:
+            row.update({"night_min": night_min, "night_base": nb["base"], "night_max": night_max,
+                        "min_set_by": nb["set_by"]["min"], "min_fixed": nb["fixed"]["min"],
+                        "max_set_by": nb["set_by"]["max"]})
         if day.get("min_stay_missing") and opened:
             stay_missing_dates.append(date)
             row["withheld_reason"] = ("the PMS sends no min-stay rule for this night; set one there, "
@@ -653,12 +701,14 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             if guard:
                 row["withheld_by_guard"] = guard
             # This is a review range, not a provider operation or an automatic recommendation.
+            # each night's own bounds: a season may set them (S2-007)
+            lo_b, hi_b = row.get("night_min", bounds["min"]), row.get("night_max", ceiling)
             if row.get("direction") == "raise":
-                lower = max(bounds["min"], math.ceil(row["net"] * 1.05))
-                upper = min(ceiling, math.floor(row["net"] * (1 + max_delta)))
+                lower = max(lo_b, math.ceil(row["net"] * 1.05))
+                upper = min(hi_b, math.floor(row["net"] * (1 + max_delta)))
             else:
-                lower = max(bounds["min"], math.ceil(row["net"] * (1 - max_delta)))
-                upper = min(ceiling, math.floor(row["net"] * 0.95))
+                lower = max(lo_b, math.ceil(row["net"] * (1 - max_delta)))
+                upper = min(hi_b, math.floor(row["net"] * 0.95))
             if lower > upper:
                 row["action"] = "review_bounds"
                 row["flags"].append(
@@ -799,6 +849,13 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
         "market_markup_channel": market_channel,
         "markup_source": context["settings"]["channel_markup_source"],
         "bounds": bounds,
+        "seasonal": None if season_profile is None else {
+            "level": season_level,
+            "seasons": season_profile.summary(),
+            "min_nights": sum(1 for r in rows if r.get("min_set_by")),
+            "max_nights": sum(1 for r in rows if r.get("max_set_by")),
+            "nights": len(rows),
+        },
         "movement_scrutiny_pct": rounded(max_delta * 100, 1),
         "min_price": min_price,
         "zero_value_question": zero_question,
@@ -1132,6 +1189,7 @@ def render(pack, run_id, metrics):
     top_gaps = ([n for n in pack.get("notes", []) if str(n).startswith("PRICED WITHOUT")]
                 if not beyond and pack.get("status") == "degraded" else [])
     top_gaps = [n for n in pack.get("notes", []) if str(n).startswith("STALE PRICELABS DATA")] + top_gaps
+    top_gaps = [n for n in pack.get("notes", []) if str(n).startswith("SEASONAL PROFILE UNREADABLE")] + top_gaps
     lines.extend(top_gaps)
     mism = pack.get("reconciliation", {}).get("mismatches") or []
     if mism:
@@ -1167,9 +1225,15 @@ def render(pack, run_id, metrics):
     # can change how the pace and funnel read; before everything else (Ryan, 2026-09-28).
     import flywheel_brief
     lines.extend([""] + flywheel_brief.render(pack) + [""])
+    sp = pack.get("seasonal")
+    seasonal_txt = "" if not sp else (
+        f" (listing level). Your custom seasonal profile ({sp['level']} level) sets its own min on "
+        f"{sp['min_nights']} of these {sp['nights']} nights and its own max on {sp['max_nights']}, so "
+        "on those nights the listing-level value is not what prices them: "
+        + "; ".join(sp["seasons"][:6]) + (" ..." if len(sp["seasons"]) > 6 else ""))
     lines += [
         f"Run {run_id}. Bounds min/base/max: {pack['bounds']['min']:g}/"
-        f"{pack['bounds']['base']:g}/{ceiling}. "
+        f"{pack['bounds']['base']:g}/{ceiling}{seasonal_txt}. "
         "Markups " + ", ".join(f"{k} {v:g}%" for k, v in pack["markups"].items())
         + " (operator-confirmed); market comparison uses the "
         + f"{pack.get('market_markup_channel', 'airbnb')} markup.",
@@ -1201,11 +1265,15 @@ def render(pack, run_id, metrics):
     mp = pack.get("min_price")
     if mp:
         verb = {"lower": "lower to", "raise": "raise to", "keep": "keep at"}[mp["action"]]
+        seasonal_min = mp.get("applies_to") == "season"
         lines.append(
-            f"Recommended min price: {verb} {mp['recommended']:g} net "
-            f"(currently {mp['current']:g})"
+            "Recommended min price"
+            + (f" for {mp['season']} (set in your seasonal profile)" if seasonal_min else "")
+            + f": {verb} {mp['recommended']:g} net (currently {mp['current']:g})"
             + (", LARGE MOVE, confirm" if mp["large_move"] else "")
             + f". {str(mp['reason']).rstrip('. ')}."
+            + (" A seasonal min is changed on the season itself in PriceLabs; this tool does not "
+               "write seasons." if seasonal_min else "")
         )
     lines += [
         "",
