@@ -648,11 +648,14 @@ def existing_dsos(overrides, rows, rules, levels, bounds, today, changes=()) -> 
             except ValueError:
                 pass
         kind, price = o.get("price_type"), to_setting(o.get("price"))
-        if lo is not None and kind == "fixed" and price is not None and price < lo - 0.005:
-            flags.append(f"below the min: fixed {price:g} under min {lo:g}")
+        # that night's own min: a custom seasonal profile may set it (S2-007)
+        night_lo = (row or {}).get("night_min", lo)
+        whose = "that night's seasonal min" if (row or {}).get("min_set_by") else "the listing min"
+        if night_lo is not None and kind == "fixed" and price is not None and price < night_lo - 0.005:
+            flags.append(f"below the min: fixed {price:g} under {'min' if whose == 'the listing min' else whose} {night_lo:g}")
         mn = to_setting(o.get("min_price"))
-        if lo is not None and mn is not None and mn < lo - 0.005 and str(o.get("min_price_type") or "fixed") == "fixed":
-            flags.append(f"below the min: its own min {mn:g} under the listing min {lo:g}")
+        if night_lo is not None and mn is not None and mn < night_lo - 0.005 and str(o.get("min_price_type") or "fixed") == "fixed":
+            flags.append(f"below the min: its own min {mn:g} under {whose} {night_lo:g}")
         if row and kind in ("percent", "percent_stacked") and price:
             fights = []
             for rule in ("day_of_week_adjustment", "last_minute_prices", "far_out_premium"):
