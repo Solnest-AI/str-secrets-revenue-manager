@@ -576,6 +576,8 @@ Follow `audit.md`: one `pricelabs_change_log` row per field/date change (the wri
 - **PMS calendar = ground truth** for what's listed. Per property, measure which PriceLabs field matches it before trusting it.
 - **Track ask (calendar) AND cleared (ADR) separately.** Cleared runs higher.
 - **Markup is operator-stated, per channel** (`channel_markup_pct`). Never inferred from a price gap.
+- **Never commit, push, fork or open a pull request for the Revenue Manager's folder.** It is the user's own copy; "save" means the files on disk.
+- **Updates.** A card that ends with `UPDATE AVAILABLE` gets one line to the user, nothing more. When they say "update the revenue manager", find the folder (`claude plugin marketplace list` shows the `str-secrets-revenue-manager` source folder; `~/str-secrets-revenue-manager` by default) and follow the "update the revenue manager" section of the `CLAUDE.md` in that folder. Never update without being asked.
 - **Never write `property_config` by hand** (no SQL UPDATE or INSERT on it, no MCP `execute_sql` against it). Markups and min prices go in only through `fetch/setup_properties.py`, which merges into the row; a hand write replaced every stored markup on a shared portfolio on 2026-09-28 and every card refused to price.
 - **Hospitable history → `hospitable_list_transactions`**; its calendar reads are in the currency's minor unit (cents for two-decimal currencies).
 - **Enrichment tools are read-only**: RankBreeze, IntelliHost, AirROI, Turno, Breezeway.
