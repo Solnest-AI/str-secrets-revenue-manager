@@ -410,6 +410,16 @@ def parser():
     return ap
 
 
+def closing_lines(mode):
+    """Lines printed after a LIVE card: an update notice when GitHub has a newer version
+    (update_check, S2-002). A fixture or replay run never touches the network."""
+    if mode != "live":
+        return []
+    import update_check
+    line = update_check.update_notice(update_check.local_version())
+    return [line] if line else []
+
+
 def main(argv=None):
     utf8_console()
     args = parser().parse_args(argv)
@@ -495,6 +505,9 @@ def main(argv=None):
     store.save_run(run_id, run)
     store.close()
     print(encode(facts) if args.details else brief, end="\n" if args.details else "")
+    if not args.details:
+        for line in closing_lines(run["mode"]):
+            print(line)
     return exit_code(facts["status"])
 
 

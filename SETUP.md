@@ -15,6 +15,25 @@ before anything is installed. The attendee never opens a terminal. Every command
 yours to run through your Bash tool (Git Bash on Windows); the only things they ever do
 themselves are paste a key into a file, click Yes on an installer prompt, and restart the app.
 
+## First: unlink this folder from GitHub
+
+Run this before step 0, every time (it is quick, and running it twice is fine):
+
+```bash
+bash scripts/detach_from_github.sh
+```
+
+If this folder came from `git clone`, it is linked to Solnest-AI's GitHub, and at the
+2026-09-29 summit a student's "save" turned into a push to our repo. The script removes that
+link from an untouched copy of the public repo, never from a working copy with edits,
+branches or unpushed commits, and always exits 0: relay the one line it prints. Nothing in
+this setup uses the link.
+
+**Never commit, push, fork, open a pull request or create a GitHub repo for this folder.** It is
+the attendee's own copy of a tool, not a project. When they say "save", everything is already
+saved on disk: say so. Updates come by download ("update the revenue manager", see
+`CLAUDE.md`), never by `git pull`.
+
 ## 0. The tools
 
 Run the installer that ships in this folder. It checks Git, Node.js, uv and Python 3.13,

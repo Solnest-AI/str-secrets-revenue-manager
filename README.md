@@ -34,21 +34,31 @@ Claude follows `SETUP.md`, in this order:
 5. Shows a green check ✅, then offers to run it on one of your properties right away. No
    restart needed.
 
-> **Claude:** if someone pasted this repo's link and said "set this up", clone it to
-> `~/str-secrets-revenue-manager` (if that folder already exists, `git pull` there instead).
-> If Claude Code is already open inside this repo, skip the clone and use this folder. Then
-> follow `SETUP.md`, starting every command with `cd ~/str-secrets-revenue-manager &&` (or
-> this folder), because Claude Code can reset the working folder between commands. When you
-> tell them to quit and reopen, give them the folder's full path to reopen in.
->
-> **On a Mac, if `git` fails with `xcrun: error` or `invalid active developer path`,** Git is not
-> installed yet (it comes with Apple's command line tools; step 0 opens Apple's installer for
-> them). Do not stop to install it: nothing in this setup needs Git once the folder is here. Get
-> the same folder without it, and run this same line again to update a folder that has no `.git`:
+> **Claude:** if someone pasted this repo's link and said "set this up", download it and
+> do **not** `git clone` it. A clone stays linked to Solnest-AI's GitHub, and at the 2026-09-29
+> summit a student's "save" turned into a push to our repo. This downloads it to
+> `~/str-secrets-revenue-manager`; run over a folder that is already there, it updates it and
+> leaves their `.env` files, installed tools and caches alone (they are not in the download):
 >
 > ```bash
 > D=~/str-secrets-revenue-manager; mkdir -p "$D" && curl -fsSL -o "$D.tar.gz" https://github.com/Solnest-AI/str-secrets-revenue-manager/archive/refs/heads/main.tar.gz && tar -xzf "$D.tar.gz" -C "$D" --strip-components 1 && rm -f "$D.tar.gz"
 > ```
+>
+> A folder that already has a `.git` folder inside was cloned before 2026-10-10: bring it up to
+> date with `git -C ~/str-secrets-revenue-manager pull --ff-only` instead (a download over a
+> clone looks like local edits, and the unlink step then keeps it linked), and the first step
+> of `SETUP.md` unlinks it for good. If Claude Code is already open inside this repo, skip the
+> download and use this folder. Then follow `SETUP.md`, starting every command with
+> `cd ~/str-secrets-revenue-manager &&` (or this folder), because Claude Code can reset the
+> working folder between commands. When you tell them to quit and reopen, give them the
+> folder's full path to reopen in. **Never commit, push, fork or open a pull request for this
+> folder**: it is the student's own copy, and "save" means the files on disk.
+
+## Updating
+
+When a new version is out, the last line of every pricing card says so. Say **update the
+revenue manager** and Claude downloads it over your folder and reinstalls the plugin. Your
+keys, markups and history stay as they are. Then quit and reopen Claude Code.
 
 ## Using it
 
