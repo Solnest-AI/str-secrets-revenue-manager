@@ -169,7 +169,47 @@ def rule_window(rule: str, cfg: dict) -> str:
     return "all"
 
 
+def _md(value) -> str:
+    """A month, day or year as PriceLabs stores it ("05" or 5), printed plainly."""
+    text = str(value).strip() if value is not None else "?"
+    return str(int(text)) if text.isdigit() else text
+
+
+def _season_price(value) -> str:
+    if value is None or value == "":
+        return "listing"  # an empty season field leaves that night on the listing-level value
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def season_text(cfg: dict) -> str:
+    """Every stored season: dates, price type, min/base/max (S2-007). A count alone hid a $300
+    seasonal floor under a $435 listing min. Printed for an OFF profile too: it is stored and
+    comes back the moment the toggle does. One-off seasons carry their years."""
+    profile = cfg.get("custom_seasonal_profile") or {}
+    parts = []
+    for key, type_key, one_off in (("seasons", "price_type", False),
+                                   ("non_repeating_seasons", "price_type_non_repeating", True)):
+        kind = profile.get(type_key) or "?"
+        for season in profile.get(key) or []:
+            if not isinstance(season, dict):
+                parts.append("unreadable season")
+                continue
+            start = "/".join(_md(season.get(k)) for k in (("start_year",) if one_off else ())
+                             + ("start_month", "start_day"))
+            end = "/".join(_md(season.get(k)) for k in (("end_year",) if one_off else ())
+                           + ("end_month", "end_day"))
+            parts.append(f"{start}-{end} {kind} min={_season_price(season.get('lowest_price'))} "
+                         f"base={_season_price(season.get('base_price'))} "
+                         f"max={_season_price(season.get('highest_price'))}")
+    return " | ".join(parts) if parts else "-"
+
+
 def rule_value(rule: str, cfg: dict) -> str:
+    if rule == "custom_seasonal_profile":
+        return season_text(cfg)
     if rule == "day_of_week_adjustment":
         return " ".join(f"{k[-3:]}={to_setting(cfg.get(k)) or 0.0:g}" for k in DOW_KEYS)
     for key in ("last_min_factor_value", "far_out_premium_value"):

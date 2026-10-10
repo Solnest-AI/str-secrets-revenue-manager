@@ -24,7 +24,10 @@ What it will write, and nothing else (WriteClient refuses the rest):
   DELETE /v1/listings/{id}/overrides       with update_children false, always
 Reads it needs: GET /v1/listings/{id}, GET /v1/listings/{id}/overrides, GET
 /v1/customizations/listing (always toggled_on=false), POST /v1/listing_prices (a read that
-happens to be a POST). Group- and account-level rules are refused by name ("this changes every
+happens to be a POST), and GET /v1/customizations/group and /account (toggled_on=false) to find
+the custom seasonal profile a listing inherits: a season sets each night's own min/base/max, so
+the floor a date override is checked against is that night's, not the listing-level min (S2-007,
+a Summit student report 2026-09-29). Those two are READS only; a group or account write stays refused. Group- and account-level rules are refused by name ("this changes every
 listing in the group/account; change it in PriceLabs"); nudge acceptance is not here.
 
 Rules first (Ryan 2026-09-25). A plan may carry rule changes and DSOs; the rule operations are
@@ -65,6 +68,7 @@ from reduce_prices import payload_matches, split_payload
 from _calendar import pricelabs_status
 import customization_write as cw
 from attribution import DOW_KEYS, rule_covers, to_setting, toggle_is_on
+import _seasons as S
 
 PL_HOST = "api.pricelabs.co"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
@@ -89,6 +93,7 @@ PRICE_TYPES = {"fixed", "percent", "percent_stacked"}
 NUMERIC = {"price", "min_price", "max_price", "base_price", "min_stay", "lead_time_expiry"}
 MAX_DELTA = 0.15            # D8
 HORIZON_DAYS = 90           # D6
+SEASON_REACH_DAYS = 365     # a listing-level min/base/max change is measured against a year of seasons
 PCT_RANGE = (-75.0, 1000.0)
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -133,8 +138,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 def _allowed(method: str, path: str) -> bool:
     seg = r"[A-Za-z0-9._:-]+"
     reads = {("GET", rf"/v1/listings/{seg}"), ("GET", rf"/v1/listings/{seg}/overrides"),
-             ("POST", r"/v1/listing_prices"), ("GET", r"/v1/customizations/listing")}
-    # listing-level rules only: /v1/customizations/group and /account stay refused
+             ("POST", r"/v1/listing_prices"), ("GET", r"/v1/customizations/listing"),
+             # read-only: the seasonal profile a listing inherits sets its nights' min/max
+             ("GET", r"/v1/customizations/group"), ("GET", r"/v1/customizations/account")}
+    # listing-level rules only: a POST to /v1/customizations/group or /account stays refused
     writes = {("POST", r"/v1/listings"), ("POST", rf"/v1/listings/{seg}/overrides"),
               ("DELETE", rf"/v1/listings/{seg}/overrides"), ("POST", r"/v1/customizations/listing")}
     return any(m == method and re.fullmatch(p, path) for m, p in reads | writes)
@@ -222,7 +229,9 @@ class Live:
                               "(PriceLabs' name for the PMS, e.g. smartbnb for Hospitable)")
         if str(item.get("id")) != self.lid or item.get("pms") != self.pms:
             raise CannotWrite("PriceLabs returned a different listing or PMS")
-        out = {"name": item.get("name"), "currency": item.get("currency") or None}
+        out = {"name": item.get("name"), "currency": item.get("currency") or None,
+               # which group's seasonal profile this listing can inherit (seasons())
+               "group_id": item.get("group_id"), "subgroup_id": item.get("subgroup_id")}
         for f in LISTING_FIELDS:
             v = _num(item.get(f), f"live {f}")
             if v <= 0:
@@ -260,6 +269,52 @@ class Live:
             raise CannotWrite("PriceLabs did not return this listing's rules (no customizations map); "
                               "absence cannot be assumed")
         return block
+
+    def seasons(self, listing: dict | None = None) -> dict:
+        """The custom seasonal profile this listing uses, fresh: its own, else its group's, else the
+        account's (rules_first.resolve_stack's order). Every read is toggled_on=false, and an
+        unreadable level is refused, never read as "no seasons": a season can lift a night's min
+        above the listing's, and a floor check on a guessed min is no check (S2-007).
+
+        Returns {"profile": _seasons.Profile or None, "level", "fingerprint", "gaps"}."""
+        def read(path, params, what):
+            raw = self.client.request("GET", path, {**params, "toggled_on": "false"})
+            block = raw.get("customizations") if isinstance(raw, dict) else None
+            if not isinstance(block, dict) or raw.get("error") or raw.get("error_code"):
+                raise CannotWrite(f"PriceLabs did not return the {what} rules, so the custom seasonal "
+                                  "profile that may set each night's min and max is unknown. Nothing "
+                                  "was planned; try again in a minute.")
+            return block
+
+        listing = listing if listing is not None else self.listing()
+        levels = {"listing": read("/v1/customizations/listing",
+                                  {"listing_id": self.lid, "pms_name": self.pms}, "listing's")}
+        gaps = []
+        own = levels["listing"].get("custom_seasonal_profile")
+        if not (isinstance(own, dict) and S.toggle_is_on(own.get("custom_seasonal_profile_on"))):
+            group_id = listing.get("group_id")
+            if group_id not in (None, "", 0):
+                levels["group"] = read("/v1/customizations/group", {"group_id": group_id},
+                                       f"group {group_id}")
+            if listing.get("subgroup_id") not in (None, "", 0):
+                gaps.append(f"SUBGROUP SEASONS NOT READ (subgroup {listing.get('subgroup_id')}): "
+                            "PriceLabs documents no subgroup read, so a subgroup's seasonal profile, "
+                            "if it has one, is not part of the min checks below.")
+            levels["account"] = read("/v1/customizations/account", {"pms_name": self.pms}, "account")
+        level, cfg = None, None
+        for name in ("listing", "group", "account"):
+            c = (levels.get(name) or {}).get("custom_seasonal_profile")
+            if isinstance(c, dict) and S.toggle_is_on(c.get("custom_seasonal_profile_on")):
+                level, cfg = name, c
+                break
+        try:
+            profile = S.from_rule(cfg, level) if cfg else None
+        except S.SeasonUnreadable as exc:
+            raise CannotWrite(f"Your PriceLabs custom seasonal profile ({level} level) cannot be read "
+                              f"({exc}), so each night's min and max are unknown. Nothing was planned; "
+                              "check the seasons in PriceLabs.") from None
+        return {"profile": profile, "level": level, "fingerprint": S.fingerprint(cfg, level),
+                "gaps": gaps}
 
     def prices(self, start: date, days: int, currency, status: dict | None = None) -> dict:
         """Nightly prices by date. Pass a dict as `status` to also get PriceLabs' reading of
@@ -897,6 +952,55 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
                                 "deleted and written fresh in the same step.")
 
     priced = [op for op in ops if op["kind"] == "override" and op["after"] and _price_changes(op)]
+
+    # S2-007 (a Summit student report, 2026-09-29): a custom seasonal profile sets each night's own min / base /
+    # max. With full-year seasons the listing-level values price no night at all, yet the floor
+    # check used them (too strict below a lower season, too loose under a higher one) and a
+    # listing-level change read back "applied and verified" while nothing moved. Read the profile
+    # whenever a floor is checked or a listing bound changes; never assume there is none.
+    listing_ops = [op for op in ops if op["kind"] == "listing_price"]
+    floor_checked = [op for op in ops if op["kind"] == "override" and op["after"] and "price" in op["after"]]
+    season = live.seasons(listing) if (listing_ops or floor_checked) else None
+    profile = season["profile"] if season else None
+    if season:
+        warnings.extend(season["gaps"])
+
+    def bounds_on(d, values):
+        """The min / base / max in force on date `d` with these listing-level values."""
+        if profile is None:
+            return {**{f: values[f] for f in LISTING_FIELDS}, "set_by": dict.fromkeys(LISTING_FIELDS)}
+        return profile.night(_parse_date(d), values)
+
+    def bound_words(nb, field):
+        where = nb["set_by"].get(field)
+        return (f"that night's {field} of ${_money(nb[field])} (your custom seasonal profile, {where})"
+                if where else f"your {field} of ${_money(nb[field])}")
+
+    season_scope = {}
+    for op in listing_ops:
+        field = op["field"]
+        if profile is None:
+            continue
+        reach = season_scope[field] = profile.reach(field, today, SEASON_REACH_DAYS)
+        if not reach["season_set"]:
+            continue
+        kept = "; ".join(f"{k['season']}: {field} {_money(k['value'])} ({k['nights']} nights)"
+                         for k in reach["seasons"][:4]) + (" ..." if len(reach["seasons"]) > 4 else "")
+        whose = f"your PriceLabs custom seasonal profile ({season['level']} level)"
+        if reach["moves"] == 0:
+            if not rollback:
+                raise CannotWrite(f"NO NIGHT uses the listing-level {field}: {whose} sets its own fixed "
+                                  f"{field} on all of the next {SEASON_REACH_DAYS} nights ({kept}). Changing "
+                                  f"it would move no price, though a re-read would show the new value. "
+                                  f"Change the season's {field} in PriceLabs instead. Nothing was planned.")
+            warnings.append(f"THIS UNDO PUTS BACK A LISTING-LEVEL {field.upper()} NO NIGHT USES: {whose} "
+                            f"sets its own fixed {field} on all of the next {SEASON_REACH_DAYS} nights "
+                            f"({kept}), so no price moves. It goes ahead so the listing is exactly as it was.")
+        else:
+            warnings.append(f"SEASONAL PROFILE: the listing-level {field} prices {reach['moves']} of the "
+                            f"next {SEASON_REACH_DAYS} nights. On the other {reach['season_set']}, {whose} "
+                            f"sets its own fixed {field}, so those nights do not move: {kept}.")
+
     night_status = {}
     calendar = (live.prices(today, HORIZON_DAYS, currency, status=night_status)
                 if (min_raised or max_cut or priced or rule_ops) else {})
@@ -920,18 +1024,26 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
         return (o.get(key) not in (None, "")
                 and not str(o.get(key + "_type") or "fixed").lower().startswith("percent"))
 
-    # a min raise / max cut moves real nights; flag the biggest single-night move (D8)
-    for moved, below, bound, word, pick in (
-            (min_raised, True, merged["min"], "below the new min", "lifted to"),
-            (max_cut, False, merged["max"], "above the new max", "cut to")):
+    # a min raise / max cut moves real nights; flag the biggest single-night move (D8). Each night
+    # is measured against ITS bound: a night a fixed season prices keeps its own and is not moved.
+    for moved, below, field, word, pick in (
+            (min_raised, True, "min", "below the new min", "lifted to"),
+            (max_cut, False, "max", "above the new max", "cut to")):
         if not moved:
             continue
         key = "min_price" if below else "max_price"
-        beyond_bound = {d: p for d, p in calendar.items() if (p < bound if below else p > bound)}
+        bound_of = {d: bounds_on(d, merged)[field] for d in calendar}
+        reached = {d for d in calendar
+                   if abs(bound_of[d] - bounds_on(d, listing)[field]) > 0.005}
+        beyond_bound = {d: p for d, p in calendar.items() if d in reached
+                        and (p < bound_of[d] if below else p > bound_of[d])}
+        levels_hit = {round(bound_of[d], 2) for d in beyond_bound}
+        bound_txt = (f"{word} {_money(next(iter(levels_hit)))}" if len(levels_hit) == 1
+                     else f"{word.replace('the new', 'their new')}")
         pinned = sorted(d for d in beyond_bound
                         if own_bound(d, key) and night_status.get(d) not in ("RESERVED", "BLOCKED"))
         if pinned:
-            warnings.append(f"{len(pinned)} unbooked night(s) are priced {word} {_money(bound)} but carry a "
+            warnings.append(f"{len(pinned)} unbooked night(s) are priced {bound_txt} but carry a "
                             f"date override with its own {key.replace('_', ' ')}, which outranks the "
                             f"listing's, so they are NOT {pick} it: {', '.join(pinned[:8])}"
                             f"{' ...' if len(pinned) > 8 else ''}.")
@@ -940,15 +1052,15 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
         if not hit:
             continue
         booked = sum(1 for d in beyond_bound if night_status.get(d) in ("RESERVED", "BLOCKED"))
-        line = (f"{len(hit)} of the next {HORIZON_DAYS} nights are priced {word} "
-                f"{_money(bound)} today and will be {pick} it."
+        line = (f"{len(hit)} of the next {HORIZON_DAYS} nights are priced {bound_txt} "
+                f"today and will be {pick} it."
                 + (f" {booked} booked or blocked night(s) are left out: a listing bound never "
                    "moves them." if booked else ""))
         zero = sorted(d for d, p in hit.items() if p <= 0)
-        moves = sorted(((bound - p) / p, d, p) for d, p in hit.items() if p > 0)
+        moves = sorted(((bound_of[d] - p) / p, d, p) for d, p in hit.items() if p > 0)
         if moves:
             m, d, p = max(moves, key=lambda x: abs(x[0]))
-            biggest = f"{d} {_money(p)} -> {_money(bound)} ({m:+.1%})"
+            biggest = f"{d} {_money(p)} -> {_money(bound_of[d])} ({m:+.1%})"
             if abs(m) > delta + 1e-9:
                 warnings.append(line)
                 warnings.append(f"{over}: the biggest single-night move is {biggest}. "
@@ -968,10 +1080,11 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
         d, a, prev = op["date"], op["after"], op["before"] or {}
         if "price" not in a:
             continue
+        nb = bounds_on(d, merged)  # that night's own min / max (a season may set them)
         if not _price_changes(op):
-            if a.get("price_type") == "fixed" and float(a["price"]) < merged["min"] - 0.005:
-                warnings.append(f"{d}: the fixed {_money(a['price'])} carried forward is below your "
-                                f"min of {_money(merged['min'])}.")
+            if a.get("price_type") == "fixed" and float(a["price"]) < nb["min"] - 0.005:
+                warnings.append(f"{d}: the fixed {_money(a['price'])} carried forward is below "
+                                f"{bound_words(nb, 'min')}.")
             continue
         cal = calendar.get(d)
         if cal is not None and cal <= 0:
@@ -998,17 +1111,17 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
         if night is None:
             warnings.append(f"{d}: no current price for that night, so the {a['price']}% could not "
                             "check it against your min and max.")
-        elif night < merged["min"] - 0.005 and rollback:
+        elif night < nb["min"] - 0.005 and rollback:
             # An undo puts back exactly what the operator had. Refusing it would leave the change
             # it undoes stuck in place, so the undo says it loudly instead (as the Beyond writer does).
             warnings.append(f"UNDO RESTORES A NIGHT BELOW YOUR MIN: {d} goes back to "
-                            f"${_money(night)} (min ${_money(merged['min'])}), exactly as it was before.")
-        elif night < merged["min"] - 0.005:
-            raise CannotWrite(f"{d}: that night would be ${_money(night)}, below your min of "
-                              f"${_money(merged['min'])}. Nothing was planned.")
-        elif night > merged["max"] + 0.005:
-            warnings.append(f"ABOVE YOUR MAX: {d} would be ${_money(night)}, above your max of "
-                            f"${_money(merged['max'])}. A fixed price is charged as written.")
+                            f"${_money(night)} (min ${_money(nb['min'])}), exactly as it was before.")
+        elif night < nb["min"] - 0.005:
+            raise CannotWrite(f"{d}: that night would be ${_money(night)}, below "
+                              f"{bound_words(nb, 'min')}. Nothing was planned.")
+        elif night > nb["max"] + 0.005:
+            warnings.append(f"ABOVE YOUR MAX: {d} would be ${_money(night)}, above "
+                            f"{bound_words(nb, 'max')}. A fixed price is charged as written.")
         if ref is None or night is None:
             if a["price_type"] == "fixed":
                 warnings.append(f"{d}: no current price to compare against; the 15% check "
@@ -1019,7 +1132,7 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
             warnings.append(f"{over}: {d} {a['price_type']} {_money(night)} vs {_money(ref)} now "
                             f"({(night - ref) / ref:+.1%}). Extra scrutiny (D8).")
 
-    return {
+    envelope = {
         "version": VERSION,
         "target": {"listing_id": live.lid, "pms": live.pms, "currency": currency},
         "listing_name": listing["name"],
@@ -1029,6 +1142,12 @@ def plan_change(change: dict, live: Live, *, today: date | None = None,
         "read_at": now.isoformat(timespec="seconds"),
         "created_at": now.isoformat(timespec="seconds"),
     }
+    if season:
+        # what the floor checks rested on; apply refuses if it moved (not part of the plan id)
+        envelope["season_basis"] = {"level": season["level"], "fingerprint": season["fingerprint"]}
+    if season_scope:
+        envelope["season_scope"] = season_scope
+    return envelope
 
 
 def describe(envelope: dict) -> str:
@@ -1221,6 +1340,12 @@ def apply_envelope(envelope: dict, live: Live, *, state_dir, today: date | None 
             raise CannotWrite(f"The override on {op['date']} changed since the plan. Nothing was "
                               "sent; plan again.")
     _check_bounds(listing, [envelope])
+    basis = envelope.get("season_basis")
+    if basis:
+        now_seasons = live.seasons(listing)
+        if (now_seasons["level"], now_seasons["fingerprint"]) != (basis.get("level"), basis.get("fingerprint")):
+            raise CannotWrite("Your PriceLabs custom seasonal profile changed since the plan, so its "
+                              "min and max checks are stale. Nothing was sent; plan again.")
 
     # 2. rollback snapshot, on disk before anything leaves the machine (S3)
     stamp = now.strftime("%Y%m%dT%H%M%S%fZ") + "-" + os.urandom(3).hex()

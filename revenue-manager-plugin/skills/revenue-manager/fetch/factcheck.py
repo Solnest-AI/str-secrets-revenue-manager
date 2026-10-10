@@ -835,7 +835,7 @@ def override_facts_reduced(text: str) -> dict:
 # --------------------------------------------------------------- customizations
 CUSTOMIZATION_FACTS = ["rules_total", "rules_on", "rules_off", "rules_digest",
                        "dow_abs_total", "dow_digest", "stored_seasons",
-                       "rule_sig_digest"]
+                       "rule_sig_digest", "season_digest"]
 
 # _CZ_TOGGLE_KEY and _CZ_DOW_KEYS deliberately duplicate reduce_customizations.TOGGLE_KEY
 # and attribution.DOW_KEYS instead of importing them. This is NOT a DRY violation: a
@@ -893,7 +893,58 @@ def customization_facts_full(raw: dict) -> dict:
             "rules_digest": _digest(rule_pairs),
             "dow_abs_total": dow_abs, "dow_digest": _digest(dow_pairs),
             "stored_seasons": seasons,
-            "rule_sig_digest": _digest(_cz_sig_full(rules))}
+            "rule_sig_digest": _digest(_cz_sig_full(rules)),
+            "season_digest": _digest(enumerate(_cz_seasons_full(profile)))}
+
+
+def _cz_seasons_full(profile: dict) -> list:
+    """(span, price type, min/base/max) per stored season, straight off the raw payload (S2-007).
+
+    stored_seasons was only a count, so a reducer that printed a $350 seasonal min for a stored
+    $300 one passed. Each season's dates and three prices are a fact now. Independent of the
+    reducer: the reduced side re-derives the same tuples by PARSING the printed value column."""
+    out = []
+    for key, type_key, one_off in (("seasons", "price_type", False),
+                                   ("non_repeating_seasons", "price_type_non_repeating", True)):
+        kind = (profile or {}).get(type_key) or "?"
+        for s in (profile or {}).get(key) or []:
+            if not isinstance(s, dict):
+                out.append("?")
+                continue
+            span_keys = ((("start_year",) if one_off else ()) + ("start_month", "start_day")
+                         + (("end_year",) if one_off else ()) + ("end_month", "end_day"))
+            span = tuple(_cz_int(s.get(k)) for k in span_keys)
+            prices = tuple(_cz_num(s.get(f)) for f in ("lowest_price", "base_price", "highest_price"))
+            out.append(f"{span}|{kind}|{prices}")
+    return sorted(out)
+
+
+def _cz_int(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+_CZ_SEASON = re.compile(r"^(?:(\d{4})/)?(\d{1,2})/(\d{1,2})-(?:(\d{4})/)?(\d{1,2})/(\d{1,2}) (\S+) "
+                        r"min=(\S+) base=(\S+) max=(\S+)$")
+
+
+def _cz_seasons_reduced(value: str) -> list:
+    """The same tuples, parsed back out of the reducer's printed value column."""
+    out = []
+    if not value or value.strip() == "-":
+        return out
+    for part in value.split(" | "):
+        m = _CZ_SEASON.match(part.strip())
+        if not m:
+            out.append("?")
+            continue
+        sy, sm, sd, ey, em, ed, kind, lo, base, hi = m.groups()
+        span = tuple(int(x) for x in (sy, sm, sd, ey, em, ed) if x is not None)
+        prices = tuple(None if v == "listing" else _cz_num(v) for v in (lo, base, hi))
+        out.append(f"{span}|{kind}|{prices}")
+    return sorted(out)
 
 
 def _cz_on(raw) -> bool:
@@ -999,6 +1050,7 @@ def customization_facts_reduced(text: str) -> dict:
     on = sum(1 for _, state in rule_pairs if state == "on")
     dow_pairs = []
     seasons = 0
+    season_rows = []
     for r in parsed:
         if r["rule"] == "day_of_week_adjustment":
             for pair in r["value"].split():
@@ -1007,12 +1059,14 @@ def customization_facts_reduced(text: str) -> dict:
         if r["rule"] == "custom_seasonal_profile":
             match = re.match(r"(\d+) seasons", r["window"])
             seasons = int(match.group(1)) if match else 0
+            season_rows = _cz_seasons_reduced(r.get("value") or "")
     dow_abs = sum(abs(v) for _, v in dow_pairs)
     return {"rules_total": len(parsed), "rules_on": on, "rules_off": len(parsed) - on,
             "rules_digest": _digest(rule_pairs),
             "dow_abs_total": dow_abs, "dow_digest": _digest(dow_pairs),
             "stored_seasons": seasons,
-            "rule_sig_digest": _digest(_cz_sig_reduced(parsed))}
+            "rule_sig_digest": _digest(_cz_sig_reduced(parsed)),
+            "season_digest": _digest(enumerate(season_rows))}
 
 
 SOURCES = {

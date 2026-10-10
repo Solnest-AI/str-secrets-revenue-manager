@@ -114,6 +114,11 @@ class FakePriceLabs:
                     for k, v in sorted(self.prices.items())
                     if item["dateFrom"] <= k <= item["dateTo"]]
             return Response([{"id": LID, "pms": PMS, "currency": self.listing["currency"], "data": rows}])
+        if method == "GET" and path in ("/v1/customizations/listing", "/v1/customizations/account"):
+            # The writer reads the custom seasonal profile before any floor check (S2-007). A
+            # listing or account with no rules answers 200 with an empty map (vendor spec).
+            assert parse_qs(url.query).get("toggled_on") == ["false"], url.query
+            return Response({"customizations": {}})
         if method in ("POST", "DELETE") and self.fail_post:
             raise HTTPError(req.full_url, self.fail_post, "boom", {}, io.BytesIO(b"{}"))
         if method == "POST" and path == "/v1/listings":
