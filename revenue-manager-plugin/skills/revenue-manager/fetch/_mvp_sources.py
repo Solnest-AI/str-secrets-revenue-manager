@@ -162,14 +162,19 @@ class Sources:
             lambda: self.pages("/properties/" + pid + "/reviews", {}, normalize_review, limit=100),
         )
 
-    def pricelabs_inventory(self):
-        """Every listing in the PriceLabs account: id -> pms name. The PMS name PriceLabs
-        uses for a listing is looked up here, never assumed (Hospitable is `smartbnb`)."""
+    def pricelabs_listings(self):
+        """Every listing row in the PriceLabs account, as PriceLabs returns it (with
+        `channel_listing_details`, the booking-site listing ids)."""
         raw = self.pl_get("/v1/listings")
         rows = raw.get("listings") if isinstance(raw, dict) else None
         if not isinstance(rows, list):
             raise CannotAnalyze("PriceLabs listing inventory is unreadable")
-        return {str(r.get("id")): r.get("pms") for r in rows if isinstance(r, dict) and r.get("id") and r.get("pms")}
+        return [r for r in rows if isinstance(r, dict)]
+
+    def pricelabs_inventory(self):
+        """Every listing in the PriceLabs account: id -> pms name. The PMS name PriceLabs
+        uses for a listing is looked up here, never assumed (Hospitable is `smartbnb`)."""
+        return {str(r.get("id")): r.get("pms") for r in self.pricelabs_listings() if r.get("id") and r.get("pms")}
 
     def pl_get(self, path, params=None, body=None):
         result, _ = self.client.request(
