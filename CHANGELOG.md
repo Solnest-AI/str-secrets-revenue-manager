@@ -1,5 +1,52 @@
 # Changelog
 
+## 5.1.0
+
+Fixes from the Summit 2.0 student reports, in plain English.
+
+**If your PriceLabs listing uses a custom seasonal profile** (S2-007)
+
+- The card now reads each night's real min and max from your seasons. "Nights at your min",
+  "nights at your max" and the suggested price ranges use them. When your seasons set the min on
+  most of the next 30 nights, the min price line is about that season's min, not the listing-level
+  min that no night uses.
+- Every date change is checked against that night's own min. An override below a season's min is
+  stopped. One that is below your listing-level min but above the season's min now goes through.
+- Changing your listing-level min, base or max when seasons cover every night is stopped with
+  "NO NIGHT uses the listing-level min", because it would change nothing. When seasons cover some
+  nights, the change card and the "applied and verified" line say how many nights it reaches.
+- Seasons are still changed in PriceLabs. This tool never writes them.
+
+**Your copy is yours** (S2-002)
+
+- Setup downloads the Revenue Manager instead of linking it to our GitHub, and unlinks a copy that
+  was cloned. Saying "save" never tries to send anything to GitHub.
+- When a new version is out, the last line of your pricing card says so. Say **update the revenue
+  manager** and Claude updates your folder and reinstalls the plugin. Your keys, markups and
+  history stay as they are.
+
+**Hostfully** (S2-023, S2-024)
+
+- Reviews are read again: Hostfully dates a review as a plain day, and those were being thrown out.
+- If Hostfully holds none of your Airbnb reviews, the card says so instead of treating Hostfully's
+  count as your listing's.
+- Pacing against last year works where Hostfully's booking times prove it. Where they cannot, it
+  still says NO DATA instead of guessing.
+
+**Setup** (S2-022, S2-040)
+
+- A property PriceLabs still knows by an older PMS id (common for Hospitable listings from the
+  Smartbnb days) is matched by its Airbnb or VRBO listing id. Thanks to the student who sent the
+  fix.
+- Google Vacation Rentals can have its own markup (`google=10`) when it differs from your direct
+  one. Without one, Google still uses your direct markup.
+
+**How to get it**
+
+- Already set up? Paste the GitHub link into Claude Code and say **set this up**. This one time it
+  brings your folder up to date and unlinks it from GitHub. From then on, the card tells you when
+  there is an update.
+
 ## 5.0.10
 
 Setup, found in the night-before audit (nothing in the plugin changed):
