@@ -15,7 +15,8 @@ brand-new `str-secrets-summit` project has none. This builds them:
   2. lists every listed Hospitable property (Hospitable is the source of truth for what exists)
   3. checks each one really exists in PriceLabs under the same id, PMS `smartbnb`
      (measured 2026-09-24 on 6 of 6 live listings: PriceLabs uses the Hospitable property id),
-     or, with Beyond as the pricing tool (--pricing beyond, or auto when only Beyond is
+     else by its booking-site listing ids (a listing PriceLabs still keys by an older PMS id;
+     a unique match or nothing, stored as settings.pricelabs_listing_id), or, with Beyond as the pricing tool (--pricing beyond, or auto when only Beyond is
      connected), finds its Beyond listing: the PMS id on a channel listing named for the PMS,
      else the Airbnb room id on an `airbnb` channel listing, else the exact name. A unique match
      or nothing; two candidates is "not guessed". Stored as settings.beyond_listing_id
@@ -328,11 +329,79 @@ def match_beyond(prop: dict, listings: list, pms: str):
     return None, "no Beyond listing has its PMS id, Airbnb id or exact name"
 
 
+def _ota_ids(pairs) -> dict:
+    """{booking site: {listing ids}} from (channel, listing id) pairs; direct, manual and the
+    PMS's own channels are left out (their ids say nothing about which home it is)."""
+    out = {}
+    for channel, lid in pairs:
+        channel = channel_name(channel)
+        if lid and channel not in NOT_OTA:
+            out.setdefault(channel, set()).add(str(lid))
+    return out
+
+
+def match_pricelabs_by_channel(prop: dict, pl_rows: list, pms_ids, allowed_pms=None) -> tuple:
+    """(PriceLabs listing id, its pms name, how) or (None, None, why not), for a property no
+    PriceLabs listing has under its PMS id. PriceLabs can still key a listing by an older PMS
+    id: a Hospitable listing from its Smartbnb days keeps a numeric id in PriceLabs while
+    Hospitable now reports a UUID (live 2026-09-29, a parent/child pair). The match is on the
+    booking-site listing ids (Airbnb room id, VRBO id, ...): every site both sides report must
+    agree, the PriceLabs listing must not be another PMS property's by id, and it must be the
+    only one. Two candidates is "not guessed". `allowed_pms` (the PriceLabs PMS names this PMS's
+    id-matched listings use) keeps out a listing under another integration, such as a stale copy
+    from a previous PMS: writes to it would read back verified and reach no calendar."""
+    mine = _ota_ids((x.get("platform"), x.get("platform_id")) for x in prop.get("listings") or [])
+    if not mine:
+        return None, None, "no PriceLabs listing has this PMS id, and it has no booking-site listing to match by"
+    hits, elsewhere = [], []
+    for r in pl_rows:
+        if not r.get("id") or not r.get("pms") or str(r["id"]) in pms_ids:
+            continue
+        theirs = _ota_ids((c.get("channel_name"), c.get("channel_listing_id"))
+                          for c in r.get("channel_listing_details") or [] if isinstance(c, dict))
+        shared = mine.keys() & theirs.keys()
+        if shared and all(mine[c] & theirs[c] for c in shared):
+            if allowed_pms and r["pms"] not in allowed_pms:
+                elsewhere.append(r)
+                continue
+            hits.append((r, sorted(shared)))
+    if len(hits) == 1:
+        (r, sites), = hits
+        return str(r["id"]), r["pms"], f"by {' and '.join(sites)} listing id, PriceLabs id {r['id']}"
+    if hits:
+        return None, None, (f"no PriceLabs listing has this PMS id, and {len(hits)} share its booking-site "
+                            "listing ids; not guessed")
+    if elsewhere:
+        names = ", ".join(sorted({f"{r['id']} (PriceLabs PMS {r['pms']!r})" for r in elsewhere}))
+        return None, None, (f"no PriceLabs listing has this PMS id; its booking-site ids match {names}, which "
+                            f"is not under this PMS's PriceLabs name ({', '.join(sorted(allowed_pms))}), "
+                            "so it is not taken")
+    return None, None, "no PriceLabs listing has this PMS id or its booking-site listing ids"
+
+
+def match_all_by_channel(props: list, pl_rows: list, pms_ids, allowed_pms=None) -> dict:
+    """{property id: (PriceLabs id, pms, how)} for the properties no PriceLabs listing has by id.
+    One PriceLabs listing is never given to two properties (a parent/child pair can share a
+    booking-site listing): every property that matched it is left unmapped and says why."""
+    out = {str(p["id"]): match_pricelabs_by_channel(p, pl_rows, pms_ids, allowed_pms) for p in props}
+    claimed = {}
+    for pid, (lid, _, _) in out.items():
+        if lid:
+            claimed.setdefault(lid, []).append(pid)
+    for lid, pids in claimed.items():
+        if len(pids) > 1:
+            for pid in pids:
+                out[pid] = (None, None, f"PriceLabs listing {lid} matches {len(pids)} properties by booking-site "
+                                        "listing ids; not guessed")
+    return out
+
+
 def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_NAME, pms_source="hospitable",
                    intellihost=None, pricelabs=True, pricing_tool="auto", min_price=None, beyond=None,
-                   gap=None) -> dict:
+                   gap=None, pricelabs_id=None) -> dict:
     """`beyond` is the mapped Beyond listing id (the runner reads Beyond through it). `gap`
-    names why a property the operator prices in Beyond has no mapping yet."""
+    names why a property the operator prices in Beyond has no mapping yet. `pricelabs_id` is
+    the PriceLabs listing id when it is not the PMS property id."""
     tool = "beyond" if beyond else pricing_tool_for(pricelabs, pricing_tool)
     settings = {
         "pms_source": pms_source,
@@ -354,7 +423,7 @@ def build_settings(property_id, airbnb, rankbreeze, markups, now, pms_name=PMS_N
     }
     if pricelabs:
         settings["pms_name"] = pms_name
-        settings["pricelabs_listing_id"] = property_id
+        settings["pricelabs_listing_id"] = pricelabs_id or property_id
     if airbnb:
         settings["airbnb_listing_id"] = airbnb
     if rankbreeze:
@@ -544,11 +613,19 @@ def main(argv=None) -> int:
                        "RankBreeze or shows as a named gap" if str(exc) == PREMIUM_GAP else f"IntelliHost could not be read ({exc})")
         now = datetime.now(timezone.utc)
         rows, missing, unpriced = [], [], []
+        # Full PriceLabs rows, read only when a property is not in PriceLabs under its PMS id (S2-022)
+        pms_ids = {str(x.get("id")) for x in inventory}
+        by_channel = {}
+        if has_pricelabs:
+            needing = [p for p in props if not pl_names.get(p["id"])]
+            if needing:
+                allowed = {pl_names[p["id"]] for p in props if pl_names.get(p["id"])}
+                by_channel = match_all_by_channel(needing, sources.pricelabs_listings(), pms_ids, allowed or None)
         for p in props:
             p_markups, no_markup = property_markups(p, markups, overrides, pms)
             if no_markup:
                 unpriced.append((p.get("name") or p["id"], no_markup))
-            pl_pms, bid, how, unmapped = None, None, None, None
+            pl_id, pl_pms, bid, how, unmapped = None, None, None, None, None
             if maps_beyond:
                 bid, how = match_beyond(p, beyond_rows, pms)
                 if not bid:
@@ -559,12 +636,14 @@ def main(argv=None) -> int:
                                 "run setup_properties.py --pricing beyond again")
                     missing.append((p.get("name") or p["id"], how))
             if has_pricelabs:
-                pl_pms = pl_names.get(p["id"])
+                pl_id, pl_pms = p["id"], pl_names.get(p["id"])
                 if not pl_pms:
-                    missing.append((p.get("name") or p["id"], "no PriceLabs listing has this PMS id"))
-                    continue
+                    pl_id, pl_pms, how = by_channel[str(p["id"])]
+                    if not pl_id:
+                        missing.append((p.get("name") or p["id"], how))
+                        continue
                 try:
-                    sources.listing(p["id"], pl_pms)
+                    sources.listing(pl_id, pl_pms)
                 except CannotAnalyze as exc:
                     missing.append((p.get("name") or p["id"], str(exc)))
                     continue
@@ -574,7 +653,8 @@ def main(argv=None) -> int:
                                                     pms_name=pl_pms, pms_source=pms, intellihost=ih_map.get(ab or ""),
                                                     pricelabs=has_pricelabs,
                                                     pricing_tool="beyond" if pricing == "beyond" else "auto",
-                                                    min_price=floors.get(str(p["id"])), beyond=bid, gap=unmapped),
+                                                    min_price=floors.get(str(p["id"])), beyond=bid, gap=unmapped,
+                                                    pricelabs_id=pl_id),
                          "match": how})
         print(f"{label}: {len(props)} listed propert{'y' if len(props) == 1 else 'ies'}. {rb_note}."
               + (f" {ih_note}." if ih_note else ""))

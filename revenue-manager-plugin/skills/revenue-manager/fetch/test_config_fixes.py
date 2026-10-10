@@ -345,6 +345,7 @@ class Onboarding(unittest.TestCase):
         with TmpHome({"supabase-revenue-manager": SUPA}, {"GUESTY_CLIENT_ID": "c", "PRICELABS_API_KEY": "pl"}) as h, \
                 mock.patch("_pms_registry.adapter", return_value=fake), \
                 mock.patch.object(Sources, "pricelabs_inventory", return_value={}), \
+                mock.patch.object(Sources, "pricelabs_listings", return_value=[]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             code = setup_properties.main(["--pms", "guesty", "--markup", "airbnb=0", "--db", str(h.home / "w.db")])
         self.assertEqual(code, 2)
