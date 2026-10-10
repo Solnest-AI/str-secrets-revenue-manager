@@ -481,6 +481,10 @@ def build(pms, listing, prices, market, overrides, rules, funnel, rankings, cont
             "ok": False,
             "detail": "Review sample is unreadable or absent, not empty",
         }
+    if pms["reviews"].get("source_gap"):
+        notes.append(pms["reviews"]["source_gap"])
+        if review.get("ok"):
+            review["detail"] = f"{review['detail']} (the PMS's own reviews only; see the note below)"
     rank = flywheel.spoke_ranking(rankings)
     if not rank["ok"] and rank_gap:
         rank["detail"] = rank_gap  # why it is missing, same as the funnel reason above
