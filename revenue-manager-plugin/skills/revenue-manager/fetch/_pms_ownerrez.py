@@ -10,6 +10,9 @@ Measured live 2026-09-24 on a real account (read-only):
     every rate was a spot rate (what PriceLabs pushes) and amount == rent on all 720.
     (An earlier note, from the connections kit's build doc, said there was no rate GET. OwnerRez's
     own docs and the live API say otherwise; that note was wrong.)
+  - min_nights is only SENT when it is 2 or more (reported 2026-10-22 by Amanda Daigle on
+    v5.0.10; the docs say `rules` is "omitted when no restrictions apply"). day_row reads a
+    priced night with no min_nights as a 1-night minimum, as PriceLabs does.
   - /bookings: int ids, `arrival`/`departure` dates (check_in/check_out are TIMES), `type`
     booking|block, `status` (`active` measured), `booked_utc`, `listing_site`. The property
     filter `property_ids` WORKS here. `include_charges=true` puts charges on the list rows;
@@ -87,10 +90,16 @@ def day_row(raw: dict, currency: str) -> dict:
               "blocked": "BLOCKED", "unavailable": "BLOCKED"}.get(status, "UNKNOWN")
     if reason == "AVAILABLE" and rules.get("is_stay_disallowed") is True:
         reason = "BLOCKED"  # documented: Available with this rule is still not bookable
-    rent = (raw.get("rate") or {}).get("rent")
+    price = _cents((raw.get("rate") or {}).get("rent"))
     min_n = rules.get("min_nights")
+    if price is not None and "min_nights" not in rules:
+        # Reported 2026-10-22 (Amanda Daigle, v5.0.10): OwnerRez sends min_nights only when it is
+        # 2 or more, and documents `rules` as "omitted when no restrictions apply". A priced night
+        # without it is a 1-night minimum (PriceLabs reads it as 1 too). A min_nights that IS sent
+        # but unreadable stays unknown; an unpriced night stays unknown.
+        min_n = 1
     return {
-        "date": str(raw.get("date") or "")[:10], "price_cents": _cents(rent), "currency": currency,
+        "date": str(raw.get("date") or "")[:10], "price_cents": price, "currency": currency,
         "min_stay": min_n if isinstance(min_n, int) and not isinstance(min_n, bool) else None,
         "available": {"AVAILABLE": True, "RESERVED": False, "BLOCKED": False}.get(reason),
         "status_reason": reason,
