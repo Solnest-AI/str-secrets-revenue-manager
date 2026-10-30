@@ -1,5 +1,21 @@
 # Changelog
 
+## 5.1.1
+
+A fix for OwnerRez, in plain English.
+
+**OwnerRez nights with a 1-night minimum get a pricing verdict again**
+
+- OwnerRez only sends a night's minimum stay when it is 2 nights or more. On a 1-night minimum it
+  sends nothing, so the card read those nights as "no min-stay rule in the PMS" and held back its
+  pricing opinion on every one of them (27 to 30 open nights a run on one property).
+- The card now reads a priced OwnerRez night with no minimum stay as a 1-night minimum, the same
+  way PriceLabs does, and prices it like any other night.
+- A minimum stay OwnerRez does send is used exactly as sent. A night with no price is still
+  refused. Every other PMS is unchanged: a night that comes with a price and no minimum stay
+  still has its pricing held back and named at the top of the card.
+- Thanks to Amanda Daigle for the report (October 22, on 5.0.10).
+
 ## 5.1.0
 
 Fixes from the Summit 2.0 student reports, in plain English.

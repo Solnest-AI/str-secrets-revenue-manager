@@ -628,6 +628,10 @@ def analyze(property_data, calendar_days, reservations, reviews, start, days, as
         # night can carry a price and no min-stay rule at all. Its status is known, so it is
         # classified; only its pricing opinion is withheld (min_stay_missing), instead of the
         # unknown night blocking all 90. A missing PRICE, or a min stay below 1, still refuses.
+        # Those OwnerRez nights were 1-night minimums (reported 2026-10-22, Amanda Daigle: OwnerRez
+        # sends min_nights only when it is 2 or more), so _pms_ownerrez.day_row now reads a priced
+        # night without it as 1 and OwnerRez nights no longer land here. Every other PMS that
+        # sends a price with no min stay is still withheld here, night by night.
         stay_missing = (rates_exposed and calendar["min_stay"] is None
                         and calendar["price_cents"] is not None)
         calendar_ok = calendar["currency"] == prop["currency"] and (
