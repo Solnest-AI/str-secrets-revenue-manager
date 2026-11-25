@@ -1,5 +1,25 @@
 # Changelog
 
+## 5.2.0
+
+Updates install themselves, in plain English.
+
+**You never have to say "update" again**
+
+- Once a day, when Claude Code starts, the Revenue Manager checks for a new version in the
+  background, installs it, and reinstalls the plugin. It loads the next time you open Claude
+  Code. You don't see any of it.
+- It only installs published releases, never work in progress.
+- Your keys (every `.env` here and in `mcp-servers/`), connector logins, installed tools and
+  caches are never touched. Your markups, min prices and history live in your database, so an
+  update can't reach them either.
+- If a new version fails to install, it puts the old one back by itself.
+- Want the Revenue Manager to work differently for you (wording, branding on owner reports,
+  what a card includes)? Just ask. Your changes are saved in `~/.solnest/revenue-manager/`,
+  outside this folder, so updates keep them.
+- Saying **update the revenue manager** still works and gets the latest release right away.
+  It keeps a backup, so it can go back one step.
+
 ## 5.1.1
 
 A fix for OwnerRez, in plain English.

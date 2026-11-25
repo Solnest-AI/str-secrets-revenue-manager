@@ -28,7 +28,7 @@ Claude follows `SETUP.md`, in this order:
 1. Checks the tools (Git, Node, uv, Python) and installs any that are missing.
 2. Finds your connections kit, re-checks your PMS, pricing tool and Supabase rows, and repairs
    what it can.
-3. Installs the plugin.
+3. Installs the plugin and turns on automatic updates.
 4. Asks the markup you add on each booking site (it reads which sites you're on from your
    PMS) and maps each property to your pricing tool.
 5. Shows a green check ✅, then offers to run it on one of your properties right away. No
@@ -56,9 +56,10 @@ Claude follows `SETUP.md`, in this order:
 
 ## Updating
 
-When a new version is out, the last line of every pricing card says so. Say **update the
-revenue manager** and Claude downloads it over your folder and reinstalls the plugin. Your
-keys, markups and history stay as they are. Then quit and reopen Claude Code.
+You don't have to do anything. Once a day, when Claude Code starts, the Revenue Manager checks
+for a new version in the background and installs it by itself. It shows up the next time you
+open Claude Code. Your keys, markups, history and your own changes stay as they are. You can
+still say **update the revenue manager** any time to get it right away.
 
 ## Using it
 

@@ -137,11 +137,20 @@ class DocsSendStudentsToTheDownload(unittest.TestCase):
         claude = self.read("CLAUDE.md")
         self.assertIn("Never commit, push, fork", claude)
         update = claude.split('## When the user says "update the revenue manager"', 1)[1]
-        self.assertIn("archive/refs/heads/main.tar.gz", update)
+        # a manual update installs the latest published release, never untagged main
+        self.assertIn("scripts/update.py", update)
+        self.assertNotIn("archive/refs/heads/main.tar.gz", update)
         self.assertIn("step 2 of `SETUP.md`", update)
         self.assertIn("quit and reopen", update)
         # unlink an old clone BEFORE anything new lands on it, or it reads as local edits
-        self.assertLess(update.index("detach_from_github.sh"), update.index("archive/refs/heads/main.tar.gz"))
+        self.assertLess(update.index("detach_from_github.sh"), update.index("scripts/update.py"))
+
+    def test_setup_step_2_turns_on_automatic_updates(self):
+        step2 = self.read("SETUP.md").split("## 2. Install the plugin", 1)[1].split("## 3.", 1)[0]
+        self.assertIn("bash scripts/install_plugin.sh", step2)
+        self.assertIn("scripts/solnest_autoupdate.py register --name revenue-manager", step2)
+        self.assertIn("--after 'bash scripts/install_plugin.sh'", step2)
+        self.assertIn("--undo '{python} scripts/update.py --undo'", step2)
 
     def test_the_skill_never_strips_a_developers_git_but_knows_how_to_update(self):
         skill = self.read("revenue-manager-plugin/skills/revenue-manager/SKILL.md")
@@ -152,7 +161,7 @@ class DocsSendStudentsToTheDownload(unittest.TestCase):
         self.assertIn("claude plugin marketplace list", skill)
 
     def test_no_em_dash_in_the_student_facing_docs(self):
-        for rel in ("README.md", "SETUP.md", "CLAUDE.md"):
+        for rel in ("README.md", "SETUP.md", "CLAUDE.md", "revenue-manager-plugin/skills/revenue-manager/SKILL.md"):
             with self.subTest(rel=rel):
                 self.assertNotIn("—", self.read(rel))
 
