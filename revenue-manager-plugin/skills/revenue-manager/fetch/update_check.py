@@ -1,14 +1,17 @@
-"""Says when a newer Revenue Manager is on GitHub (S2-002). Never updates anything itself.
+"""Says when a newer Revenue Manager release is out (S2-002). Never updates anything itself.
 
-A student's copy is a plain folder, not a git clone (scripts/detach_from_github.sh), so it
-cannot `git pull`, and a fix shipped after the summit reaches nobody unless they hear about
-it. Every live card ends with one line when GitHub has a newer VERSION than the installed
-plugin; the student says "update the revenue manager" and Claude follows CLAUDE.md, which
-re-downloads the folder and reinstalls the plugin. The plain yes is the gate, as everywhere.
+Updates normally install themselves: SETUP.md step 2 registers the folder with the Solnest
+auto-updater, which installs each new GitHub release once a day in the background. So this
+line only shows up when that is off or failing on this computer; the student says "update the
+revenue manager" and Claude follows CLAUDE.md. It compares against the latest published
+RELEASE (the same thing the updater installs), never main, so a push to main that is not
+released yet does not nag anyone.
 
-One GET of a public text file, at most once a day (the answer is cached), with a short
-timeout. Offline, rate-limited, or anything unreadable: no line, never an error. It does not
-go through the read client: it is not a provider read and does not count against --max-calls.
+One HEAD request to github.com/<repo>/releases/latest (it redirects to the tag; unlike the API
+it has no 60-an-hour limit per network), at most once a day (the answer is cached), with a
+short timeout. Offline, rate-limited, or anything unreadable: no line, never an error. It does
+not go through the read client: it is not a provider read and does not count against
+--max-calls.
 """
 
 from __future__ import annotations
@@ -19,8 +22,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-REMOTE_VERSION_URL = ("https://raw.githubusercontent.com/Solnest-AI/str-secrets-revenue-manager/"
-                      "main/VERSION")
+REMOTE_VERSION_URL = "https://github.com/Solnest-AI/str-secrets-revenue-manager/releases/latest"
 TIMEOUT_SECONDS = 4
 CHECK_EVERY = timedelta(hours=24)
 _VERSION = re.compile(r"^\d+(\.\d+){0,3}$")
@@ -43,9 +45,13 @@ def local_version(plugin_root: Path | None = None):
 
 
 def _fetch(url, timeout):
-    req = urllib.request.Request(url, headers={"User-Agent": "str-secrets-revenue-manager-update-check"})
+    """The latest release's version: /releases/latest redirects to /releases/tag/v<version>."""
+    req = urllib.request.Request(url, method="HEAD",
+                                 headers={"User-Agent": "str-secrets-revenue-manager-update-check"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read(64).decode("utf-8", "replace")
+        final = resp.geturl()
+    m = re.search(r"/releases/tag/v?([^/?#]+)$", final)
+    return m.group(1) if m else ""
 
 
 def _cache_path():

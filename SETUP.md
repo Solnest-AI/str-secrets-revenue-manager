@@ -116,26 +116,40 @@ A required row that is not ✅:
 
 ## 2. Install the plugin
 
-One block, run as written from this folder. It finds the `claude` command (on the PATH, in
+One line, run as written from this folder. It finds the `claude` command (on the PATH, in
 `~/.local/bin`, or inside the desktop app itself on Windows and Mac), removes any earlier copy
 of the plugin (the spring kit's, or one installed from another folder), adds this folder as
 the plugin source and installs from it. Running it twice is fine:
 
 ```bash
-CLAUDE_BIN="$(command -v claude 2>/dev/null)"; for c in "$HOME/.local/bin/claude" "$HOME/.local/bin/claude.exe"; do [ -z "$CLAUDE_BIN" ] && [ -x "$c" ] && CLAUDE_BIN="$c"; done; [ -z "$CLAUDE_BIN" ] && [ -n "${APPDATA:-}" ] && CLAUDE_BIN="$(ls -t "$(cygpath -u "$APPDATA" 2>/dev/null || printf '%s' "$APPDATA")"/Claude/claude-code/*/claude.exe 2>/dev/null | head -1)"; [ -z "$CLAUDE_BIN" ] && CLAUDE_BIN="$(ls -t "$HOME/Library/Application Support/Claude/claude-code/"*/claude.app/Contents/MacOS/claude 2>/dev/null | head -1)"; if [ -z "$CLAUDE_BIN" ]; then echo "claude: NOT FOUND"; else for old in revenue-manager@solnest-revenue-manager revenue-manager@str-secrets-revenue-manager; do "$CLAUDE_BIN" plugin uninstall "$old" >/dev/null 2>&1; done; for m in solnest-revenue-manager str-secrets-revenue-manager; do "$CLAUDE_BIN" plugin marketplace remove "$m" >/dev/null 2>&1; done; "$CLAUDE_BIN" plugin marketplace add "$PWD" && "$CLAUDE_BIN" plugin install revenue-manager@str-secrets-revenue-manager && "$CLAUDE_BIN" plugin update revenue-manager@str-secrets-revenue-manager >/dev/null 2>&1; echo "plugin: $("$CLAUDE_BIN" plugin list 2>/dev/null | grep -A1 'revenue-manager@str-secrets' | grep Version)"; fi
+bash scripts/install_plugin.sh
 ```
 
 Two lines start with ✔ (the source, then the plugin) and the last line reads
 `plugin: Version: <this folder's VERSION>`. Anything else: read the error, fix that one thing,
-run the block again.
+run it again.
 
 `claude: NOT FOUND` means the command-line copy of Claude Code is not on this computer (the
-desktop app alone does not put it on the PATH). Install it, then run the block above again.
+desktop app alone does not put it on the PATH). Install it, then run `bash scripts/install_plugin.sh` again.
 It looks frozen for a minute or two; that is the download:
 
 ```bash
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex" ;; *) curl -fsSL https://claude.ai/install.sh | bash ;; esac
 ```
+
+### Then turn on automatic updates (required, silent)
+
+```bash
+uv run --no-project --python 3.13 python scripts/solnest_autoupdate.py register --name revenue-manager --folder "$PWD" --update '{python} scripts/update.py' --after 'bash scripts/install_plugin.sh' --undo '{python} scripts/update.py --undo'
+```
+
+From now on the Revenue Manager keeps itself on the latest release with no one asking: once a
+day, in the background when Claude Code starts, it runs `scripts/update.py` (which never
+touches the `.env` files here or in `mcp-servers/`, connector logins, installed tools or
+caches), then reinstalls the plugin from this folder with `scripts/install_plugin.sh`, so the
+new version loads the next time Claude Code opens. If a new release fails that, it puts the
+old version back by itself. Relay the one line it prints. Nothing else to tell the attendee.
+It lives in `~/.solnest/`, outside this folder. Running it again is fine.
 
 Then go straight on to step 3, in this same chat. No restart: step 3 runs this folder's own
 scripts, and step 4 reads the skill from this folder. From the next time they open Claude
